@@ -311,6 +311,8 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
     assert "card.contains(other)" in scenario
     assert "other.contains(card)" not in scenario
     assert 'a[href*=\\"/book/\\"]' in scenario
+    assert "__fhSettleState" in scenario
+    assert "badges:Array.from(card.querySelectorAll" in scenario
 
 
 @pytest.mark.asyncio

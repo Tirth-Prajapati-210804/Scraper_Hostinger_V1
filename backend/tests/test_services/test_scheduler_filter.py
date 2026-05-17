@@ -123,7 +123,7 @@ async def test_trigger_single_group_forwards_trip_type_and_nights(
     from app.tasks import scheduler as scheduler_module
 
     scheduler = make_scheduler()
-    scheduler.settings.scrape_batch_size = 4
+    scheduler.settings.scrape_batch_size = 2
     scheduler.settings.scrape_delay_seconds = 0.0
 
     group = MagicMock()
@@ -187,7 +187,7 @@ async def test_trigger_single_group_collects_multi_city_special_sheets(
     from app.tasks import scheduler as scheduler_module
 
     scheduler = make_scheduler()
-    scheduler.settings.scrape_batch_size = 4
+    scheduler.settings.scrape_batch_size = 2
     scheduler.settings.scrape_delay_seconds = 0.0
 
     group = MagicMock()
@@ -264,7 +264,7 @@ async def test_trigger_single_group_updates_live_progress(
     from app.tasks import scheduler as scheduler_module
 
     scheduler = make_scheduler()
-    scheduler.settings.scrape_batch_size = 4
+    scheduler.settings.scrape_batch_size = 2
     scheduler.settings.scrape_delay_seconds = 0.0
 
     group = MagicMock()

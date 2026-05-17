@@ -641,6 +641,31 @@ class ScrapingBeeProvider:
             "return true;"
             "})()"
         )
+        settle_script = (
+            "(()=>{"
+            "const clean=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
+            "const visible=el=>{if(!el)return false;const r=el.getBoundingClientRect();"
+            "return r.width>0&&r.height>0&&window.getComputedStyle(el).visibility!=='hidden';};"
+            "const countNode=Array.from(document.querySelectorAll('body *')).find(el=>{"
+            "if(!visible(el))return false;"
+            "const text=clean(el.innerText);"
+            "return /\\b\\d+\\s+of\\s+\\d+\\s+flights\\b/i.test(text)||/\\b\\d+\\s+flights\\b/i.test(text);"
+            "});"
+            "const countText=clean(countNode?.innerText);"
+            "const summaryText=Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
+            ".filter(visible)"
+            ".map(el=>clean(el.innerText||el.getAttribute('aria-label')))"
+            ".filter(text=>/^cheapest(?:\\s|$)|^best(?:\\s|$)|^quickest(?:\\s|$)/i.test(text))"
+            ".slice(0,3)"
+            ".join('|');"
+            "const cardCount=document.querySelectorAll('.nrc6-price-section .e2GB-price-text').length;"
+            "const key=[countText,summaryText,cardCount].join('||');"
+            "const state=window.__fhSettleState||{key:'',hits:0};"
+            "if(key&&key===state.key){state.hits+=1;}else{state.key=key;state.hits=0;}"
+            "window.__fhSettleState=state;"
+            "return !!summaryText&&cardCount>0&&state.hits>=1;"
+            "})()"
+        )
         script = (
             "(()=>{"
             f"const cardLimit={card_limit};"
@@ -665,6 +690,7 @@ class ScrapingBeeProvider:
             "booking_href:clean(card.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),"
             "cabin:clean(card.querySelector('.nrc6-price-section .Hy6H')?.innerText),"
             "airline_text:clean(card.querySelector('.J0g6-operator-text')?.innerText),"
+            "badges:Array.from(card.querySelectorAll('span,div,button')).map(node=>clean(node.innerText)).filter(text=>/^(best|cheapest|quickest)$/i.test(text)).slice(0,3),"
             "legs:Array.from(card.querySelectorAll('ol.hJSA-list > li')).map(li=>({"
             "text:clean(li.innerText),"
             "airline:clean(li.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),"
@@ -683,36 +709,44 @@ class ScrapingBeeProvider:
             return {
                 "strict": False,
                 "instructions": [
-                    {"wait": 6_500},
+                    {"wait": 5_000},
                     {"evaluate": click_cheapest_script},
-                    {"wait": 2_000},
+                    {"wait": 1_500},
+                    {"evaluate": click_cheapest_script},
                     {"evaluate": "window.scrollBy(0, 1200);"},
-                    {"wait": 1_500},
-                    {"evaluate": click_cheapest_script},
-                    {"evaluate": "window.scrollBy(0, 1800);"},
-                    {"wait": 1_500},
-                    {"evaluate": "window.scrollBy(0, 2200);"},
-                    {"wait": 2_000},
+                    {"wait": 1_000},
+                    {"evaluate": settle_script},
+                    {"wait": 1_200},
+                    {"evaluate": settle_script},
+                    {"wait": 1_200},
+                    {"evaluate": settle_script},
+                    {"wait": 1_200},
+                    {"evaluate": settle_script},
                     {"evaluate": script},
                 ],
             }
         return {
             "strict": False,
             "instructions": [
-                {"wait": 8_000},
+                {"wait": 6_500},
                 {"evaluate": click_cheapest_script},
-                {"wait": 2_000},
+                {"wait": 1_500},
                 {"evaluate": "window.scrollBy(0, 1200);"},
-                {"wait": 1_500},
+                {"wait": 1_000},
                 {"evaluate": "window.scrollBy(0, 1800);"},
-                {"wait": 1_500},
+                {"wait": 1_000},
                 {"evaluate": click_cheapest_script},
                 {"evaluate": "window.scrollBy(0, 2400);"},
-                {"wait": 1_500},
+                {"wait": 1_000},
                 {"evaluate": "window.scrollBy(0, 2800);"},
-                {"wait": 1_500},
+                {"wait": 1_000},
                 {"evaluate": "window.scrollBy(0, 3200);"},
-                {"wait": 2_000},
+                {"wait": 1_000},
+                {"evaluate": settle_script},
+                {"wait": 1_200},
+                {"evaluate": settle_script},
+                {"wait": 1_200},
+                {"evaluate": settle_script},
                 {"evaluate": script},
             ],
         }
@@ -794,6 +828,21 @@ class ScrapingBeeProvider:
                 prices[key] = value
         return prices
 
+    def _results_include_badge(
+        self,
+        results: list[ProviderResult],
+        label: str,
+    ) -> bool:
+        target = label.strip().lower()
+        for result in results:
+            raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+            badges = raw_data.get("badges")
+            if not isinstance(badges, list):
+                continue
+            if any(_clean_text(badge).lower() == target for badge in badges):
+                return True
+        return False
+
     def _log_multi_city_debug_snapshot(
         self,
         *,
@@ -830,6 +879,7 @@ class ScrapingBeeProvider:
                         "stops": result.stops,
                         "duration_minutes": result.duration_minutes,
                         "price_text": _clean_text(raw_data.get("price_text")),
+                        "badges": raw_data.get("badges") if isinstance(raw_data.get("badges"), list) else [],
                         "outbound_time": _clean_text(outbound_leg.get("time_text")),
                         "outbound_route": _clean_text(outbound_leg.get("route_text")),
                         "return_time": _clean_text(inbound_leg.get("time_text")),
@@ -1011,6 +1061,11 @@ class ScrapingBeeProvider:
                 requested_currency=currency,
                 market_country_code=market_country_code,
             )
+            badges = [
+                _clean_text(badge)
+                for badge in (card.get("badges") or [])
+                if _clean_text(badge)
+            ]
 
             results.append(
                 ProviderResult(
@@ -1031,6 +1086,7 @@ class ScrapingBeeProvider:
                         "price_text": _clean_text(card.get("price_text")),
                         "summary": card_text,
                         "cabin": _clean_text(card.get("cabin")),
+                        "badges": badges,
                         "legs": normalized_legs,
                         "outbound_airline": normalized_legs[0].get("airline") or "",
                         "return_airline": normalized_legs[1].get("airline") or "",
@@ -1237,6 +1293,12 @@ class ScrapingBeeProvider:
             and captured_count >= _FAST_MULTI_CITY_CARD_LIMIT
             and card_count > captured_count
             and len(eligible_results) < 5
+        ):
+            needs_deep_pass = True
+        if (
+            not needs_deep_pass
+            and summary_prices.get("cheapest")
+            and not self._results_include_badge(eligible_results or results, "cheapest")
         ):
             needs_deep_pass = True
         if needs_deep_pass:
