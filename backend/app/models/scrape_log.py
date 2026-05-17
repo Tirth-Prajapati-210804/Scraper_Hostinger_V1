@@ -16,7 +16,7 @@ class ScrapeLog(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     route_group_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("route_groups.id", ondelete="SET NULL"),
+        ForeignKey("route_groups.id", ondelete="CASCADE"),
         nullable=True,
     )
     origin: Mapped[str] = mapped_column(String(8), nullable=False)

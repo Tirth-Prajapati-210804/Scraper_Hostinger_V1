@@ -11,6 +11,50 @@ from app.services import route_group_service
 
 
 @pytest.mark.asyncio
+async def test_delete_clears_collection_data_before_removing_group() -> None:
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    session.execute = AsyncMock()
+
+    group_id = uuid.uuid4()
+    group = RouteGroup(
+        id=group_id,
+        name="Canada to Vietnam",
+        destination_label="Vietnam",
+        destinations=["SGN", "HAN"],
+        origins=["YVR", "YYZ"],
+        nights=10,
+        days_ahead=90,
+        sheet_name_map={"YVR": "Canada", "YYZ": "Canada"},
+        special_sheets=[],
+        is_active=True,
+        market="us",
+        currency="USD",
+        max_stops=1,
+        start_date=None,
+        end_date=None,
+        trip_type="one_way",
+        user_id=None,
+    )
+
+    with patch.object(route_group_service, "get_by_id", AsyncMock(return_value=group)):
+        with patch.object(
+            route_group_service,
+            "_clear_group_collection_data",
+            AsyncMock(),
+        ) as clear_mock:
+            deleted = await route_group_service.delete(
+                session=session,
+                group_id=group_id,
+            )
+
+    assert deleted is True
+    clear_mock.assert_awaited_once_with(session, group_id)
+    session.execute.assert_awaited_once()
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_update_clears_collection_data_when_route_identity_changes() -> None:
     session = AsyncMock()
     session.commit = AsyncMock()

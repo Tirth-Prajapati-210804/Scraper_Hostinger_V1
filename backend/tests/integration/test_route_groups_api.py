@@ -171,6 +171,87 @@ async def test_delete_route_group(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_delete_route_group_clears_collected_data(auth_client, db_session_factory):
+    from app.models.all_flight_result import AllFlightResult
+    from app.models.daily_cheapest import DailyCheapestPrice
+    from app.models.scrape_log import ScrapeLog
+
+    create_res = await auth_client.post("/api/v1/route-groups/", json=VALID_GROUP)
+    group_id = create_res.json()["id"]
+    group_uuid = UUID(group_id)
+
+    async with db_session_factory() as session:
+        session.add(
+            DailyCheapestPrice(
+                route_group_id=group_uuid,
+                origin="YVR",
+                destination="SGN",
+                depart_date=date(2026, 5, 1),
+                airline="Air Canada",
+                price=799.0,
+                currency="USD",
+                provider="searchapi",
+            )
+        )
+        session.add(
+            AllFlightResult(
+                route_group_id=group_uuid,
+                origin="YVR",
+                destination="SGN",
+                depart_date=date(2026, 5, 1),
+                airline="Air Canada",
+                price=799.0,
+                currency="USD",
+                provider="searchapi",
+                deep_link="https://example.com",
+            )
+        )
+        session.add(
+            ScrapeLog(
+                route_group_id=group_uuid,
+                origin="YVR",
+                destination="SGN",
+                depart_date=date(2026, 5, 1),
+                provider="searchapi",
+                status="success",
+                offers_found=1,
+                cheapest_price=799.0,
+            )
+        )
+        await session.commit()
+
+    del_res = await auth_client.delete(f"/api/v1/route-groups/{group_id}")
+    assert del_res.status_code == 204
+
+    async with db_session_factory() as session:
+        daily_count = (
+            await session.execute(
+                select(func.count()).select_from(DailyCheapestPrice).where(
+                    DailyCheapestPrice.route_group_id == group_uuid
+                )
+            )
+        ).scalar_one()
+        all_results_count = (
+            await session.execute(
+                select(func.count()).select_from(AllFlightResult).where(
+                    AllFlightResult.route_group_id == group_uuid
+                )
+            )
+        ).scalar_one()
+        scrape_log_count = (
+            await session.execute(
+                select(func.count()).select_from(ScrapeLog).where(
+                    ScrapeLog.route_group_id == group_uuid
+                )
+            )
+        ).scalar_one()
+
+    assert daily_count == 0
+    assert all_results_count == 0
+    assert scrape_log_count == 0
+
+
+@pytest.mark.asyncio
 async def test_progress_returns_zero_for_new_group(auth_client):
     create_res = await auth_client.post("/api/v1/route-groups/", json=VALID_GROUP)
     group_id = create_res.json()["id"]
