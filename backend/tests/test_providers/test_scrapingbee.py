@@ -313,6 +313,7 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
     assert 'a[href*=\\"/book/\\"]' in scenario
     assert "__fhSettleState" in scenario
     assert "badges:Array.from(card.querySelectorAll" in scenario
+    assert "topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text'))" in scenario
 
 
 @pytest.mark.asyncio

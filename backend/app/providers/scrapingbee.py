@@ -646,6 +646,11 @@ class ScrapingBeeProvider:
             "const clean=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
             "const visible=el=>{if(!el)return false;const r=el.getBoundingClientRect();"
             "return r.width>0&&r.height>0&&window.getComputedStyle(el).visibility!=='hidden';};"
+            "const topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text'))"
+            ".map(node=>clean(node.innerText))"
+            ".filter(Boolean)"
+            ".slice(0,4)"
+            ".join('|');"
             "const countNode=Array.from(document.querySelectorAll('body *')).find(el=>{"
             "if(!visible(el))return false;"
             "const text=clean(el.innerText);"
@@ -659,11 +664,14 @@ class ScrapingBeeProvider:
             ".slice(0,3)"
             ".join('|');"
             "const cardCount=document.querySelectorAll('.nrc6-price-section .e2GB-price-text').length;"
-            "const key=[countText,summaryText,cardCount].join('||');"
+            "const cheapestBadgeSeen=Array.from(document.querySelectorAll('span,div,button'))"
+            ".filter(visible)"
+            ".some(node=>/^cheapest$/i.test(clean(node.innerText)));"
+            "const key=[countText,summaryText,topPrices,cardCount,cheapestBadgeSeen?'1':'0'].join('||');"
             "const state=window.__fhSettleState||{key:'',hits:0};"
             "if(key&&key===state.key){state.hits+=1;}else{state.key=key;state.hits=0;}"
             "window.__fhSettleState=state;"
-            "return !!summaryText&&cardCount>0&&state.hits>=1;"
+            "return !!summaryText&&!!topPrices&&cardCount>0&&state.hits>=2;"
             "})()"
         )
         script = (
@@ -722,6 +730,8 @@ class ScrapingBeeProvider:
                     {"evaluate": settle_script},
                     {"wait": 1_200},
                     {"evaluate": settle_script},
+                    {"wait": 1_200},
+                    {"evaluate": settle_script},
                     {"evaluate": script},
                 ],
             }
@@ -742,6 +752,8 @@ class ScrapingBeeProvider:
                 {"wait": 1_000},
                 {"evaluate": "window.scrollBy(0, 3200);"},
                 {"wait": 1_000},
+                {"evaluate": settle_script},
+                {"wait": 1_200},
                 {"evaluate": settle_script},
                 {"wait": 1_200},
                 {"evaluate": settle_script},
