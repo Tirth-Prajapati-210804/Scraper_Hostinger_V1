@@ -20,33 +20,29 @@ export function StatCard({
   subtitle,
 }: StatCardProps) {
   return (
-    <Card className="group p-[18px] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_45px_-28px_rgba(79,70,229,0.28)]">
-      <div className="flex items-start justify-between gap-3">
+    <Card className="group rounded-[12px] border-[#E8ECF4] bg-white px-5 py-[18px] shadow-none transition-all duration-150 hover:shadow-[0_4px_18px_rgba(75,94,222,0.08)]">
+      <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <p className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#9CA3AF]">
             {label}
           </p>
-
-          <p
-            className={cn(
-              "mt-3 truncate text-[28px] font-bold leading-none tracking-tight text-slate-950",
-              valueClassName,
-            )}
-          >
-            {value}
-          </p>
-
-          {subtitle ? (
-            <p className="mt-2 truncate text-xs font-medium text-slate-400">
-              {subtitle}
-            </p>
-          ) : null}
         </div>
 
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition group-hover:scale-105">
-          <Icon className="h-4.5 w-4.5" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-[#F4F6FA] text-[#6B7280]">
+          <Icon className="h-[15px] w-[15px]" />
         </div>
       </div>
+
+      <p
+        className={cn(
+          "truncate text-[26px] font-bold leading-none text-[#1a1d23]",
+          valueClassName,
+        )}
+      >
+        {value}
+      </p>
+
+      {subtitle ? <p className="mt-2 truncate text-[12px] text-[#9CA3AF]">{subtitle}</p> : null}
     </Card>
   );
 }

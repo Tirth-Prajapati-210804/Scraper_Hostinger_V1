@@ -50,7 +50,6 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
         : "-";
   const routeLabel = `${group.origins[0] ?? "-"}->${group.destinations[0] ?? "-"}`;
   const coveragePct = progress ? Math.min(progress.coverage_percent, 100) : 0;
-  const coverageTone = coveragePct > 90 ? "bg-brand-600" : "bg-amber-500";
 
   async function handleDownload() {
     setDownloading(true);
@@ -84,20 +83,22 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
 
   return (
     <Card
-      className="cursor-pointer p-[18px] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_45px_-28px_rgba(79,70,229,0.28)]"
+      className="cursor-pointer rounded-[12px] border-[#E8ECF4] bg-white p-[18px] shadow-none transition-[box-shadow] duration-150 hover:shadow-[0_4px_18px_rgba(75,94,222,0.08)]"
       onClick={() => navigate(`/route-groups/${group.id}`)}
     >
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="truncate text-[15px] font-semibold text-slate-900">{group.name}</h3>
-          <div className="mt-3 flex flex-wrap gap-1.5">
+          <h3 className="mb-1 truncate text-[14px] font-semibold text-[#1a1d23]">
+            {group.name}
+          </h3>
+          <div className="flex flex-wrap gap-[5px]">
             <StatusBadge active={group.is_active} />
             <Badge tone="blue">{tripType}</Badge>
             <Badge tone="slate">{group.currency}</Badge>
           </div>
         </div>
 
-        <div className="flex gap-1.5" onClick={(event) => event.stopPropagation()}>
+        <div className="flex shrink-0 gap-1" onClick={(event) => event.stopPropagation()}>
           <IconButton
             title="Trigger scrape"
             onClick={handleTrigger}
@@ -113,22 +114,22 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
         </div>
       </div>
 
-      <div className="mt-4 flex items-center gap-2 text-sm text-slate-400">
-        <MapPin className="h-4 w-4 shrink-0" />
-        <span className="truncate">{group.destination_label}</span>
-        <span>|</span>
-        <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-600">
+      <div className="mt-[14px] flex items-center gap-[6px]">
+        <MapPin className="h-3 w-3 shrink-0 text-[#9CA3AF]" />
+        <span className="truncate text-[12px] text-[#9CA3AF]">{group.destination_label}</span>
+        <span className="ml-1 text-[12px] text-[#C4CAD4]">·</span>
+        <span className="rounded-[4px] bg-[#F4F6FA] px-[6px] py-[1px] font-mono text-[11px] font-semibold text-[#6B7280]">
           {routeLabel}
         </span>
       </div>
 
-      <div className="mt-4 grid grid-cols-3 gap-2">
+      <div className="mt-[14px] grid grid-cols-3 gap-2">
         <MiniStat label="Origins" value={String(group.origins.length)} />
         <MiniStat label="Stay" value={stayLabel} />
         <MiniStat label="Window" value={`${group.days_ahead}d`} />
       </div>
 
-      <div className="mt-5">
+      <div className="mt-[14px]">
         {progressQuery.isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-2 w-full rounded-full" />
@@ -136,25 +137,32 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
           </div>
         ) : progress ? (
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400">
+            <div className="mb-[5px] flex items-center justify-between">
+              <span className="text-[11px] text-[#9CA3AF]">
                 {formatNumber(progress.dates_with_data)} / {formatNumber(progress.total_dates)} scanned
               </span>
-              <span className={`font-semibold ${coveragePct > 90 ? "text-emerald-600" : "text-amber-600"}`}>
+              <span className={`text-[11px] font-semibold ${coveragePct > 90 ? "text-[#059669]" : "text-[#D97706]"}`}>
                 {progress.coverage_percent.toFixed(1)}%
               </span>
             </div>
-            <div className="h-1 overflow-hidden rounded-full bg-indigo-100">
-              <div className={`h-full rounded-full ${coverageTone}`} style={{ width: `${coveragePct}%` }} />
+            <div className="h-1 overflow-hidden rounded-full bg-[#EEF2FF]">
+              <div
+                className="h-full rounded-full transition-[width] duration-300"
+                style={{
+                  width: `${coveragePct}%`,
+                  background:
+                    coveragePct > 90 ? "linear-gradient(90deg,#4B5EDE,#7C3AED)" : "#F59E0B",
+                }}
+              />
             </div>
           </div>
         ) : (
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400">No collection yet</span>
-              <span className="font-semibold text-slate-400">0%</span>
+            <div className="mb-[5px] flex items-center justify-between">
+              <span className="text-[11px] text-[#9CA3AF]">No collection yet</span>
+              <span className="text-[11px] font-semibold text-[#9CA3AF]">0%</span>
             </div>
-            <div className="h-1 overflow-hidden rounded-full bg-indigo-100">
+            <div className="h-1 overflow-hidden rounded-full bg-[#EEF2FF]">
               <div className="h-full w-0 rounded-full bg-brand-600" />
             </div>
           </div>
@@ -173,11 +181,11 @@ function Badge({
 }) {
   const styles =
     tone === "blue"
-      ? "border-blue-100 bg-blue-50 text-blue-700"
-      : "border-slate-200 bg-slate-100 text-slate-600";
+      ? "bg-[#EEF2FF] text-[#4B5EDE]"
+      : "bg-[#F1F5F9] text-[#64748B]";
 
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${styles}`}>
+    <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-[2px] text-[12px] font-medium ${styles}`}>
       {children}
     </span>
   );
@@ -190,7 +198,7 @@ function StatusBadge({ active }: { active: boolean }) {
         active ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
       }`}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-emerald-500" : "bg-amber-500"}`} />
+      <span className={`h-[5px] w-[5px] rounded-full ${active ? "bg-emerald-500" : "bg-amber-500"}`} />
       {active ? "Active" : "Paused"}
     </span>
   );
@@ -198,9 +206,9 @@ function StatusBadge({ active }: { active: boolean }) {
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-slate-50 px-3 py-2">
-      <p className="text-[10px] font-medium text-slate-400">{label}</p>
-      <p className="mt-1 text-[13px] font-semibold text-slate-900">{value}</p>
+    <div className="rounded-[7px] bg-[#F8FAFF] px-[10px] py-[7px]">
+      <p className="mb-[1px] text-[10px] font-medium text-[#9CA3AF]">{label}</p>
+      <p className="text-[13px] font-semibold text-[#1a1d23]">{value}</p>
     </div>
   );
 }
@@ -224,7 +232,7 @@ function IconButton({
       title={title}
       onClick={onClick}
       disabled={disabled}
-      className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 disabled:opacity-50"
+      className="flex h-7 w-7 items-center justify-center rounded-[7px] border border-[#E8ECF4] bg-white text-[#6B7280] transition hover:bg-[#F8FAFF] disabled:opacity-50"
     >
       <span className={spinning ? "animate-spin" : ""}>{icon}</span>
     </button>

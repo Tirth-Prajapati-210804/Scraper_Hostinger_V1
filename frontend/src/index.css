@@ -10,9 +10,7 @@
   }
 
   html {
-    background:
-      radial-gradient(circle at top left, rgba(99, 102, 241, 0.1), transparent 30%),
-      linear-gradient(180deg, #f8faff 0%, #f4f6fa 100%);
+    background: #f4f6fa;
     overflow-x: hidden;
   }
 

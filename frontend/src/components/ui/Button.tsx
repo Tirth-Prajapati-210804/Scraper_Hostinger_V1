@@ -30,44 +30,43 @@ export function Button({
 }: ButtonProps) {
   const base = `
     inline-flex items-center justify-center gap-2
-    whitespace-nowrap rounded-2xl
+    whitespace-nowrap rounded-[8px]
     font-medium
-    transition-all duration-200
+    transition-all duration-150
     focus:outline-none focus:ring-2 focus:ring-brand-500/25
     disabled:pointer-events-none disabled:opacity-55
     select-none
   `;
 
   const sizes = {
-    sm: "h-9 px-3.5 text-xs",
-    md: "h-10 px-4 text-sm",
-    lg: "h-11 px-5 text-sm",
+    sm: "px-3 py-1.5 text-[13px]",
+    md: "px-4 py-2 text-[13px]",
+    lg: "px-5 py-[11px] text-[13px]",
   };
 
   const variants = {
     primary: `
-      bg-brand-600 text-white
-      shadow-[0_12px_26px_-18px_rgba(79,70,229,0.95)]
-      hover:-translate-y-[1px] hover:bg-brand-700 hover:shadow-[0_16px_28px_-18px_rgba(79,70,229,0.95)]
-      active:translate-y-0 active:bg-brand-800
+      bg-[#4B5EDE] text-white
+      hover:bg-[#4354cd]
+      active:bg-[#3d4dc1]
     `,
 
     secondary: `
-      border border-slate-200 bg-white text-slate-700
-      hover:border-slate-300 hover:bg-slate-50
+      border border-[#E2E8F0] bg-white text-[#374151]
+      hover:bg-slate-50
       active:bg-slate-100
     `,
 
     ghost: `
-      bg-transparent text-slate-600
+      bg-transparent text-[#374151]
       hover:bg-slate-100 hover:text-slate-900
       active:bg-slate-200
     `,
 
     danger: `
-      border border-red-200 bg-red-50 text-red-600
-      hover:bg-red-100 hover:text-red-700
-      active:bg-red-800
+      border border-[#FCA5A5] bg-[#FEF2F2] text-[#DC2626]
+      hover:bg-[#fee2e2]
+      active:bg-[#fecaca]
     `,
   };
 

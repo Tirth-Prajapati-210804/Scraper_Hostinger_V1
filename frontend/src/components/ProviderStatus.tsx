@@ -21,82 +21,58 @@ export function ProviderStatus({
 
   if (providers.length === 0) {
     return (
-      <Card className="p-4">
+      <Card className="rounded-[12px] border-[#E8ECF4] bg-white px-5 py-[14px] shadow-none">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+          <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[8px] bg-[#F4F6FA] text-[#6B7280]">
             <PlugZap className="h-4 w-4" />
           </div>
 
           <div>
-            <p className="text-sm font-semibold text-slate-900">
-              Provider Status
-            </p>
-
-            <p className="text-sm text-slate-500">
-              No provider data available
-            </p>
+            <p className="text-[13px] font-semibold text-[#1a1d23]">Provider Status</p>
+            <p className="text-[11px] text-[#9CA3AF]">No provider data available</p>
           </div>
         </div>
       </Card>
     );
   }
 
-  const readyCount = providers.filter(
-    ([, status]) =>
-      status === "configured" || status === "active"
-  ).length;
-
   return (
-    <Card className="p-5">
-      {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-[15px] font-semibold text-slate-900">
-            Provider Status
-          </p>
-        </div>
+    <Card className="rounded-[12px] border-[#E8ECF4] bg-white px-5 py-[14px] shadow-none">
+      {providers.map(([name, status], index) => {
+        const active = status === "configured" || status === "active";
 
-        <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          {readyCount}/{providers.length} Ready
-        </div>
-      </div>
-
-      {/* Inline providers */}
-      <div className="mt-4 flex flex-wrap gap-2.5">
-        {providers.map(
-          ([name, status]) => {
-            const active =
-              status === "configured" || status === "active";
-
-            return (
-              <div
-                key={name}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2"
-              >
+        return (
+          <div
+            key={name}
+            className={`flex items-center justify-between ${index > 0 ? "mt-3 border-t border-[#F4F6FA] pt-3" : ""}`}
+          >
+            <div className="flex items-center gap-[10px]">
+              <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[8px] bg-[#F4F6FA] text-[#6B7280]">
                 {active ? (
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <CheckCircle2 className="h-[15px] w-[15px] text-emerald-600" />
                 ) : (
-                  <span className="h-2 w-2 rounded-full bg-slate-300" />
+                  <PlugZap className="h-[15px] w-[15px] text-slate-400" />
                 )}
-
-                <span className="text-sm font-medium capitalize text-slate-800">
-                  {name}
-                </span>
-
-                <span
-                  className={`text-xs font-medium ${active
-                    ? "text-emerald-600"
-                    : "text-slate-400"
-                    }`}
-                >
-                  {status}
-                </span>
               </div>
-            );
-          }
-        )}
-      </div>
+              <div>
+                <div className="text-[13px] font-semibold text-[#1a1d23] capitalize">{name}</div>
+                <div className="text-[11px] text-[#9CA3AF]">
+                  {active ? "Operational" : "Unavailable"}
+                </div>
+              </div>
+            </div>
+
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-[2px] text-[12px] font-medium ${
+                active ? "bg-[#ECFDF5] text-[#059669]" : "bg-[#F1F5F9] text-[#64748B]"
+              }`}
+            >
+              {active ? <span className="h-[5px] w-[5px] rounded-full bg-[#10B981]" /> : null}
+              {active ? "Operational" : status}
+            </span>
+          </div>
+        );
+      })}
     </Card>
   );
 }
