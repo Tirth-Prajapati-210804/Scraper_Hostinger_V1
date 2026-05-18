@@ -27,8 +27,8 @@ _MULTI_CITY_HEADERS = [
     "Date",
     "Ending Date",
     "Dep Airport",
-    "Arrivel Airport",
-    "Night ",
+    "Arrival Airport",
+    "Nights",
     "Airline",
     "Flight Price",
 ]
@@ -319,41 +319,60 @@ def _export_multi_city_route_group(
 
     sheet_name_map = route_group.sheet_name_map or {o: o for o in route_group.origins}
 
-    cheapest_by_origin_date: dict[tuple[str, object], AllFlightResult] = {}
+    cheapest_by_route_date: dict[tuple[str, str, object], AllFlightResult] = {}
     for row in itinerary_rows:
-        key = (row.origin, row.depart_date)
-        current = cheapest_by_origin_date.get(key)
+        key = (row.origin, row.destination, row.depart_date)
+        current = cheapest_by_route_date.get(key)
         if current is None or float(row.price) < float(current.price):
-            cheapest_by_origin_date[key] = row
+            cheapest_by_route_date[key] = row
 
-    rows_by_origin: dict[str, list[AllFlightResult]] = {origin: [] for origin in route_group.origins}
-    for row in cheapest_by_origin_date.values():
-        rows_by_origin.setdefault(row.origin, []).append(row)
+    rows_by_route: dict[tuple[str, str], list[AllFlightResult]] = {}
+    for row in cheapest_by_route_date.values():
+        rows_by_route.setdefault((row.origin, row.destination), []).append(row)
 
     itinerary_prices_by_origin: dict[str, list[float]] = {}
     all_itinerary_prices: list[AllFlightResult] = []
 
-    for origin, rows in rows_by_origin.items():
+    origin_destination_counts: dict[str, int] = {}
+    for origin, _destination in rows_by_route:
+        origin_destination_counts[origin] = origin_destination_counts.get(origin, 0) + 1
+
+    used_sheet_names: set[str] = set()
+
+    def build_sheet_name(origin: str, destination: str) -> str:
+        base_name = sheet_name_map.get(origin, origin)
+        if origin_destination_counts.get(origin, 0) > 1:
+            base_name = f"{base_name}-{destination}"
+
+        sheet_name = base_name[:31]
+        if sheet_name not in used_sheet_names:
+            used_sheet_names.add(sheet_name)
+            return sheet_name
+
+        suffix = 2
+        while True:
+            candidate = f"{base_name[:28]}-{suffix}"[:31]
+            if candidate not in used_sheet_names:
+                used_sheet_names.add(candidate)
+                return candidate
+            suffix += 1
+
+    for (origin, destination), rows in sorted(rows_by_route.items()):
         rows.sort(key=lambda item: item.depart_date)
         if not rows:
             continue
 
-        ws = wb.create_sheet(title=sheet_name_map.get(origin, origin)[:31])
+        ws = wb.create_sheet(title=build_sheet_name(origin, destination))
         _write_header_row(ws, _MULTI_CITY_HEADERS)
 
         for row_idx, result in enumerate(rows, start=2):
             itinerary = result.itinerary_data or {}
             return_date = itinerary.get("return_date")
-            return_origin = itinerary.get("return_origin") or ""
-            destination_label = route_group.destination_label
-            arrival_airport = destination_label
-            if return_origin:
-                arrival_airport = f"{destination_label}/{return_origin}"
 
             ws.cell(row=row_idx, column=1, value=result.depart_date).number_format = "YYYY-MM-DD"
             ws.cell(row=row_idx, column=2, value=return_date).number_format = "YYYY-MM-DD"
             ws.cell(row=row_idx, column=3, value=result.origin)
-            ws.cell(row=row_idx, column=4, value=arrival_airport)
+            ws.cell(row=row_idx, column=4, value=result.destination)
             ws.cell(row=row_idx, column=5, value=route_group.nights)
             ws.cell(row=row_idx, column=6, value=result.airline)
             ws.cell(row=row_idx, column=7, value=int(round(float(result.price))))

@@ -153,3 +153,27 @@ def test_export_special_sheet_6_columns() -> None:
     assert ws.cell(2, 4).value == 7
     assert ws.cell(2, 5).value == "VN"
     assert ws.cell(2, 7).value == 400
+
+
+def test_multi_city_export_creates_one_sheet_per_route() -> None:
+    rg = make_route_group(sheet_name_map={"YOW": "YOW"})
+    rg.trip_type = "multi_city"
+    rg.origins = ["YOW"]
+
+    first = make_result(origin="YOW", destination="LHR", price=671.0, airline="Air France")
+    first.itinerary_data = {
+        "return_date": "2026-06-13",
+        "return_origin": "MXP",
+    }
+
+    second = make_result(origin="YOW", destination="LGW", price=702.0, airline="KLM")
+    second.itinerary_data = {
+        "return_date": "2026-06-13",
+        "return_origin": "MXP",
+    }
+
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [first, second])))
+
+    assert wb.sheetnames == ["YOW-LGW", "YOW-LHR"]
+    assert wb["YOW-LHR"].cell(2, 4).value == "LHR"
+    assert wb["YOW-LGW"].cell(2, 4).value == "LGW"
