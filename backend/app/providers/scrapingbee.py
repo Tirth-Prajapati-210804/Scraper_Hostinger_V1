@@ -445,9 +445,9 @@ class ScrapingBeeProvider:
         async with self._semaphore:
             await self._wait_for_slot()
             try:
-                response = await self._client.post(
+                response = await self._client.get(
                     self._base_url,
-                    data=self._base_params(
+                    params=self._base_params(
                         target_url,
                         ai_extract_rules=ai_extract_rules,
                         js_scenario=js_scenario,
@@ -490,9 +490,9 @@ class ScrapingBeeProvider:
         async with self._semaphore:
             await self._wait_for_slot()
             try:
-                response = await self._client.post(
+                response = await self._client.get(
                     self._base_url,
-                    data=params,
+                    params=params,
                 )
             except httpx.TimeoutException as exc:
                 raise RuntimeError("ScrapingBee request timed out.") from exc
@@ -628,95 +628,83 @@ class ScrapingBeeProvider:
 
     def _build_multi_city_results_scenario(self, *, deep: bool = False) -> dict[str, object]:
         card_limit = _DEEP_MULTI_CITY_CARD_LIMIT if deep else _FAST_MULTI_CITY_CARD_LIMIT
-        click_cheapest_script = (
+        helper_script = (
             "(()=>{"
-            "const norm=v=>(v||'').replace(/\\s+/g,' ').trim().toLowerCase();"
-            "const visible=el=>{if(!el)return false;const r=el.getBoundingClientRect();"
+            "const fh=window.__fhResults||(window.__fhResults={});"
+            "fh.clean=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
+            "fh.visible=el=>{if(!el)return false;const r=el.getBoundingClientRect();"
             "return r.width>0&&r.height>0&&window.getComputedStyle(el).visibility!=='hidden';};"
+            "fh.clickCheapest=()=>{"
             "const pick=Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
-            ".filter(el=>visible(el)&&/^cheapest(?:\\s|$)/.test(norm(el.innerText||el.getAttribute('aria-label')||'')));"
+            ".filter(el=>fh.visible(el)&&/^cheapest(?:\\s|$)/.test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()));"
             "if(!pick.length)return false;"
             "const target=pick[0].closest('button,a,[role=\"button\"]')||pick[0];"
             "target.click();"
             "return true;"
-            "})()"
-        )
-        settle_script = (
-            "(()=>{"
-            "const clean=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
-            "const visible=el=>{if(!el)return false;const r=el.getBoundingClientRect();"
-            "return r.width>0&&r.height>0&&window.getComputedStyle(el).visibility!=='hidden';};"
+            "};"
+            "fh.settle=()=>{"
             "const topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text'))"
-            ".map(node=>clean(node.innerText))"
-            ".filter(Boolean)"
-            ".slice(0,4)"
-            ".join('|');"
+            ".map(node=>fh.clean(node.innerText)).filter(Boolean).slice(0,4).join('|');"
             "const countNode=Array.from(document.querySelectorAll('body *')).find(el=>{"
-            "if(!visible(el))return false;"
-            "const text=clean(el.innerText);"
+            "if(!fh.visible(el))return false;"
+            "const text=fh.clean(el.innerText);"
             "return /\\b\\d+\\s+of\\s+\\d+\\s+flights\\b/i.test(text)||/\\b\\d+\\s+flights\\b/i.test(text);"
             "});"
-            "const countText=clean(countNode?.innerText);"
+            "const countText=fh.clean(countNode?.innerText);"
             "const summaryText=Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
-            ".filter(visible)"
-            ".map(el=>clean(el.innerText||el.getAttribute('aria-label')))"
+            ".filter(fh.visible)"
+            ".map(el=>fh.clean(el.innerText||el.getAttribute('aria-label')))"
             ".filter(text=>/^cheapest(?:\\s|$)|^best(?:\\s|$)|^quickest(?:\\s|$)/i.test(text))"
-            ".slice(0,3)"
-            ".join('|');"
+            ".slice(0,3).join('|');"
             "const cardCount=document.querySelectorAll('.nrc6-price-section .e2GB-price-text').length;"
             "const cheapestBadgeSeen=Array.from(document.querySelectorAll('span,div,button'))"
-            ".filter(visible)"
-            ".some(node=>/^cheapest$/i.test(clean(node.innerText)));"
+            ".filter(fh.visible).some(node=>/^cheapest$/i.test(fh.clean(node.innerText)));"
             "const key=[countText,summaryText,topPrices,cardCount,cheapestBadgeSeen?'1':'0'].join('||');"
             "const state=window.__fhSettleState||{key:'',hits:0};"
             "if(key&&key===state.key){state.hits+=1;}else{state.key=key;state.hits=0;}"
             "window.__fhSettleState=state;"
             "return !!summaryText&&!!topPrices&&cardCount>0&&state.hits>=2;"
-            "})()"
-        )
-        script = (
-            "(()=>{"
-            f"const cardLimit={card_limit};"
+            "};"
+            f"fh.extract=()=>{{const cardLimit={card_limit};"
             "const isCard=node=>!!node&&!!node.querySelector('.nrc6-price-section .e2GB-price-text')"
             "&&node.querySelectorAll('ol.hJSA-list > li').length>=2;"
-            "const raw=Array.from(document.querySelectorAll("
-            "'div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]'"
-            ")).filter(isCard);"
-            "const roots=raw.filter((card,index)=>!raw.some((other,otherIndex)=>"
-            "otherIndex!==index&&card.contains(other)&&isCard(other)"
-            "));"
-            "const clean=v=>(v||'').toString().trim();"
+            "const raw=Array.from(document.querySelectorAll('div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]')).filter(isCard);"
+            "const roots=raw.filter((card,index)=>!raw.some((other,otherIndex)=>otherIndex!==index&&card.contains(other)&&isCard(other)));"
             "const tabText=label=>(Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
-            ".find(el=>new RegExp('^'+label+'(?:\\\\s|$)').test(clean(el.innerText||el.getAttribute('aria-label')).replace(/\\\\s+/g,' ').toLowerCase()))"
-            "?.innerText||'').trim();"
+            ".find(el=>new RegExp('^'+label+'(?:\\\\s|$)').test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()))?.innerText||'').trim();"
             "return JSON.stringify({"
             "card_count:roots.length,"
             "captured_count:roots.slice(0,cardLimit).length,"
             "cards:roots.slice(0,cardLimit).map(card=>({"
-            "text:clean(card.innerText),"
-            "price_text:clean(card.querySelector('.nrc6-price-section .e2GB-price-text')?.innerText),"
-            "booking_href:clean(card.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),"
-            "cabin:clean(card.querySelector('.nrc6-price-section .Hy6H')?.innerText),"
-            "airline_text:clean(card.querySelector('.J0g6-operator-text')?.innerText),"
-            "badges:Array.from(card.querySelectorAll('span,div,button')).map(node=>clean(node.innerText)).filter(text=>/^(best|cheapest|quickest)$/i.test(text)).slice(0,3),"
+            "text:fh.clean(card.innerText),"
+            "price_text:fh.clean(card.querySelector('.nrc6-price-section .e2GB-price-text')?.innerText),"
+            "booking_href:fh.clean(card.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),"
+            "cabin:fh.clean(card.querySelector('.nrc6-price-section .Hy6H')?.innerText),"
+            "airline_text:fh.clean(card.querySelector('.J0g6-operator-text')?.innerText),"
+            "badges:Array.from(card.querySelectorAll('span,div,button')).map(node=>fh.clean(node.innerText)).filter(text=>/^(best|cheapest|quickest)$/i.test(text)).slice(0,3),"
             "legs:Array.from(card.querySelectorAll('ol.hJSA-list > li')).map(li=>({"
-            "text:clean(li.innerText),"
-            "airline:clean(li.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),"
-            "time_text:clean(li.querySelector('.VY2U .vmXl')?.innerText),"
-            "route_text:clean(li.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),"
-            "stops_text:clean(li.querySelector('.JWEO .vmXl')?.innerText),"
-            "layover_text:clean(li.querySelector('.JWEO .c_cgF')?.innerText),"
-            "duration_text:clean(li.querySelector('.xdW8 .vmXl')?.innerText)"
+            "text:fh.clean(li.innerText),"
+            "airline:fh.clean(li.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),"
+            "time_text:fh.clean(li.querySelector('.VY2U .vmXl')?.innerText),"
+            "route_text:fh.clean(li.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),"
+            "stops_text:fh.clean(li.querySelector('.JWEO .vmXl')?.innerText),"
+            "layover_text:fh.clean(li.querySelector('.JWEO .c_cgF')?.innerText),"
+            "duration_text:fh.clean(li.querySelector('.xdW8 .vmXl')?.innerText)"
             "})).filter(leg=>leg.text)"
             "})),"
             "summary:{cheapest:tabText('cheapest'),best:tabText('best')}"
-            "});"
+            "});};"
+            "return true;"
             "})()"
         )
+        click_cheapest_script = "window.__fhResults?.clickCheapest?.() ?? false"
+        settle_script = "window.__fhResults?.settle?.() ?? false"
+        script = "window.__fhResults?.extract?.() ?? '{}'"
         if not deep:
             return {
                 "strict": False,
                 "instructions": [
+                    {"evaluate": helper_script},
                     {"wait": 5_000},
                     {"evaluate": click_cheapest_script},
                     {"wait": 1_500},
@@ -738,6 +726,7 @@ class ScrapingBeeProvider:
         return {
             "strict": False,
             "instructions": [
+                {"evaluate": helper_script},
                 {"wait": 6_500},
                 {"evaluate": click_cheapest_script},
                 {"wait": 1_500},
