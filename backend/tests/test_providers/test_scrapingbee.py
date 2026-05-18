@@ -162,6 +162,44 @@ async def test_max_stops_filters_results(provider: ScrapingBeeProvider) -> None:
 
 
 @pytest.mark.asyncio
+async def test_one_way_filters_out_bus_results(provider: ScrapingBeeProvider) -> None:
+    provider._client.get = AsyncMock(
+        return_value=mock_response(
+            {
+                "offers": [
+                    {
+                        "price": 399,
+                        "airline": "Bus + Airline Combo",
+                        "duration_text": "8h 5m",
+                        "stops": 1,
+                        "summary": "Bus to airport and flight connection",
+                        "link": "/flights/bus-mixed",
+                    },
+                    {
+                        "price": 450,
+                        "airline": "Air Canada",
+                        "duration_text": "9h 10m",
+                        "stops": 1,
+                        "summary": "Air Canada 1 stop",
+                        "link": "/flights/air-only",
+                    },
+                ]
+            }
+        )
+    )
+
+    results = await provider.search_one_way(
+        origin="YVR",
+        destination="NRT",
+        depart_date=DEPART,
+        max_stops=1,
+    )
+
+    assert len(results) == 1
+    assert results[0].airline == "Air Canada"
+
+
+@pytest.mark.asyncio
 async def test_round_trip_builds_round_trip_search_url(provider: ScrapingBeeProvider) -> None:
     provider._client.get = AsyncMock(return_value=mock_response({"offers": []}))
 
@@ -314,6 +352,121 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
     assert "__fhSettleState" in scenario
     assert "badges:Array.from(card.querySelectorAll" in scenario
     assert "topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text'))" in scenario
+
+
+@pytest.mark.asyncio
+async def test_multi_city_filters_out_bus_results(provider: ScrapingBeeProvider) -> None:
+    provider._client.get = AsyncMock(
+        return_value=mock_response(
+            {
+                "evaluate_results": [
+                    True,
+                    True,
+                    json.dumps(
+                        {
+                            "cards": [
+                                {
+                                    "text": (
+                                        "Best Cheapest 8:30 pm - 11:10 am+1 "
+                                        "YYZ Toronto Pearson - BER Berlin Brandenburg "
+                                        "1 stop 13h 40m "
+                                        "9:15 am - 1:34 pm "
+                                        "BUD Budapest Ferenc Liszt Intl - YYZ Toronto Pearson "
+                                        "1 stop 10h 19m "
+                                        "$829 Economy Light Select"
+                                    ),
+                                    "price_text": "$829",
+                                    "booking_href": "/book/open-jaw-123",
+                                    "cabin": "Economy Light",
+                                    "airline_text": "Icelandair / Lufthansa",
+                                    "legs": [
+                                        {
+                                            "text": (
+                                                "8:30 pm - 11:10 am+1 "
+                                                "YYZ Toronto Pearson - BER Berlin Brandenburg "
+                                                "1 stop 13h 40m"
+                                            ),
+                                            "airline": "Icelandair",
+                                            "time_text": "8:30 pm - 11:10 am+1",
+                                            "route_text": "YYZ Toronto Pearson - BER Berlin Brandenburg",
+                                            "stops_text": "1 stop",
+                                            "layover_text": "KEF 1h 15m layover, Reykjavik Keflavik Intl",
+                                            "duration_text": "13h 40m",
+                                        },
+                                        {
+                                            "text": (
+                                                "Bus transfer 9:15 am - 1:34 pm "
+                                                "BUD Budapest Ferenc Liszt Intl - YYZ Toronto Pearson "
+                                                "1 stop 10h 19m"
+                                            ),
+                                            "airline": "Airport Bus",
+                                            "time_text": "9:15 am - 1:34 pm",
+                                            "route_text": "BUD Budapest Ferenc Liszt Intl - YYZ Toronto Pearson",
+                                            "stops_text": "1 stop",
+                                            "layover_text": "Bus transfer to terminal",
+                                            "duration_text": "10h 19m",
+                                        },
+                                    ],
+                                },
+                                {
+                                    "text": (
+                                        "1:25 am - 3:00 pm+1 "
+                                        "YYZ Toronto Pearson - BER Berlin Brandenburg "
+                                        "1 stop 22h 35m "
+                                        "6:00 pm - 9:50 pm "
+                                        "BUD Budapest Ferenc Liszt Intl - YYZ Toronto Pearson "
+                                        "1 stop 18h 50m "
+                                        "$991 Economy Light"
+                                    ),
+                                    "price_text": "$991",
+                                    "booking_href": "/book/air-only",
+                                    "cabin": "Economy Light",
+                                    "airline_text": "Cathay Pacific",
+                                    "legs": [
+                                        {
+                                            "text": "YYZ Toronto Pearson - BER Berlin Brandenburg 1 stop 22h 35m",
+                                            "airline": "Cathay Pacific",
+                                            "time_text": "1:25 am - 3:00 pm+1",
+                                            "route_text": "YYZ Toronto Pearson - BER Berlin Brandenburg",
+                                            "stops_text": "1 stop",
+                                            "layover_text": "HKG 1h 05m layover, Hong Kong",
+                                            "duration_text": "22h 35m",
+                                        },
+                                        {
+                                            "text": "BUD Budapest Ferenc Liszt Intl - YYZ Toronto Pearson 1 stop 18h 50m",
+                                            "airline": "Cathay Pacific",
+                                            "time_text": "6:00 pm - 9:50 pm",
+                                            "route_text": "BUD Budapest Ferenc Liszt Intl - YYZ Toronto Pearson",
+                                            "stops_text": "1 stop",
+                                            "layover_text": "HKG 50m layover, Hong Kong",
+                                            "duration_text": "18h 50m",
+                                        },
+                                    ],
+                                },
+                            ]
+                        }
+                    ),
+                ]
+            }
+        )
+    )
+
+    results = await provider.search_multi_city(
+        [
+            {"departure_id": "YYZ", "arrival_id": "BER", "outbound_date": DEPART},
+            {
+                "departure_id": "BUD",
+                "arrival_id": "YYZ",
+                "outbound_date": DEPART + timedelta(days=11),
+            },
+        ],
+        currency="USD",
+        market="ca",
+    )
+
+    assert len(results) == 1
+    assert results[0].price == 991.0
+    assert results[0].deep_link == "https://www.ca.kayak.com/book/air-only"
 
 
 @pytest.mark.asyncio

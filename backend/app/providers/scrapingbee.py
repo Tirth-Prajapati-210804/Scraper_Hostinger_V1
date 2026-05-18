@@ -77,6 +77,20 @@ _CURRENCY_BY_COUNTRY = {
     "uk": "GBP",
     "us": "USD",
 }
+
+_NON_FLIGHT_TRANSPORT_TERMS = (
+    " bus",
+    "bus ",
+    " bus ",
+    "coach",
+    "train",
+    "rail",
+    "ferry",
+    "shuttle",
+    "tram",
+    "subway",
+    "metro",
+)
 _CURRENCY_BY_SYMBOL = {
     "₹": "INR",
     "€": "EUR",
@@ -990,6 +1004,12 @@ class ScrapingBeeProvider:
             return int(match.group(1))
         return 0
 
+    def _looks_like_non_flight_transport(self, *texts: object) -> bool:
+        haystack = " ".join(_clean_text(text).lower() for text in texts if _clean_text(text))
+        if not haystack:
+            return False
+        return any(term in haystack for term in _NON_FLIGHT_TRANSPORT_TERMS)
+
     def _normalize_multi_city_cards(
         self,
         payload: dict,
@@ -1062,6 +1082,21 @@ class ScrapingBeeProvider:
                 requested_currency=currency,
                 market_country_code=market_country_code,
             )
+            if self._looks_like_non_flight_transport(
+                card_text,
+                card.get("airline_text"),
+                *(
+                    " ".join(
+                        [
+                            _clean_text(leg.get("text")),
+                            _clean_text(leg.get("route_text")),
+                            _clean_text(leg.get("layover_text")),
+                        ]
+                    )
+                    for leg in normalized_legs
+                ),
+            ):
+                continue
             badges = [
                 _clean_text(badge)
                 for badge in (card.get("badges") or [])
@@ -1131,6 +1166,12 @@ class ScrapingBeeProvider:
                 requested_currency=currency,
                 market_country_code=market_country_code,
             )
+            if self._looks_like_non_flight_transport(
+                airline,
+                summary,
+                duration_text,
+            ):
+                continue
 
             results.append(
                 ProviderResult(
