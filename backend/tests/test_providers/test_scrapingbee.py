@@ -34,7 +34,7 @@ def mock_response(data: dict, status_code: int = 200) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_parse_one_way_offer(provider: ScrapingBeeProvider) -> None:
-    provider._client.get = AsyncMock(
+    provider._client.post = AsyncMock(
         return_value=mock_response(
             {
                 "offers": [
@@ -72,7 +72,7 @@ async def test_parse_one_way_offer(provider: ScrapingBeeProvider) -> None:
 
 @pytest.mark.asyncio
 async def test_explicit_market_overrides_currency_domain(provider: ScrapingBeeProvider) -> None:
-    provider._client.get = AsyncMock(return_value=mock_response({"offers": []}))
+    provider._client.post = AsyncMock(return_value=mock_response({"offers": []}))
 
     await provider._search_one_way_once(
         "YVR",
@@ -82,7 +82,7 @@ async def test_explicit_market_overrides_currency_domain(provider: ScrapingBeePr
         currency="USD",
     )
 
-    params = provider._client.get.call_args.kwargs["params"]
+    params = provider._client.post.call_args.kwargs["data"]
 
     assert params["url"].startswith("https://www.ca.kayak.com/flights/YVR-DPS/")
     assert params["country_code"] == "ca"
@@ -92,7 +92,7 @@ async def test_explicit_market_overrides_currency_domain(provider: ScrapingBeePr
 async def test_parse_one_way_offer_detects_market_currency_from_symbol(
     provider: ScrapingBeeProvider,
 ) -> None:
-    provider._client.get = AsyncMock(
+    provider._client.post = AsyncMock(
         return_value=mock_response(
             {
                 "offers": [
@@ -113,7 +113,7 @@ async def test_parse_one_way_offer_detects_market_currency_from_symbol(
 
     results = await provider._search_one_way_once("YVR", "DPS", DEPART, currency="USD")
 
-    params = provider._client.get.call_args.kwargs["params"]
+    params = provider._client.post.call_args.kwargs["data"]
 
     assert params["url"].startswith("https://www.kayak.com/flights/YVR-DPS/")
     assert params["country_code"] == "us"
@@ -125,7 +125,7 @@ async def test_parse_one_way_offer_detects_market_currency_from_symbol(
 
 @pytest.mark.asyncio
 async def test_max_stops_filters_results(provider: ScrapingBeeProvider) -> None:
-    provider._client.get = AsyncMock(
+    provider._client.post = AsyncMock(
         return_value=mock_response(
             {
                 "offers": [
@@ -163,7 +163,7 @@ async def test_max_stops_filters_results(provider: ScrapingBeeProvider) -> None:
 
 @pytest.mark.asyncio
 async def test_round_trip_builds_round_trip_search_url(provider: ScrapingBeeProvider) -> None:
-    provider._client.get = AsyncMock(return_value=mock_response({"offers": []}))
+    provider._client.post = AsyncMock(return_value=mock_response({"offers": []}))
 
     await provider._search_round_trip_once(
         "YYZ",
@@ -173,7 +173,7 @@ async def test_round_trip_builds_round_trip_search_url(provider: ScrapingBeeProv
         currency="USD",
     )
 
-    params = provider._client.get.call_args.kwargs["params"]
+    params = provider._client.post.call_args.kwargs["data"]
     target_url = params["url"]
     assert "kayak.com/flights/YYZ-DPS/" in target_url
     assert f"/{DEPART:%Y-%m-%d}/{DEPART + timedelta(days=12):%Y-%m-%d}" in target_url
@@ -184,7 +184,7 @@ async def test_round_trip_builds_round_trip_search_url(provider: ScrapingBeeProv
 
 @pytest.mark.asyncio
 async def test_401_maps_to_quota_exhausted(provider: ScrapingBeeProvider) -> None:
-    provider._client.get = AsyncMock(
+    provider._client.post = AsyncMock(
         return_value=mock_response({"message": "No more credit available"}, status_code=401)
     )
 
@@ -194,7 +194,7 @@ async def test_401_maps_to_quota_exhausted(provider: ScrapingBeeProvider) -> Non
 
 @pytest.mark.asyncio
 async def test_429_maps_to_rate_limited(provider: ScrapingBeeProvider) -> None:
-    provider._client.get = AsyncMock(
+    provider._client.post = AsyncMock(
         return_value=mock_response({"message": "Too many concurrent requests"}, status_code=429)
     )
 
@@ -204,7 +204,7 @@ async def test_429_maps_to_rate_limited(provider: ScrapingBeeProvider) -> None:
 
 @pytest.mark.asyncio
 async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider) -> None:
-    provider._client.get = AsyncMock(
+    provider._client.post = AsyncMock(
         return_value=mock_response(
             {
                 "evaluate_results": [
@@ -277,7 +277,7 @@ async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider
         market="ca",
     )
 
-    params = provider._client.get.call_args.kwargs["params"]
+    params = provider._client.post.call_args.kwargs["data"]
 
     assert len(results) == 1
     assert (
@@ -320,7 +320,7 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
 async def test_multi_city_retries_with_deeper_capture_for_one_stop_results(
     provider: ScrapingBeeProvider,
 ) -> None:
-    provider._client.get = AsyncMock(
+    provider._client.post = AsyncMock(
         side_effect=[
             mock_response(
                 {
@@ -439,7 +439,7 @@ async def test_multi_city_retries_with_deeper_capture_for_one_stop_results(
         max_stops=1,
     )
 
-    assert provider._client.get.await_count == 2
+    assert provider._client.post.await_count == 2
     assert len(results) == 1
     assert results[0].price == 991.0
     assert results[0].stops == 1
@@ -457,7 +457,7 @@ async def test_multi_city_debug_logs_offer_snapshot() -> None:
         min_delay_seconds=0,
         multi_city_debug=True,
     )
-    provider._client.get = AsyncMock(
+    provider._client.post = AsyncMock(
         return_value=mock_response(
             {
                 "evaluate_results": [

@@ -445,9 +445,9 @@ class ScrapingBeeProvider:
         async with self._semaphore:
             await self._wait_for_slot()
             try:
-                response = await self._client.get(
+                response = await self._client.post(
                     self._base_url,
-                    params=self._base_params(
+                    data=self._base_params(
                         target_url,
                         ai_extract_rules=ai_extract_rules,
                         js_scenario=js_scenario,
@@ -490,9 +490,9 @@ class ScrapingBeeProvider:
         async with self._semaphore:
             await self._wait_for_slot()
             try:
-                response = await self._client.get(
+                response = await self._client.post(
                     self._base_url,
-                    params=params,
+                    data=params,
                 )
             except httpx.TimeoutException as exc:
                 raise RuntimeError("ScrapingBee request timed out.") from exc
