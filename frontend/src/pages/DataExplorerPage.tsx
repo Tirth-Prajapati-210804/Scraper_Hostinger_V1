@@ -1,11 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
-import { Download, Search, SlidersHorizontal } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  BarChart3,
+  Database,
+  Download,
+  Play,
+  Search,
+} from "lucide-react";
+import { type ReactNode, useCallback, useRef, useState } from "react";
 
-import type { DailyPrice } from "../types/price";
-import { fetchPriceTrend, fetchPrices } from "../api/prices";
+import { getCollectionStatus, triggerCollection } from "../api/collection";
 import { getErrorMessage } from "../api/client";
+import { fetchPriceTrend, fetchPrices } from "../api/prices";
 import { listRouteGroups } from "../api/route-groups";
+import { fetchHealth } from "../api/stats";
 import { DateRangeInput } from "../components/ui/DateRangeInput";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -14,6 +21,7 @@ import { ErrorBoundary } from "../components/ErrorBoundary";
 import { PriceChart } from "../components/PriceChart";
 import { PriceTable } from "../components/PriceTable";
 import { useToast } from "../context/ToastContext";
+import type { DailyPrice } from "../types/price";
 import { usePageTitle } from "../utils/usePageTitle";
 
 interface Filters {
@@ -65,22 +73,27 @@ export function DataExplorerPage() {
   const [allPrices, setAllPrices] = useState<DailyPrice[]>([]);
   const [pricesLoading, setPricesLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [triggering, setTriggering] = useState(false);
   const offsetRef = useRef(0);
-
-  const [airlineFilter, setAirlineFilter] = useState("");
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
 
   const groupsQuery = useQuery({
     queryKey: ["route-groups"],
     queryFn: listRouteGroups,
   });
 
-  const selectedGroup = groupsQuery.data?.find((group) => group.id === pending.route_group_id);
+  const healthQuery = useQuery({
+    queryKey: ["health"],
+    queryFn: fetchHealth,
+    refetchInterval: 30_000,
+  });
 
-  function handleGroupChange(id: string) {
-    setPending({ ...EMPTY_FILTERS, route_group_id: id });
-  }
+  const statusQuery = useQuery({
+    queryKey: ["collection-status"],
+    queryFn: getCollectionStatus,
+    refetchInterval: 15_000,
+  });
+
+  const selectedGroup = groupsQuery.data?.find((group) => group.id === pending.route_group_id);
 
   const loadPrices = useCallback(
     async (filters: Filters, newOffset: number) => {
@@ -111,18 +124,40 @@ export function DataExplorerPage() {
   );
 
   function handleApply() {
+    if (!pending.route_group_id) return;
     const next = { ...pending };
     setApplied(next);
     setAllPrices([]);
-    setAirlineFilter("");
-    setMinPrice("");
-    setMaxPrice("");
     void loadPrices(next, 0);
+  }
+
+  function handleReset() {
+    setPending(EMPTY_FILTERS);
+    setApplied(EMPTY_FILTERS);
+    setAllPrices([]);
+    setHasMore(false);
+    offsetRef.current = 0;
   }
 
   const handleLoadMore = useCallback(() => {
     void loadPrices(applied, offsetRef.current + PAGE_SIZE);
   }, [applied, loadPrices]);
+
+  async function handleTrigger() {
+    setTriggering(true);
+    try {
+      const result = await triggerCollection();
+      if (result.status === "already_running") {
+        showToast("Collection is already running", "info");
+      } else {
+        showToast("Collection triggered successfully", "success");
+      }
+    } catch (err) {
+      showToast(getErrorMessage(err, "Failed to trigger collection"), "error");
+    } finally {
+      setTriggering(false);
+    }
+  }
 
   const appliedGroup = groupsQuery.data?.find((group) => group.id === applied.route_group_id);
   const trendOrigin = applied.origin || appliedGroup?.origins[0] || "";
@@ -140,108 +175,184 @@ export function DataExplorerPage() {
     enabled: !!trendOrigin && !!trendDest,
   });
 
-  const airlines = useMemo(
-    () => [...new Set(allPrices.map((price) => price.airline))].filter(Boolean).sort(),
-    [allPrices],
-  );
-
-  const filteredPrices = useMemo(() => {
-    let rows = allPrices;
-    if (airlineFilter) rows = rows.filter((price) => price.airline === airlineFilter);
-    if (minPrice !== "") rows = rows.filter((price) => price.price >= Number(minPrice));
-    if (maxPrice !== "") rows = rows.filter((price) => price.price <= Number(maxPrice));
-    return rows;
-  }, [allPrices, airlineFilter, maxPrice, minPrice]);
+  const providerStatuses = Object.values(healthQuery.data?.provider_status ?? {});
+  const noProvider =
+    !healthQuery.isLoading &&
+    !providerStatuses.some((status) => status === "configured" || status === "active") &&
+    !healthQuery.data?.demo_mode;
 
   return (
     <ErrorBoundary>
-      <div className="space-y-6">
-        <section className="rounded-[30px] border border-slate-200 bg-white px-6 py-5 shadow-[0_18px_50px_-38px_rgba(15,23,42,0.45)]">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Explore
-          </p>
-          <h1 className="mt-1 text-3xl font-bold text-slate-950">Data Explorer</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-            Choose a route group, narrow the travel window, and inspect collected price history before exporting.
-          </p>
+      <div className="space-y-8">
+        <section className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-[#e6ebf2] bg-white text-[#16213d] shadow-[0_10px_30px_-24px_rgba(15,23,42,0.45)]"
+              aria-label="Explorer menu"
+            >
+              <BarChart3 className="h-5 w-5" />
+            </button>
+            <div>
+              <h1 className="text-[42px] font-bold tracking-[-0.04em] text-[#111c3d]">
+                Data Explorer
+              </h1>
+              <p className="mt-2 text-[16px] text-[#7082a3]">
+                Explore and analyze collected flight price data before exporting.
+              </p>
+            </div>
+          </div>
 
-          <div className="mt-6 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-            <div className="grid gap-4 xl:grid-cols-[220px_160px_minmax(0,1fr)_auto] xl:items-end">
-              <Select
-                label="Route Group"
-                value={pending.route_group_id}
-                onChange={(e) => handleGroupChange(e.target.value)}
-              >
-                <option value="">Select group...</option>
-                {groupsQuery.data?.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                  </option>
-                ))}
-              </Select>
+          <div className="flex flex-wrap items-center gap-4">
+            <StatusPill
+              tone="green"
+              icon={<span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />}
+              text={
+                statusQuery.data?.is_collecting || healthQuery.data?.scheduler_running
+                  ? "Scheduler Running"
+                  : "Scheduler Idle"
+              }
+            />
+            <StatusPill
+              tone="green"
+              icon={<Database className="h-4 w-4" />}
+              text={healthQuery.data?.database_status === "ok" ? "DB OK" : "DB Check"}
+            />
+            <Button
+              variant="primary"
+              onClick={handleTrigger}
+              loading={triggering}
+              className="h-12 rounded-2xl px-6 text-[17px] font-semibold shadow-[0_18px_44px_-30px_rgba(37,99,235,0.8)]"
+            >
+              <Play className="h-4 w-4" />
+              Trigger
+            </Button>
+          </div>
+        </section>
 
-              <Select
-                label="Origin"
-                value={pending.origin}
-                onChange={(e) => setPending((current) => ({ ...current, origin: e.target.value }))}
-                disabled={!selectedGroup}
-              >
-                <option value="">All origins</option>
-                {selectedGroup?.origins.map((origin) => (
-                  <option key={origin} value={origin}>
-                    {origin}
-                  </option>
-                ))}
-              </Select>
+        {noProvider ? (
+          <div className="rounded-[18px] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+            Add a valid ScrapingBee API key in the backend environment before running new collections.
+          </div>
+        ) : null}
 
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Travel Window
-                </p>
-                <DateRangeInput
-                  dateFrom={pending.date_from}
-                  dateTo={pending.date_to}
-                  onDateFromChange={(value) => setPending((current) => ({ ...current, date_from: value }))}
-                  onDateToChange={(value) => setPending((current) => ({ ...current, date_to: value }))}
-                />
-              </div>
+        <Card className="rounded-[28px] border border-[#e5ebf3] bg-white p-6 shadow-[0_28px_70px_-52px_rgba(15,23,42,0.35)]">
+          <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr_1.8fr_auto] xl:items-end">
+            <Select
+              label="Route Group"
+              value={pending.route_group_id}
+              onChange={(e) =>
+                setPending({
+                  route_group_id: e.target.value,
+                  origin: "",
+                  date_from: "",
+                  date_to: "",
+                })
+              }
+            >
+              <option value="">Select route group</option>
+              {groupsQuery.data?.map((group) => (
+                <option key={group.id} value={group.id}>
+                  {group.name}
+                </option>
+              ))}
+            </Select>
 
+            <Select
+              label="Origin"
+              value={pending.origin}
+              onChange={(e) => setPending((current) => ({ ...current, origin: e.target.value }))}
+              disabled={!selectedGroup}
+            >
+              <option value="">All origins</option>
+              {selectedGroup?.origins.map((origin) => (
+                <option key={origin} value={origin}>
+                  {origin}
+                </option>
+              ))}
+            </Select>
+
+            <div>
+              <p className="mb-2 text-[13px] font-medium text-[#4c5d7c]">Travel Window</p>
+              <DateRangeInput
+                dateFrom={pending.date_from}
+                dateTo={pending.date_to}
+                onDateFromChange={(value) => setPending((current) => ({ ...current, date_from: value }))}
+                onDateToChange={(value) => setPending((current) => ({ ...current, date_to: value }))}
+              />
+            </div>
+
+            <div className="flex gap-3 xl:justify-end">
               <Button
                 variant="primary"
                 onClick={handleApply}
                 disabled={!pending.route_group_id}
-                className="h-11"
+                className="h-12 rounded-2xl px-6 text-[16px] font-semibold"
               >
                 Apply
               </Button>
+              <Button
+                variant="secondary"
+                onClick={handleReset}
+                className="h-12 rounded-2xl px-6 text-[16px]"
+              >
+                Reset
+              </Button>
             </div>
           </div>
-        </section>
+        </Card>
 
         {!applied.route_group_id ? (
-          <section className="rounded-[30px] border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
-            <Search className="mx-auto h-12 w-12 text-slate-300" />
-            <h2 className="mt-5 text-lg font-semibold text-slate-900">Select a route group to explore</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              Choose a group above and click Apply to load trends and price rows.
-            </p>
-          </section>
+          <>
+            <Card className="rounded-[28px] border border-[#e5ebf3] bg-white px-10 py-24 text-center shadow-[0_28px_70px_-52px_rgba(15,23,42,0.35)]">
+              <div className="mx-auto flex h-[108px] w-[108px] items-center justify-center rounded-[28px] bg-[#f5f7ff] text-[#c9d4eb]">
+                <Search className="h-14 w-14" />
+              </div>
+              <h2 className="mt-8 text-[32px] font-bold tracking-[-0.03em] text-[#121c39]">
+                Select filters to explore data
+              </h2>
+              <p className="mx-auto mt-4 max-w-[520px] text-[17px] leading-8 text-[#7183a6]">
+                Choose a route group and date range, then click Apply to load price trends and results.
+              </p>
+            </Card>
+
+            <Card className="rounded-[24px] border border-[#e5ebf3] bg-white p-0 shadow-[0_28px_70px_-52px_rgba(15,23,42,0.35)]">
+              <div className="grid gap-0 md:grid-cols-3">
+                <FeatureBlurb
+                  icon={<Search className="h-6 w-6" />}
+                  title="Narrow your search"
+                  text="Use filters above to focus on specific routes, origins, and travel dates."
+                />
+                <FeatureBlurb
+                  icon={<BarChart3 className="h-6 w-6" />}
+                  title="Explore trends"
+                  text="View price trends over time and compare airlines, stops, and durations."
+                  bordered
+                />
+                <FeatureBlurb
+                  icon={<Download className="h-6 w-6" />}
+                  title="Export your data"
+                  text="Export the results to Excel or CSV for deeper analysis and reporting."
+                  bordered
+                />
+              </div>
+            </Card>
+          </>
         ) : (
           <>
-            <Card className="p-6">
-              <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <Card className="rounded-[28px] border border-[#e5ebf3] bg-white p-6 shadow-[0_28px_70px_-52px_rgba(15,23,42,0.35)]">
+              <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#94a3b8]">
                     Trend
                   </p>
-                  <h2 className="mt-1 text-[15px] font-semibold text-slate-950">Price Trend</h2>
+                  <h2 className="mt-1 text-[18px] font-semibold text-[#121c39]">Price Trend</h2>
                 </div>
-
                 {trendOrigin && trendDest ? (
-                  <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                    {trendOrigin}
-                    <span className="text-slate-300">→</span>
-                    {trendDest}
+                  <div className="inline-flex items-center gap-3 rounded-full border border-[#e2e8f0] bg-[#f8faff] px-4 py-2 text-sm text-[#62738f]">
+                    <span>{trendOrigin}</span>
+                    <span className="text-[#b7c2d5]">→</span>
+                    <span>{trendDest}</span>
                   </div>
                 ) : null}
               </div>
@@ -253,90 +364,34 @@ export function DataExplorerPage() {
               )}
             </Card>
 
-            <Card className="overflow-hidden p-0">
-              <div className="border-b border-slate-200 px-6 py-5">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <Card className="overflow-hidden rounded-[28px] border border-[#e5ebf3] bg-white p-0 shadow-[0_28px_70px_-52px_rgba(15,23,42,0.35)]">
+              <div className="border-b border-[#edf1f7] px-6 py-5">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Records
+                    <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[#94a3b8]">
+                      Results
                     </p>
-                    <h2 className="mt-1 text-[15px] font-semibold text-slate-950">Collected Prices</h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Filter the loaded rows by airline or price range before exporting.
-                    </p>
+                    <h2 className="mt-1 text-[18px] font-semibold text-[#121c39]">
+                      Collected Prices
+                    </h2>
                   </div>
-
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[180px_110px_110px_auto_auto]">
-                    {airlines.length > 0 ? (
-                      <Select
-                        label="Airline"
-                        aria-label="Filter by airline"
-                        value={airlineFilter}
-                        onChange={(e) => setAirlineFilter(e.target.value)}
-                      >
-                        <option value="">All airlines</option>
-                        {airlines.map((airline) => (
-                          <option key={airline} value={airline}>
-                            {airline}
-                          </option>
-                        ))}
-                      </Select>
-                    ) : (
-                      <div />
-                    )}
-
-                    <div>
-                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Min Price
-                      </p>
-                      <input
-                        type="number"
-                        aria-label="Min price"
-                        placeholder="0"
-                        value={minPrice}
-                        onChange={(e) => setMinPrice(e.target.value)}
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-brand-500"
-                      />
-                    </div>
-
-                    <div>
-                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Max Price
-                      </p>
-                      <input
-                        type="number"
-                        aria-label="Max price"
-                        placeholder="5000"
-                        value={maxPrice}
-                        onChange={(e) => setMaxPrice(e.target.value)}
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition focus:border-brand-500"
-                      />
-                    </div>
-
-                    <div className="flex items-end">
-                      <div className="inline-flex h-11 items-center rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-600">
-                        <SlidersHorizontal className="mr-2 h-4 w-4 text-slate-400" />
-                        {filteredPrices.length} row{filteredPrices.length !== 1 ? "s" : ""}
-                        {hasMore && !airlineFilter && !minPrice && !maxPrice ? "+" : ""}
-                      </div>
-                    </div>
-
-                    {filteredPrices.length > 0 ? (
-                      <div className="flex items-end">
-                        <Button variant="secondary" onClick={() => exportCsv(filteredPrices)} className="h-11">
-                          <Download className="h-4 w-4" />
-                          Download CSV
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
+                  {allPrices.length > 0 ? (
+                    <Button
+                      variant="secondary"
+                      onClick={() => exportCsv(allPrices)}
+                      className="h-11 rounded-2xl px-5"
+                    >
+                      <Download className="h-4 w-4" />
+                      Export CSV
+                    </Button>
+                  ) : null}
                 </div>
               </div>
 
               <PriceTable
-                prices={filteredPrices}
+                prices={allPrices}
                 isLoading={pricesLoading && allPrices.length === 0}
-                hasMore={hasMore && !airlineFilter && !minPrice && !maxPrice}
+                hasMore={hasMore}
                 onLoadMore={handleLoadMore}
                 loadingMore={pricesLoading && allPrices.length > 0}
                 groupCurrency={appliedGroup?.currency}
@@ -346,5 +401,53 @@ export function DataExplorerPage() {
         )}
       </div>
     </ErrorBoundary>
+  );
+}
+
+function StatusPill({
+  tone,
+  icon,
+  text,
+}: {
+  tone: "green" | "blue";
+  icon: ReactNode;
+  text: string;
+}) {
+  const styles =
+    tone === "green"
+      ? "border-[#d8f1e7] bg-white text-[#0f172a]"
+      : "border-[#dbe5ff] bg-white text-[#0f172a]";
+
+  return (
+    <div
+      className={`inline-flex h-12 items-center gap-3 rounded-2xl border px-5 text-[15px] font-medium shadow-[0_14px_40px_-34px_rgba(15,23,42,0.35)] ${styles}`}
+    >
+      <span className={tone === "green" ? "text-emerald-500" : "text-brand-600"}>{icon}</span>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function FeatureBlurb({
+  icon,
+  title,
+  text,
+  bordered = false,
+}: {
+  icon: ReactNode;
+  title: string;
+  text: string;
+  bordered?: boolean;
+}) {
+  return (
+    <div className={`flex items-start gap-5 px-7 py-8 ${bordered ? "md:border-l md:border-[#edf1f7]" : ""}`}>
+      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px] bg-[#f2f6ff] text-brand-600">
+        {icon}
+      </div>
+      <div>
+        <h3 className="text-[18px] font-semibold text-[#101935]">{title}</h3>
+        <p className="mt-2 max-w-[290px] text-[15px] leading-7 text-[#7183a6]">{text}</p>
+      </div>
+    </div>
   );
 }
