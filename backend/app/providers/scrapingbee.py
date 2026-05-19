@@ -803,7 +803,23 @@ class ScrapingBeeProvider:
     ) -> list[ProviderResult]:
         if max_stops is None:
             return results
-        return [result for result in results if result.stops == max_stops]
+        filtered: list[ProviderResult] = []
+        for result in results:
+            raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+            leg_stops = raw_data.get("leg_stops")
+            if isinstance(leg_stops, list):
+                normalized = [
+                    int(value)
+                    for value in leg_stops
+                    if isinstance(value, (int, float))
+                ]
+                if normalized and max_stops in normalized:
+                    result.stops = max_stops
+                    filtered.append(result)
+                    continue
+            if result.stops == max_stops:
+                filtered.append(result)
+        return filtered
 
     def _extract_rendered_cards_payload(self, rendered: dict) -> dict[str, object] | None:
         evaluate_results = rendered.get("evaluate_results")
@@ -1038,7 +1054,7 @@ class ScrapingBeeProvider:
             normalized_legs: list[dict[str, object]] = []
             unique_airlines: list[str] = []
             total_duration = 0
-            max_stops = 0
+            total_stops = 0
             for leg in legs[:2]:
                 if not isinstance(leg, dict):
                     continue
@@ -1053,10 +1069,7 @@ class ScrapingBeeProvider:
                     "",
                     duration_text,
                 )
-                max_stops = max(
-                    max_stops,
-                    self._parse_stops(f"{stops_text} {layover_text}".strip()),
-                )
+                total_stops += self._parse_stops(f"{stops_text} {layover_text}".strip())
                 normalized_legs.append(
                     {
                         "airline": airline,
@@ -1111,7 +1124,7 @@ class ScrapingBeeProvider:
                     deep_link=normalized_link,
                     provider=self.name,
                     duration_minutes=total_duration,
-                    stops=max_stops,
+                    stops=total_stops,
                     raw_data={
                         "trip_type": "multi_city",
                         "duration_text": " / ".join(
@@ -1124,6 +1137,11 @@ class ScrapingBeeProvider:
                         "cabin": _clean_text(card.get("cabin")),
                         "badges": badges,
                         "legs": normalized_legs,
+                        "airline_names": unique_airlines,
+                        "leg_stops": [
+                            self._parse_stops(f"{leg.get('stops_text', '')} {leg.get('layover_text', '')}".strip())
+                            for leg in normalized_legs
+                        ],
                         "outbound_airline": normalized_legs[0].get("airline") or "",
                         "return_airline": normalized_legs[1].get("airline") or "",
                     },
@@ -1173,6 +1191,21 @@ class ScrapingBeeProvider:
             ):
                 continue
 
+            airline_parts = [part.strip() for part in airline.split("/") if part.strip()]
+            raw_data = {
+                "trip_type": trip_type,
+                "price_text": _clean_text(offer.get("price_text")),
+                "duration_text": duration_text,
+                "summary": summary,
+                "airline_names": airline_parts or ([airline] if airline else []),
+                "leg_stops": [self._parse_stops(summary, offer.get("stops"))],
+            }
+            if trip_type != "one_way":
+                outbound_airline = airline_parts[0] if airline_parts else airline
+                return_airline = airline_parts[1] if len(airline_parts) > 1 else outbound_airline
+                raw_data["outbound_airline"] = outbound_airline
+                raw_data["return_airline"] = return_airline
+
             results.append(
                 ProviderResult(
                     price=price,
@@ -1186,12 +1219,7 @@ class ScrapingBeeProvider:
                         offer.get("duration"),
                     ),
                     stops=self._parse_stops(summary, offer.get("stops")),
-                    raw_data={
-                        "trip_type": trip_type,
-                        "price_text": _clean_text(offer.get("price_text")),
-                        "duration_text": duration_text,
-                        "summary": summary,
-                    },
+                    raw_data=raw_data,
                 )
             )
 

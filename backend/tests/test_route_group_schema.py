@@ -77,3 +77,16 @@ def test_route_group_accepts_prefer_two_stop_mode() -> None:
     )
 
     assert payload.max_stops == 4
+
+
+def test_route_group_accepts_same_airline_only_flag() -> None:
+    payload = RouteGroupCreate(
+        name="Canada to Japan",
+        destination_label="Japan",
+        destinations=["NRT"],
+        origins=["YVR"],
+        trip_type="round_trip",
+        same_airline_only=True,
+    )
+
+    assert payload.same_airline_only is True

@@ -124,7 +124,23 @@ class SearchApiProvider:
     ) -> list[ProviderResult]:
         if max_stops is None:
             return results
-        return [result for result in results if result.stops == max_stops]
+        filtered: list[ProviderResult] = []
+        for result in results:
+            raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+            leg_stops = raw_data.get("leg_stops")
+            if isinstance(leg_stops, list):
+                normalized = [
+                    int(value)
+                    for value in leg_stops
+                    if isinstance(value, (int, float))
+                ]
+                if normalized and max_stops in normalized:
+                    result.stops = max_stops
+                    filtered.append(result)
+                    continue
+            if result.stops == max_stops:
+                filtered.append(result)
+        return filtered
 
     def __init__(
         self,
@@ -421,6 +437,7 @@ class SearchApiProvider:
                     continue
 
                 first_leg = flights[0]
+                last_leg = flights[-1]
 
                 flight_number = first_leg.get(
                     "flight_number",
@@ -432,10 +449,23 @@ class SearchApiProvider:
                     "",
                 )
 
-                airline = airline_name.strip() or (
+                outbound_airline = airline_name.strip() or (
                     flight_number.split()[0]
                     if flight_number
                     else ""
+                )
+                return_flight_number = last_leg.get(
+                    "flight_number",
+                    "",
+                )
+                return_airline_name = last_leg.get(
+                    "airline",
+                    "",
+                )
+                return_airline = return_airline_name.strip() or (
+                    return_flight_number.split()[0]
+                    if return_flight_number
+                    else outbound_airline
                 )
 
                 total_duration = offer.get(
@@ -443,7 +473,17 @@ class SearchApiProvider:
                     0,
                 )
 
-                stops = max(0, len(flights) - 1)
+                leg_stops: list[int] = []
+                for flight in flights:
+                    if not isinstance(flight, dict):
+                        continue
+                    layovers = flight.get("layovers")
+                    if isinstance(layovers, list):
+                        leg_stops.append(len(layovers))
+                    else:
+                        leg_stops.append(0)
+
+                stops = sum(leg_stops) if leg_stops else max(0, len(flights) - 1)
 
                 booking_token = offer.get(
                     "booking_token",
@@ -464,7 +504,11 @@ class SearchApiProvider:
                     ProviderResult(
                         price=float(price),
                         currency=currency,
-                        airline=airline,
+                        airline=(
+                            outbound_airline
+                            if outbound_airline == return_airline
+                            else f"{outbound_airline} / {return_airline}"
+                        ),
                         deep_link=deep_link,
                         provider=self.name,
                         stops=stops,
@@ -472,6 +516,10 @@ class SearchApiProvider:
                         raw_data={
                             "trip_type": "round_trip",
                             "section": section,
+                            "outbound_airline": outbound_airline,
+                            "return_airline": return_airline,
+                            "airline_names": [outbound_airline, return_airline],
+                            "leg_stops": leg_stops or [stops],
                         },
                     )
                 )
@@ -593,10 +641,15 @@ class SearchApiProvider:
         )
 
         total_stops = 0
+        leg_stops: list[int] = []
         for flight in flights:
             layovers = flight.get("layovers")
             if isinstance(layovers, list):
-                total_stops += len(layovers)
+                stop_count = len(layovers)
+                total_stops += stop_count
+                leg_stops.append(stop_count)
+            else:
+                leg_stops.append(0)
 
         return ProviderResult(
             price=float(price),
@@ -611,6 +664,8 @@ class SearchApiProvider:
                 "stop_result_label": stop_label,
                 "outbound_airline": outbound_airline,
                 "return_airline": return_airline,
+                "airline_names": [outbound_airline, return_airline],
+                "leg_stops": leg_stops,
                 "booking_token": booking_token,
                 "flights": flights,
             },
@@ -854,6 +909,19 @@ class SearchApiProvider:
                     if flight_number
                     else ""
                 )
+                airline_names = [
+                    (
+                        str(flight.get("airline", "")).strip()
+                        or (
+                            str(flight.get("flight_number", "")).split()[0]
+                            if flight.get("flight_number")
+                            else ""
+                        )
+                    )
+                    for flight in flights
+                    if isinstance(flight, dict)
+                ]
+                airline_names = [name for name in airline_names if name]
 
                 total_duration = offer.get(
                     "total_duration",
@@ -890,8 +958,11 @@ class SearchApiProvider:
                         stops=stops,
                         duration_minutes=int(total_duration),
                         raw_data={
+                            "trip_type": "one_way",
                             "flight_number": flight_number,
                             "section": section,
+                            "airline_names": airline_names,
+                            "leg_stops": [stops],
                         },
                     )
                 )

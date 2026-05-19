@@ -136,6 +136,7 @@ async def test_trigger_single_group_forwards_trip_type_and_nights(
     group.currency = "USD"
     group.market = "ca"
     group.max_stops = None
+    group.same_airline_only = True
     group.trip_type = "round_trip"
     group.nights = 14
     group.start_date = None
@@ -178,6 +179,7 @@ async def test_trigger_single_group_forwards_trip_type_and_nights(
     assert captured["nights"] == 14
     assert captured["market"] == "ca"
     assert captured["currency"] == "USD"
+    assert captured["same_airline_only"] is True
 
 
 @pytest.mark.asyncio
@@ -200,6 +202,7 @@ async def test_trigger_single_group_collects_multi_city_special_sheets(
     group.currency = "USD"
     group.market = "ca"
     group.max_stops = None
+    group.same_airline_only = False
     group.trip_type = "multi_city"
     group.nights = 7
     group.start_date = None
@@ -277,6 +280,7 @@ async def test_trigger_single_group_updates_live_progress(
     group.currency = "USD"
     group.market = "us"
     group.max_stops = None
+    group.same_airline_only = False
     group.trip_type = "one_way"
     group.nights = 0
     group.start_date = None
@@ -344,6 +348,7 @@ async def test_trigger_single_group_clears_stale_errors_on_success(
     group.currency = "USD"
     group.market = "ca"
     group.max_stops = 1
+    group.same_airline_only = True
     group.trip_type = "multi_city"
     group.nights = 12
     group.start_date = None

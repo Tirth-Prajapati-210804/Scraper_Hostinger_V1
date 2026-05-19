@@ -225,6 +225,8 @@ class KayakProvider:
         leg_ids: list[str] = []
         total_duration = 0
         total_stops = 0
+        leg_stops: list[int] = []
+        airline_names: list[str] = []
         first_airline = ""
         last_airline = ""
 
@@ -245,11 +247,26 @@ class KayakProvider:
 
             segments = leg.get("segments", [])
             if isinstance(segments, list) and segments:
-                total_stops += max(0, len(segments) - 1)
+                stop_count = max(0, len(segments) - 1)
+                total_stops += stop_count
+                leg_stops.append(stop_count)
                 first_segment_id = segments[0].get("id") if isinstance(segments[0], dict) else None
                 last_segment_id = segments[-1].get("id") if isinstance(segments[-1], dict) else None
                 first_segment = segments_map.get(first_segment_id) if isinstance(first_segment_id, str) else None
                 last_segment = segments_map.get(last_segment_id) if isinstance(last_segment_id, str) else None
+
+                for segment_ref in segments:
+                    if not isinstance(segment_ref, dict):
+                        continue
+                    segment_id = segment_ref.get("id")
+                    segment = segments_map.get(segment_id) if isinstance(segment_id, str) else None
+                    if not isinstance(segment, dict):
+                        continue
+                    airline_code = segment.get("airline")
+                    if isinstance(airline_code, str):
+                        airline_name = self._airline_name(airline_code, airlines_map)
+                        if airline_name:
+                            airline_names.append(airline_name)
 
                 if index == 0 and isinstance(first_segment, dict):
                     airline_code = first_segment.get("airline")
@@ -278,8 +295,10 @@ class KayakProvider:
             "provider_code": option.get("providerCode"),
             "trip_type": trip_type,
             "leg_ids": leg_ids,
+            "airline_names": airline_names,
+            "leg_stops": leg_stops,
         }
-        if trip_type == "multi_city":
+        if trip_type != "one_way":
             raw_data["outbound_airline"] = first_airline
             raw_data["return_airline"] = last_airline
 

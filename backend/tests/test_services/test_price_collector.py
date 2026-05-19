@@ -11,13 +11,24 @@ from app.providers.base import ProviderResult
 from app.services.price_collector import CollectionResult, PriceCollector
 
 
-def make_result(price: float, airline: str = "AC", provider: str = "serpapi") -> ProviderResult:
+def make_result(
+    price: float,
+    airline: str = "AC",
+    provider: str = "serpapi",
+    *,
+    duration_minutes: int = 0,
+    stops: int = 0,
+    raw_data: dict | None = None,
+) -> ProviderResult:
     return ProviderResult(
         price=price,
         currency="CAD",
         airline=airline,
         deep_link="https://example.com",
         provider=provider,
+        duration_minutes=duration_minutes,
+        stops=stops,
+        raw_data=raw_data or {},
     )
 
 
@@ -419,3 +430,150 @@ async def test_round_trip_calls_search_round_trip_with_return_date() -> None:
     assert kwargs["return_date"] == DEPART + timedelta(days=11)
     assert result.cheapest is not None
     assert result.cheapest.price == 2400
+
+
+@pytest.mark.asyncio
+async def test_collect_single_date_same_airline_only_filters_before_choosing_cheapest() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "searchapi"
+    provider.search_round_trip = AsyncMock(
+        return_value=[
+            make_result(
+                1100,
+                airline="Air Canada / Lufthansa",
+                provider="searchapi",
+                duration_minutes=500,
+                stops=1,
+                raw_data={"outbound_airline": "Air Canada", "return_airline": "Lufthansa"},
+            ),
+            make_result(
+                1200,
+                airline="Air Canada / Air Canada",
+                provider="searchapi",
+                duration_minutes=700,
+                stops=1,
+                raw_data={"outbound_airline": "Air Canada", "return_airline": "Air Canada"},
+            ),
+            make_result(
+                1200,
+                airline="Air Canada / AC",
+                provider="searchapi",
+                duration_minutes=640,
+                stops=1,
+                raw_data={"outbound_airline": "Air Canada", "return_airline": "AC"},
+            ),
+        ]
+    )
+
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+    collector._save_all_results = AsyncMock()
+
+    result = await collector.collect_single_date(
+        origin="YYZ",
+        destination="NRT",
+        depart_date=DEPART,
+        route_group_id=ROUTE_ID,
+        trip_type="round_trip",
+        nights=10,
+        same_airline_only=True,
+    )
+
+    assert result.cheapest is not None
+    assert result.cheapest.price == 1200
+    assert result.cheapest.duration_minutes == 640
+
+
+@pytest.mark.asyncio
+async def test_collect_single_date_prefers_shorter_duration_when_price_ties() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = make_provider(
+        "serpapi",
+        [
+            make_result(1500, duration_minutes=950, provider="serpapi"),
+            make_result(1500, duration_minutes=780, provider="serpapi"),
+        ],
+    )
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+    collector._save_all_results = AsyncMock()
+
+    result = await collector.collect_single_date("YYZ", "NRT", DEPART, ROUTE_ID)
+
+    assert result.cheapest is not None
+    assert result.cheapest.price == 1500
+    assert result.cheapest.duration_minutes == 780
+
+
+@pytest.mark.asyncio
+async def test_multi_city_prefer_one_stop_falls_back_when_first_results_total_two_stops() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "scrapingbee"
+
+    async def fake_search_multi_city(*, max_stops: int | None = None, **kwargs):
+        if max_stops == 1:
+            return [
+                make_result(
+                    829,
+                    airline="Icelandair / Lufthansa",
+                    provider="scrapingbee",
+                    duration_minutes=1439,
+                    stops=2,
+                    raw_data={"outbound_airline": "Icelandair", "return_airline": "Lufthansa"},
+                )
+            ]
+        if max_stops == 2:
+            return [
+                make_result(
+                    829,
+                    airline="Icelandair / Lufthansa",
+                    provider="scrapingbee",
+                    duration_minutes=1439,
+                    stops=2,
+                    raw_data={"outbound_airline": "Icelandair", "return_airline": "Lufthansa"},
+                )
+            ]
+        return []
+
+    provider.search_multi_city = AsyncMock(side_effect=fake_search_multi_city)
+
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+    collector._save_all_results = AsyncMock()
+
+    result = await collector.collect_single_date(
+        origin="YYZ",
+        destination="BER",
+        depart_date=DEPART,
+        route_group_id=ROUTE_ID,
+        trip_type="multi_city",
+        nights=10,
+        return_origin="BUD",
+        max_stops=3,
+    )
+
+    assert provider.search_multi_city.await_args_list[0].kwargs["max_stops"] == 1
+    assert provider.search_multi_city.await_args_list[1].kwargs["max_stops"] == 2
+    assert result.cheapest is not None
+    assert result.cheapest.stops == 2
+    assert result.stop_label == "2 Stop"

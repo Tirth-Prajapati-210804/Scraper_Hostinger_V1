@@ -16,6 +16,7 @@ export interface RouteGroup {
   market: RouteMarket;
   currency: string;
   max_stops: number | null;
+  same_airline_only: boolean;
   start_date: string | null;
   end_date: string | null;
   created_at: string;

@@ -259,6 +259,38 @@ async def test_round_trip_builds_round_trip_search_url(provider: ScrapingBeeProv
 
 
 @pytest.mark.asyncio
+async def test_round_trip_exposes_outbound_and_return_airlines(provider: ScrapingBeeProvider) -> None:
+    provider._client.get = AsyncMock(
+        return_value=mock_response(
+            {
+                "offers": [
+                    {
+                        "price": 1221,
+                        "airline": "WestJet / Ryanair",
+                        "duration_text": "13h 37m",
+                        "stops": 1,
+                        "summary": "WestJet / Ryanair 1 stop",
+                        "link": "/book/roundtrip-123",
+                    }
+                ]
+            }
+        )
+    )
+
+    results = await provider._search_round_trip_once(
+        "YYC",
+        "EDI",
+        DEPART,
+        DEPART + timedelta(days=11),
+        currency="CAD",
+    )
+
+    assert len(results) == 1
+    assert results[0].raw_data["outbound_airline"] == "WestJet"
+    assert results[0].raw_data["return_airline"] == "Ryanair"
+
+
+@pytest.mark.asyncio
 async def test_401_maps_to_quota_exhausted(provider: ScrapingBeeProvider) -> None:
     provider._client.get = AsyncMock(
         return_value=mock_response({"message": "No more credit available"}, status_code=401)
@@ -370,7 +402,7 @@ async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider
     assert results[0].price == 829.0
     assert results[0].airline == "Icelandair / Lufthansa"
     assert results[0].duration_minutes == 1439
-    assert results[0].stops == 1
+    assert results[0].stops == 2
     assert results[0].deep_link == "https://www.ca.kayak.com/book/open-jaw-123"
     assert results[0].raw_data["cabin"] == "Economy Light"
     assert len(results[0].raw_data["legs"]) == 2

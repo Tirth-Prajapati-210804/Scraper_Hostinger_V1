@@ -148,6 +148,31 @@ async def test_stops_counted_from_flights_array(provider: SearchApiProvider) -> 
 
 
 @pytest.mark.asyncio
+async def test_round_trip_exposes_outbound_and_return_airlines(provider: SearchApiProvider) -> None:
+    data = {
+        "best_flights": [
+            {
+                "price": 1221,
+                "total_duration": 817,
+                "booking_token": "roundtrip123",
+                "flights": [
+                    {"airline": "WestJet", "flight_number": "WS 1"},
+                    {"airline": "Ryanair", "flight_number": "FR 2"},
+                ],
+            }
+        ],
+        "other_flights": [],
+    }
+    provider._client.get = AsyncMock(return_value=mock_response(data))
+
+    results = await provider._search_round_trip_once("YYC", "EDI", DEPART, DEPART + timedelta(days=11))
+
+    assert len(results) == 1
+    assert results[0].raw_data["outbound_airline"] == "WestJet"
+    assert results[0].raw_data["return_airline"] == "Ryanair"
+
+
+@pytest.mark.asyncio
 async def test_booking_token_deep_link(provider: SearchApiProvider) -> None:
     offer = make_flight_offer(booking_token="mytoken")
     data = {"best_flights": [offer], "other_flights": []}

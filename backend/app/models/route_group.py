@@ -32,6 +32,7 @@ class RouteGroup(Base):
     market: Mapped[str] = mapped_column(String(8), nullable=False, default="us")
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
     max_stops: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    same_airline_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     trip_type: Mapped[str] = mapped_column(String(20), nullable=False, default="one_way")

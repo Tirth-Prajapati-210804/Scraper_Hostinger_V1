@@ -168,3 +168,56 @@ async def test_max_stops_two_filters_out_results_above_two_stops(provider: Kayak
 
     assert [result.price for result in results] == [1000]
     assert results[0].stops == 2
+
+
+@pytest.mark.asyncio
+async def test_round_trip_results_expose_outbound_and_return_airlines(provider: KayakProvider) -> None:
+    provider._post_json = AsyncMock(  # type: ignore[method-assign]
+        return_value=_complete_payload(
+            results=[
+                {
+                    "id": "result-rt",
+                    "legs": [{"id": "outbound-leg"}, {"id": "return-leg"}],
+                    "bookingOptions": [
+                        {
+                            "type": "regular",
+                            "bookingUrl": "https://kayak.test/round-trip",
+                            "displayPrice": {"price": 1221},
+                            "providerCode": "KA",
+                        }
+                    ],
+                }
+            ],
+            legs={
+                "outbound-leg": {
+                    "duration": 420,
+                    "segments": [{"id": "seg-out-1"}],
+                },
+                "return-leg": {
+                    "duration": 397,
+                    "segments": [{"id": "seg-ret-1"}],
+                },
+            },
+            segments={
+                "seg-out-1": {"airline": "WS"},
+                "seg-ret-1": {"airline": "FR"},
+            },
+            airlines={
+                "WS": {"displayName": "WestJet"},
+                "FR": {"displayName": "Ryanair"},
+            },
+        )
+    )
+
+    results = await provider.search_round_trip(
+        origin="YYC",
+        destination="EDI",
+        depart_date=date(2026, 10, 3),
+        return_date=date(2026, 10, 14),
+        currency="CAD",
+        max_stops=1,
+    )
+
+    assert len(results) == 1
+    assert results[0].raw_data["outbound_airline"] == "WestJet"
+    assert results[0].raw_data["return_airline"] == "Ryanair"

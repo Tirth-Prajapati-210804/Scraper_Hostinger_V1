@@ -221,7 +221,7 @@ export function RouteGroupDetailPage() {
             </span>
           </div>
 
-          <div className="mt-5 grid min-w-0 grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="mt-5 grid min-w-0 grid-cols-2 gap-4 lg:grid-cols-5">
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Nights</p>
               <p className="mt-0.5 text-sm font-semibold text-slate-800">{group.nights}</p>
@@ -237,6 +237,12 @@ export function RouteGroupDetailPage() {
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Stops</p>
               <p className="mt-0.5 text-sm font-semibold text-slate-800">{formatStopModeLabel(group.max_stops)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Airline Match</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800">
+                {group.same_airline_only ? "Same airline only" : "Any airline"}
+              </p>
             </div>
           </div>
 

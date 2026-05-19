@@ -145,9 +145,9 @@ class PriceCollector:
             return {"market": market}
         return {}
 
-    def _normalize_stop_mode(self, max_stops: int | None) -> int:
+    def _normalize_stop_mode(self, max_stops: int | None) -> int | None:
         if max_stops is None:
-            return 3
+            return None
         return max_stops
 
     def _preferred_stop_fallback_order(self, max_stops: int) -> tuple[tuple[int, str], ...]:
@@ -162,6 +162,78 @@ class PriceCollector:
             (2, "2 Stop"),
             (0, "Direct"),
         )
+
+    def _airline_match_key(self, value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = normalize_airline(value).strip()
+        if not normalized or normalized == "-":
+            return None
+        return normalized.casefold()
+
+    def _result_airline_keys(self, result: ProviderResult) -> set[str]:
+        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+        raw_values: list[object] = []
+
+        airline_names = raw_data.get("airline_names")
+        if isinstance(airline_names, list):
+            raw_values.extend(airline_names)
+
+        legs = raw_data.get("legs")
+        if isinstance(legs, list):
+            for leg in legs:
+                if isinstance(leg, dict):
+                    raw_values.append(leg.get("airline"))
+
+        raw_values.append(raw_data.get("outbound_airline"))
+        raw_values.append(raw_data.get("return_airline"))
+
+        if isinstance(result.airline, str):
+            raw_values.extend(part.strip() for part in result.airline.split("/") if part.strip())
+
+        return {
+            airline
+            for airline in (self._airline_match_key(value) for value in raw_values)
+            if airline
+        }
+
+    def _same_airline_results_only(self, results: list[ProviderResult]) -> list[ProviderResult]:
+        return [result for result in results if len(self._result_airline_keys(result)) == 1]
+
+    def _result_leg_stops(self, result: ProviderResult, trip_type: str) -> list[int]:
+        if trip_type == "one_way":
+            return [result.stops]
+
+        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+        leg_stops = raw_data.get("leg_stops")
+        if isinstance(leg_stops, list):
+            normalized = [
+                int(value)
+                for value in leg_stops
+                if isinstance(value, (int, float))
+            ]
+            if normalized:
+                return normalized
+        return [result.stops]
+
+    def _exact_stop_results_only(
+        self,
+        results: list[ProviderResult],
+        stop_count: int | None,
+        trip_type: str,
+    ) -> list[ProviderResult]:
+        if stop_count not in {0, 1, 2}:
+            return results
+        return [
+            result
+            for result in results
+            if stop_count in self._result_leg_stops(result, trip_type)
+        ]
+
+    def _result_sort_key(self, result: ProviderResult) -> tuple[float, int, int]:
+        duration_rank = result.duration_minutes if result.duration_minutes and result.duration_minutes > 0 else 10**9
+        stops_rank = result.stops if result.stops >= 0 else 10**9
+        return (result.price, duration_rank, stops_rank)
 
     # --------------------------------------------------
     # SINGLE SEARCH
@@ -179,6 +251,7 @@ class PriceCollector:
         trip_type: str = "one_way",
         nights: int | None = None,
         return_origin: str | None = None,
+        same_airline_only: bool = False,
     ) -> CollectionResult:
 
         all_results: list[ProviderResult] = []
@@ -228,6 +301,7 @@ class PriceCollector:
                                 max_stops=requested_stop_mode,
                                 **self._provider_search_kwargs(provider, market=market),
                             )
+                            results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
                             stop_label = None
 
                     elif trip_type == "round_trip":
@@ -254,6 +328,7 @@ class PriceCollector:
                                 max_stops=requested_stop_mode,
                                 **self._provider_search_kwargs(provider, market=market),
                             )
+                            results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
                             stop_label = None
 
                     else:
@@ -277,7 +352,11 @@ class PriceCollector:
                                 max_stops=requested_stop_mode,
                                 **self._provider_search_kwargs(provider, market=market),
                             )
+                            results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
                             stop_label = None
+
+                    if same_airline_only:
+                        results = self._same_airline_results_only(results)
 
                     elapsed_ms = int((time.monotonic() - start) * 1000)
 
@@ -295,7 +374,7 @@ class PriceCollector:
                             provider=provider.name,
                             status="success" if results else "no_results",
                             offers_found=len(results),
-                            cheapest_price=min(results, key=lambda r: r.price).price if results else None,
+                            cheapest_price=min(results, key=self._result_sort_key).price if results else None,
                             duration_ms=elapsed_ms,
                         )
                     )
@@ -324,7 +403,7 @@ class PriceCollector:
                     )
 
             cheapest = (
-                min(all_results, key=lambda r: r.price)
+                min(all_results, key=self._result_sort_key)
                 if all_results else None
             )
 
@@ -383,6 +462,7 @@ class PriceCollector:
         trip_type: str = "one_way",
         nights: int | None = None,
         return_origin: str | None = None,
+        same_airline_only: bool = False,
     ) -> dict[str, int]:
 
         stats = {
@@ -442,6 +522,7 @@ class PriceCollector:
                             trip_type=trip_type,
                             nights=nights,
                             return_origin=return_origin,
+                            same_airline_only=same_airline_only,
                         )
                     )
                     if was_stopped or result is None:
@@ -541,6 +622,7 @@ class PriceCollector:
                 max_stops=max_stops,
                 **self._provider_search_kwargs(provider, market=market),
             )
+            results = self._exact_stop_results_only(results, max_stops, "multi_city")
 
             if results:
                 for result in results:
@@ -575,6 +657,7 @@ class PriceCollector:
                 max_stops=max_stops,
                 **self._provider_search_kwargs(provider, market=market),
             )
+            results = self._exact_stop_results_only(results, max_stops, "one_way")
             if results:
                 for result in results:
                     if not isinstance(result.raw_data, dict):
@@ -605,6 +688,7 @@ class PriceCollector:
                 max_stops=max_stops,
                 **self._provider_search_kwargs(provider, market=market),
             )
+            results = self._exact_stop_results_only(results, max_stops, "round_trip")
             if results:
                 for result in results:
                     if not isinstance(result.raw_data, dict):
@@ -721,7 +805,7 @@ class PriceCollector:
             },
         )
 
-        for result in sorted(results, key=lambda r: r.price):
+        for result in sorted(results, key=self._result_sort_key):
             session.add(
                 AllFlightResult(
                     route_group_id=route_group_id,

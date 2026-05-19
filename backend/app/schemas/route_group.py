@@ -90,6 +90,7 @@ class RouteGroupCreate(BaseModel):
     market: str = Field(default="us")
     currency: str = Field(default="USD", pattern=_CURRENCY_PATTERN)
     max_stops: int | None = Field(default=3, ge=0, le=4)
+    same_airline_only: bool = False
     start_date: date | None = None
     end_date: date | None = None
     trip_type: str = Field(default="one_way")
@@ -152,6 +153,7 @@ class RouteGroupUpdate(BaseModel):
     market: str | None = None
     currency: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
     max_stops: int | None = Field(default=None, ge=0, le=4)
+    same_airline_only: bool | None = None
     start_date: date | None = None
     end_date: date | None = None
     trip_type: str | None = None
@@ -223,6 +225,7 @@ class RouteGroupResponse(BaseModel):
     market: str
     currency: str
     max_stops: int | None
+    same_airline_only: bool
     start_date: date | None
     end_date: date | None
     created_at: datetime

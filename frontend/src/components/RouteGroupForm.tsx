@@ -45,6 +45,7 @@ interface ManualState {
   startDate: string;
   endDate: string;
   stops: StopModeId;
+  sameAirlineOnly: boolean;
   isActive: boolean;
 }
 
@@ -112,6 +113,7 @@ function buildInitialManualState(initial?: RouteGroup | null): ManualState {
     startDate: initial?.start_date ?? "",
     endDate: initial?.end_date ?? "",
     stops: stopModeToUi(initial?.max_stops),
+    sameAirlineOnly: initial?.same_airline_only ?? false,
     isActive: initial?.is_active ?? true,
   };
 }
@@ -314,6 +316,32 @@ function ConnectionSelector({
   );
 }
 
+function SameAirlineSelector({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-3 rounded-[24px] border border-[#dfe6f0] bg-[#f8fbff] px-5 py-4 text-[14px] text-[#47556f]">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-4 w-4 rounded border-[#c7d2e4] text-brand-600"
+      />
+      <span>
+        <span className="block font-medium text-[#12203f]">Same airline only</span>
+        <span className="mt-1 block text-[13px] leading-6 text-[#7b8aa4]">
+          Save only itineraries where the outbound airline and return airline are the same. If several
+          same-airline results exist, the cheapest one is used.
+        </span>
+      </span>
+    </label>
+  );
+}
+
 export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) {
   const qc = useQueryClient();
   const { showToast } = useToast();
@@ -393,6 +421,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         market: state.market,
         currency: state.currency,
         max_stops: stopModeToApi(state.stops),
+        same_airline_only: state.sameAirlineOnly,
         start_date: state.startDate || null,
         end_date: state.endDate || null,
         trip_type: tripTypeToApi(state.tripType),
@@ -632,6 +661,11 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         <ConnectionSelector
           value={state.stops}
           onChange={(stops) => setState((current) => ({ ...current, stops }))}
+        />
+
+        <SameAirlineSelector
+          checked={state.sameAirlineOnly}
+          onChange={(sameAirlineOnly) => setState((current) => ({ ...current, sameAirlineOnly }))}
         />
 
         {isEditing ? (
