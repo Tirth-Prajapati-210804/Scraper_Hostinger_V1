@@ -73,7 +73,7 @@ export function LoginPage() {
               <label htmlFor="email" className="text-[14px] font-medium text-[#18243d]">
                 Email address
               </label>
-              <div className="flex h-[52px] items-center rounded-2xl border border-[#dfe6f0] bg-white px-4 shadow-[0_1px_2px_rgba(15,23,42,0.02)] transition focus-within:border-brand-500">
+              <div className="flex h-[52px] items-center overflow-hidden rounded-2xl border border-[#dfe6f0] bg-white px-4 shadow-[0_1px_2px_rgba(15,23,42,0.02)] transition focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-[rgba(37,99,235,0.10)]">
                 <Mail className="mr-3 h-[18px] w-[18px] text-[#9aa7be]" />
                 <input
                   id="email"
@@ -82,7 +82,7 @@ export function LoginPage() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="h-full w-full border-none bg-transparent p-0 text-[16px] text-[#0f172a] outline-none placeholder:text-[#94a3b8]"
+                  className="auth-input h-full w-full border-none bg-transparent p-0 text-[16px] text-[#0f172a] outline-none placeholder:text-[#94a3b8]"
                   placeholder="admin@example.com"
                 />
               </div>
@@ -92,7 +92,7 @@ export function LoginPage() {
               <label htmlFor="password" className="text-[14px] font-medium text-[#18243d]">
                 Password
               </label>
-              <div className="flex h-[52px] items-center rounded-2xl border border-[#dfe6f0] bg-white px-4 shadow-[0_1px_2px_rgba(15,23,42,0.02)] transition focus-within:border-brand-500">
+              <div className="flex h-[52px] items-center overflow-hidden rounded-2xl border border-[#dfe6f0] bg-white px-4 shadow-[0_1px_2px_rgba(15,23,42,0.02)] transition focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-[rgba(37,99,235,0.10)]">
                 <Lock className="mr-3 h-[18px] w-[18px] text-[#9aa7be]" />
                 <input
                   id="password"
@@ -101,7 +101,7 @@ export function LoginPage() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="h-full w-full border-none bg-transparent p-0 text-[16px] text-[#0f172a] outline-none placeholder:text-[#94a3b8]"
+                  className="auth-input h-full w-full border-none bg-transparent p-0 text-[16px] text-[#0f172a] outline-none placeholder:text-[#94a3b8]"
                   placeholder="••••••••"
                 />
                 <button

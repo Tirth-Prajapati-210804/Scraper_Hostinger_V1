@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Square } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Activity, AlertTriangle, ChevronDown, ChevronUp, Square } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   fetchCollectionRuns,
@@ -32,6 +32,8 @@ export function CollectionLogsPage() {
   const [filterGroupId, setFilterGroupId] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
+  const [visibleRuns, setVisibleRuns] = useState(25);
+  const [visibleLogs, setVisibleLogs] = useState(25);
 
   const groupsQuery = useQuery({
     queryKey: ["route-groups"],
@@ -46,7 +48,7 @@ export function CollectionLogsPage() {
 
   const runsQuery = useQuery({
     queryKey: ["collection-runs"],
-    queryFn: () => fetchCollectionRuns(20),
+    queryFn: () => fetchCollectionRuns(100),
     refetchInterval: statusQuery.data?.is_collecting ? 5_000 : 30_000,
   });
 
@@ -96,6 +98,12 @@ export function CollectionLogsPage() {
 
   const isCollecting = statusQuery.data?.is_collecting ?? false;
   const last = runsQuery.data?.[0];
+  const visibleRunRows = (runsQuery.data ?? []).slice(0, visibleRuns);
+  const visibleLogRows = filteredLogs.slice(0, visibleLogs);
+
+  useEffect(() => {
+    setVisibleLogs(25);
+  }, [filterGroupId, filterProvider, filterStatus]);
 
   return (
     <ErrorBoundary>
@@ -165,11 +173,38 @@ export function CollectionLogsPage() {
             <h2 className="text-[15px] font-semibold text-slate-900">Collection Runs</h2>
           </div>
           <CollectionRunsTable
-            runs={runsQuery.data ?? []}
+            runs={visibleRunRows}
             isLoading={runsQuery.isLoading}
             onStop={() => stopMut.mutate()}
             stopping={stopMut.isPending}
           />
+          {(runsQuery.data?.length ?? 0) > 25 ? (
+            <div className="flex justify-end pt-2">
+              {visibleRuns < (runsQuery.data?.length ?? 0) ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setVisibleRuns((current) => current + 25)}
+                  className="rounded-2xl"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                  Show more
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setVisibleRuns(25)}
+                  className="rounded-2xl"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                  Show less
+                </Button>
+              )}
+            </div>
+          ) : null}
         </Card>
 
         <Card className="space-y-4 p-0 overflow-hidden">
@@ -177,7 +212,9 @@ export function CollectionLogsPage() {
             <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
               <div className="min-w-0">
                 <h2 className="text-[15px] font-semibold text-slate-900">Recent Scrape Logs</h2>
-                <p className="text-sm text-slate-500">Latest 100 entries</p>
+                <p className="text-sm text-slate-500">
+                  Showing {Math.min(visibleLogRows.length, filteredLogs.length)} of {filteredLogs.length} entries
+                </p>
               </div>
 
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:w-[560px]">
@@ -221,7 +258,35 @@ export function CollectionLogsPage() {
           </div>
 
           <div className="px-6 py-5">
-            <ScrapeLogsTable logs={filteredLogs} isLoading={logsQuery.isLoading} />
+            <ScrapeLogsTable logs={visibleLogRows} isLoading={logsQuery.isLoading} />
+
+            {filteredLogs.length > 25 ? (
+              <div className="flex justify-end pt-4">
+                {visibleLogs < filteredLogs.length ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setVisibleLogs((current) => current + 25)}
+                    className="rounded-2xl"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                    Show more
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setVisibleLogs(25)}
+                    className="rounded-2xl"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                    Show less
+                  </Button>
+                )}
+              </div>
+            ) : null}
           </div>
         </Card>
       </div>
