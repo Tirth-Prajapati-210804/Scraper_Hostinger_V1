@@ -33,6 +33,7 @@ class FlightScheduler:
     """
 
     _MAX_DATES = 730
+    _RUN_CONTEXT_CODE = "run_context"
 
     def __init__(
         self,
@@ -132,6 +133,105 @@ class FlightScheduler:
 
     def request_stop(self) -> None:
         self._stop_requested = True
+
+    def _run_context_payload(
+        self,
+        *,
+        mode: str,
+        group_id: UUID | None = None,
+        target_dates: list[date] | None = None,
+    ) -> list[dict[str, object]]:
+        payload: dict[str, object] = {
+            "code": self._RUN_CONTEXT_CODE,
+            "mode": mode,
+        }
+        if group_id is not None:
+            payload["group_id"] = str(group_id)
+        if target_dates:
+            payload["target_dates"] = [d.isoformat() for d in target_dates]
+        return [payload]
+
+    def _resume_context_from_run(
+        self,
+        run: CollectionRun,
+    ) -> tuple[str, UUID | None, list[date] | None]:
+        entries = run.errors if isinstance(run.errors, list) else []
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("code") != self._RUN_CONTEXT_CODE:
+                continue
+            mode = str(entry.get("mode") or "all")
+            parsed_group_id: UUID | None = None
+            raw_group_id = entry.get("group_id")
+            if isinstance(raw_group_id, str):
+                try:
+                    parsed_group_id = UUID(raw_group_id)
+                except ValueError:
+                    parsed_group_id = None
+            parsed_dates: list[date] | None = None
+            raw_target_dates = entry.get("target_dates")
+            if isinstance(raw_target_dates, list):
+                parsed_dates = []
+                for raw_date in raw_target_dates:
+                    if not isinstance(raw_date, str):
+                        continue
+                    try:
+                        parsed_dates.append(date.fromisoformat(raw_date))
+                    except ValueError:
+                        continue
+            return mode, parsed_group_id, parsed_dates or None
+        return "all", None, None
+
+    async def recover_incomplete_run(self) -> bool:
+        if self._active_task is not None and not self._active_task.done():
+            return False
+
+        async with self.session_factory() as session:
+            result = await session.execute(
+                select(CollectionRun)
+                .where(CollectionRun.status == "running")
+                .order_by(CollectionRun.started_at.desc(), CollectionRun.created_at.desc())
+            )
+            stale_runs = list(result.scalars().all())
+            if not stale_runs:
+                return False
+
+            newest_run = stale_runs[0]
+            mode, group_id, target_dates = self._resume_context_from_run(newest_run)
+            finished_at = datetime.now(UTC)
+
+            for run in stale_runs:
+                run.status = "failed"
+                run.finished_at = finished_at
+                if run.id == newest_run.id:
+                    run.errors = [
+                        {
+                            "code": "restarted_mid_collection",
+                            "detail": "Server restarted mid-collection. Automatic recovery started.",
+                        }
+                    ]
+                else:
+                    run.errors = [
+                        {
+                            "code": "superseded_by_recovery",
+                            "detail": "Automatic recovery resumed a newer interrupted collection run.",
+                        }
+                    ]
+
+            await session.commit()
+
+        if mode == "single_group" and group_id is not None:
+            started = self.start_single_group_task(group_id, target_dates)
+        else:
+            started = self.start_collection_task()
+
+        log.info(
+            "collection_recovery_started",
+            started=started,
+            mode=mode,
+            group_id=str(group_id) if group_id else None,
+            target_dates=[d.isoformat() for d in target_dates] if target_dates else None,
+        )
+        return started
 
     # --------------------------------------------------
     # START
@@ -252,6 +352,7 @@ class FlightScheduler:
                     run = CollectionRun(
                         status="running",
                         started_at=datetime.now(UTC),
+                        errors=self._run_context_payload(mode="all"),
                     )
                     session.add(run)
                     await session.flush()
@@ -603,6 +704,11 @@ class FlightScheduler:
                     run = CollectionRun(
                         status="running",
                         started_at=datetime.now(UTC),
+                        errors=self._run_context_payload(
+                            mode="single_group",
+                            group_id=group_id,
+                            target_dates=target_dates,
+                        ),
                     )
                     session.add(run)
                     await session.flush()

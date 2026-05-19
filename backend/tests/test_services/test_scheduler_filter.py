@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
+from app.models.collection_run import CollectionRun
 from app.tasks.scheduler import FlightScheduler
 
 TODAY = date.today()
@@ -461,8 +463,6 @@ async def test_start_collection_task_tracks_one_active_task(
 async def test_start_single_group_task_tracks_one_active_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from uuid import uuid4
-
     scheduler = make_scheduler()
     group_id = uuid4()
     started = asyncio.Event()
@@ -488,3 +488,94 @@ async def test_start_single_group_task_tracks_one_active_task(
     release.set()
     await scheduler._active_task
     assert scheduler._active_task is None
+
+
+@pytest.mark.asyncio
+async def test_recover_incomplete_all_collection_restarts_latest_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = make_scheduler()
+    stale_run = CollectionRun(
+        id=uuid4(),
+        status="running",
+        errors=[{"code": "run_context", "mode": "all"}],
+    )
+    older_run = CollectionRun(
+        id=uuid4(),
+        status="running",
+        errors=[{"code": "run_context", "mode": "single_group", "group_id": str(uuid4())}],
+    )
+
+    result = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.all.return_value = [stale_run, older_run]
+    result.scalars.return_value = scalar_result
+
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    scheduler.session_factory = factory
+
+    start_collection = MagicMock(return_value=True)
+    start_single_group = MagicMock(return_value=False)
+    monkeypatch.setattr(scheduler, "start_collection_task", start_collection)
+    monkeypatch.setattr(scheduler, "start_single_group_task", start_single_group)
+
+    resumed = await scheduler.recover_incomplete_run()
+
+    assert resumed is True
+    start_collection.assert_called_once_with()
+    start_single_group.assert_not_called()
+    session.commit.assert_awaited_once()
+    assert stale_run.status == "failed"
+    assert stale_run.errors[0]["code"] == "restarted_mid_collection"
+    assert older_run.status == "failed"
+    assert older_run.errors[0]["code"] == "superseded_by_recovery"
+
+
+@pytest.mark.asyncio
+async def test_recover_incomplete_single_group_restarts_same_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = make_scheduler()
+    group_id = uuid4()
+    stale_run = CollectionRun(
+        id=uuid4(),
+        status="running",
+        errors=[
+            {
+                "code": "run_context",
+                "mode": "single_group",
+                "group_id": str(group_id),
+                "target_dates": [D1.isoformat(), D2.isoformat()],
+            }
+        ],
+    )
+
+    result = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.all.return_value = [stale_run]
+    result.scalars.return_value = scalar_result
+
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    scheduler.session_factory = factory
+
+    start_collection = MagicMock(return_value=False)
+    start_single_group = MagicMock(return_value=True)
+    monkeypatch.setattr(scheduler, "start_collection_task", start_collection)
+    monkeypatch.setattr(scheduler, "start_single_group_task", start_single_group)
+
+    resumed = await scheduler.recover_incomplete_run()
+
+    assert resumed is True
+    start_collection.assert_not_called()
+    start_single_group.assert_called_once_with(group_id, [D1, D2])
+    session.commit.assert_awaited_once()
+    assert stale_run.status == "failed"
+    assert stale_run.errors[0]["code"] == "restarted_mid_collection"
