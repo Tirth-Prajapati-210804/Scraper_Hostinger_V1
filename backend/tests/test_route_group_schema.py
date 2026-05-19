@@ -67,16 +67,16 @@ def test_route_group_rejects_invalid_date_range() -> None:
         )
 
 
-def test_route_group_accepts_prefer_two_stop_mode() -> None:
+def test_route_group_accepts_exact_two_stop_mode() -> None:
     payload = RouteGroupCreate(
         name="Canada to Japan",
         destination_label="Japan",
         destinations=["NRT"],
         origins=["YVR"],
-        max_stops=4,
+        max_stops=2,
     )
 
-    assert payload.max_stops == 4
+    assert payload.max_stops == 2
 
 
 def test_route_group_accepts_same_airline_only_flag() -> None:

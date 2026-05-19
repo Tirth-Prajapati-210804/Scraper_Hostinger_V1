@@ -157,19 +157,6 @@ class PriceCollector:
             return None
         return max_stops
 
-    def _preferred_stop_fallback_order(self, max_stops: int) -> tuple[tuple[int, str], ...]:
-        if max_stops == 4:
-            return (
-                (2, "2 Stop"),
-                (1, "1 Stop"),
-                (0, "Direct"),
-            )
-        return (
-            (1, "1 Stop"),
-            (2, "2 Stop"),
-            (0, "Direct"),
-        )
-
     def _airline_match_key(self, value: object) -> str | None:
         if not isinstance(value, str):
             return None
@@ -317,89 +304,53 @@ class PriceCollector:
                             raise RuntimeError("multi_city collection requires a return origin.")
 
                         return_date = _derive_return_date(depart_date, stay_nights)
-                        if requested_stop_mode in {3, 4}:
-                            results, stop_label = await self._search_multi_city_with_fallback(
-                                provider=provider,
-                                origin=origin,
-                                destination=destination,
-                                depart_date=depart_date,
-                                return_origin=return_origin,
-                                return_date=return_date,
-                                currency=currency,
-                                market=market,
-                                max_stops=requested_stop_mode,
-                            )
-                        else:
-                            results = await provider.search_multi_city(
-                                legs=[
-                                    {
-                                        "departure_id": origin,
-                                        "arrival_id": destination,
-                                        "outbound_date": depart_date,
-                                    },
-                                    {
-                                        "departure_id": return_origin,
-                                        "arrival_id": origin,
-                                        "outbound_date": return_date,
-                                    },
-                                ],
-                                currency=currency,
-                                max_stops=requested_stop_mode,
-                                **self._provider_search_kwargs(provider, market=market),
-                            )
-                            results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
-                            stop_label = None
+                        results = await provider.search_multi_city(
+                            legs=[
+                                {
+                                    "departure_id": origin,
+                                    "arrival_id": destination,
+                                    "outbound_date": depart_date,
+                                },
+                                {
+                                    "departure_id": return_origin,
+                                    "arrival_id": origin,
+                                    "outbound_date": return_date,
+                                },
+                            ],
+                            currency=currency,
+                            max_stops=requested_stop_mode,
+                            **self._provider_search_kwargs(provider, market=market),
+                        )
+                        results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
+                        stop_label = None
 
                     elif trip_type == "round_trip":
                         stay_nights = nights or 3
                         return_date = _derive_return_date(depart_date, stay_nights)
-                        if requested_stop_mode in {3, 4}:
-                            results, stop_label = await self._search_round_trip_with_fallback(
-                                provider=provider,
-                                origin=origin,
-                                destination=destination,
-                                depart_date=depart_date,
-                                return_date=return_date,
-                                currency=currency,
-                                market=market,
-                                max_stops=requested_stop_mode,
-                            )
-                        else:
-                            results = await provider.search_round_trip(
-                                origin=origin,
-                                destination=destination,
-                                depart_date=depart_date,
-                                return_date=return_date,
-                                currency=currency,
-                                max_stops=requested_stop_mode,
-                                **self._provider_search_kwargs(provider, market=market),
-                            )
-                            results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
-                            stop_label = None
+                        results = await provider.search_round_trip(
+                            origin=origin,
+                            destination=destination,
+                            depart_date=depart_date,
+                            return_date=return_date,
+                            currency=currency,
+                            max_stops=requested_stop_mode,
+                            **self._provider_search_kwargs(provider, market=market),
+                        )
+                        results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
+                        stop_label = None
 
                     else:
                         return_date = None
-                        if requested_stop_mode in {3, 4}:
-                            results, stop_label = await self._search_one_way_with_fallback(
-                                provider=provider,
-                                origin=origin,
-                                destination=destination,
-                                depart_date=depart_date,
-                                currency=currency,
-                                market=market,
-                                max_stops=requested_stop_mode,
-                            )
-                        else:
-                            results = await provider.search_one_way(
-                                origin=origin,
-                                destination=destination,
-                                depart_date=depart_date,
-                                currency=currency,
-                                max_stops=requested_stop_mode,
-                                **self._provider_search_kwargs(provider, market=market),
-                            )
-                            results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
-                            stop_label = None
+                        results = await provider.search_one_way(
+                            origin=origin,
+                            destination=destination,
+                            depart_date=depart_date,
+                            currency=currency,
+                            max_stops=requested_stop_mode,
+                            **self._provider_search_kwargs(provider, market=market),
+                        )
+                        results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
+                        stop_label = None
 
                     if same_airline_only:
                         results = self._same_airline_results_only(results)
@@ -635,113 +586,6 @@ class PriceCollector:
                     slept += interval
 
         return stats
-
-    async def _search_multi_city_with_fallback(
-        self,
-        provider: FlightProvider,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        return_origin: str,
-        return_date: date,
-        currency: str,
-        market: str | None = None,
-        max_stops: int = 3,
-    ) -> tuple[list[ProviderResult], str | None]:
-        fallback_order = self._preferred_stop_fallback_order(max_stops)
-
-        for max_stops, default_label in fallback_order:
-            results = await provider.search_multi_city(
-                legs=[
-                    {
-                        "departure_id": origin,
-                        "arrival_id": destination,
-                        "outbound_date": depart_date,
-                    },
-                    {
-                        "departure_id": return_origin,
-                        "arrival_id": origin,
-                        "outbound_date": return_date,
-                    },
-                ],
-                currency=currency,
-                max_stops=max_stops,
-                **self._provider_search_kwargs(provider, market=market),
-            )
-            results = self._exact_stop_results_only(results, max_stops, "multi_city")
-
-            if results:
-                for result in results:
-                    if not isinstance(result.raw_data, dict):
-                        result.raw_data = {}
-                    result.raw_data.setdefault("trip_type", "multi_city")
-                    result.raw_data.setdefault("return_origin", return_origin)
-                    result.raw_data.setdefault("return_destination", origin)
-                    result.raw_data.setdefault("return_date", return_date.isoformat())
-                    result.raw_data["stop_result_label"] = default_label
-                return results, str(results[0].raw_data.get("stop_result_label") or default_label)
-
-        return [], None
-
-    async def _search_one_way_with_fallback(
-        self,
-        provider: FlightProvider,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        currency: str,
-        market: str | None = None,
-        max_stops: int = 3,
-    ) -> tuple[list[ProviderResult], str | None]:
-        fallback_order = self._preferred_stop_fallback_order(max_stops)
-        for max_stops, default_label in fallback_order:
-            results = await provider.search_one_way(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                currency=currency,
-                max_stops=max_stops,
-                **self._provider_search_kwargs(provider, market=market),
-            )
-            results = self._exact_stop_results_only(results, max_stops, "one_way")
-            if results:
-                for result in results:
-                    if not isinstance(result.raw_data, dict):
-                        result.raw_data = {}
-                    result.raw_data["stop_result_label"] = default_label
-                return results, str(results[0].raw_data.get("stop_result_label") or default_label)
-        return [], None
-
-    async def _search_round_trip_with_fallback(
-        self,
-        provider: FlightProvider,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        return_date: date,
-        currency: str,
-        market: str | None = None,
-        max_stops: int = 3,
-    ) -> tuple[list[ProviderResult], str | None]:
-        fallback_order = self._preferred_stop_fallback_order(max_stops)
-        for max_stops, default_label in fallback_order:
-            results = await provider.search_round_trip(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                return_date=return_date,
-                currency=currency,
-                max_stops=max_stops,
-                **self._provider_search_kwargs(provider, market=market),
-            )
-            results = self._exact_stop_results_only(results, max_stops, "round_trip")
-            if results:
-                for result in results:
-                    if not isinstance(result.raw_data, dict):
-                        result.raw_data = {}
-                    result.raw_data["stop_result_label"] = default_label
-                return results, str(results[0].raw_data.get("stop_result_label") or default_label)
-        return [], None
 
     # --------------------------------------------------
     # DB HELPERS

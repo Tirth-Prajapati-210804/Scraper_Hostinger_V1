@@ -89,7 +89,7 @@ class RouteGroupCreate(BaseModel):
     special_sheets: list[SpecialSheetConfig] = Field(default_factory=list)
     market: str = Field(default="us")
     currency: str = Field(default="USD", pattern=_CURRENCY_PATTERN)
-    max_stops: int | None = Field(default=3, ge=0, le=4)
+    max_stops: int | None = Field(default=1, ge=0, le=2)
     same_airline_only: bool = False
     start_date: date | None = None
     end_date: date | None = None
@@ -152,7 +152,7 @@ class RouteGroupUpdate(BaseModel):
     is_active: bool | None = None
     market: str | None = None
     currency: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
-    max_stops: int | None = Field(default=None, ge=0, le=4)
+    max_stops: int | None = Field(default=None, ge=0, le=2)
     same_airline_only: bool | None = None
     start_date: date | None = None
     end_date: date | None = None

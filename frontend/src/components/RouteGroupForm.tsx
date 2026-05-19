@@ -290,7 +290,7 @@ function ConnectionSelector({
 }) {
   return (
     <div>
-      <FieldLabel hint="Use an exact stop count or a preferred fallback order before collection starts.">
+      <FieldLabel hint="Use an exact stop count to control which itineraries are collected.">
         Connections
       </FieldLabel>
       <div className="flex flex-wrap gap-2">
