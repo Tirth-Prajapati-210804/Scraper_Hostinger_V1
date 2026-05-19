@@ -28,10 +28,10 @@ log = get_logger(__name__)
 
 def _derive_return_date(depart_date: date, nights: int) -> date:
     """
-    Return on the morning *after* the Nth night.
-    Depart Apr 1 + 12 nights = Apr 13 (slept 12 nights, fly home on the 13th).
+    Return on the day after the final night at destination.
+    Depart Apr 1 + 12 nights = Apr 14 (sleep Apr 1-12 nights, fly home on Apr 14).
     """
-    return depart_date + timedelta(days=max(1, nights))
+    return depart_date + timedelta(days=max(1, nights + 1))
 
 
 def _classify_exception(exc: BaseException) -> str:
