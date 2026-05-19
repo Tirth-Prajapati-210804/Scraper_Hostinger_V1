@@ -443,12 +443,28 @@ async def test_collect_single_date_same_airline_only_filters_before_choosing_che
     provider.search_round_trip = AsyncMock(
         return_value=[
             make_result(
+                1000,
+                airline="WestJet, Air Transat",
+                provider="searchapi",
+                duration_minutes=580,
+                stops=1,
+                raw_data={"outbound_airline": "WestJet", "return_airline": "Air Transat"},
+            ),
+            make_result(
                 1100,
                 airline="Air Canada / Lufthansa",
                 provider="searchapi",
                 duration_minutes=500,
                 stops=1,
                 raw_data={"outbound_airline": "Air Canada", "return_airline": "Lufthansa"},
+            ),
+            make_result(
+                1150,
+                airline="Multiple airlines",
+                provider="searchapi",
+                duration_minutes=610,
+                stops=1,
+                raw_data={"airline_names": ["Multiple airlines"]},
             ),
             make_result(
                 1200,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -24,6 +25,12 @@ from app.providers.base import (
 from app.utils.airline_codes import normalize_airline
 
 log = get_logger(__name__)
+_GENERIC_MULTI_AIRLINE_LABELS = {
+    "multiple airlines",
+    "multiple airline",
+    "mixed airlines",
+    "various airlines",
+}
 
 
 def _derive_return_date(depart_date: date, nights: int) -> date:
@@ -171,7 +178,24 @@ class PriceCollector:
             return None
         return normalized.casefold()
 
-    def _result_airline_keys(self, result: ProviderResult) -> set[str]:
+    def _tokenize_airline_value(self, value: object) -> list[str]:
+        if not isinstance(value, str):
+            return []
+        cleaned = value.strip()
+        if not cleaned:
+            return []
+        if cleaned.casefold() in _GENERIC_MULTI_AIRLINE_LABELS:
+            return ["__multiple__"]
+        parts = [
+            part.strip()
+            for part in re.split(r"\s*[/,;|]\s*", cleaned)
+            if part and part.strip()
+        ]
+        if not parts:
+            parts = [cleaned]
+        return parts
+
+    def _result_airline_names(self, result: ProviderResult) -> list[str]:
         raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
         raw_values: list[object] = []
 
@@ -189,16 +213,38 @@ class PriceCollector:
         raw_values.append(raw_data.get("return_airline"))
 
         if isinstance(result.airline, str):
-            raw_values.extend(part.strip() for part in result.airline.split("/") if part.strip())
+            raw_values.append(result.airline)
 
+        names: list[str] = []
+        for raw_value in raw_values:
+            for token in self._tokenize_airline_value(raw_value):
+                if token == "__multiple__":
+                    names.append(token)
+                    continue
+                normalized = normalize_airline(token).strip()
+                if normalized and normalized != "-":
+                    names.append(normalized)
+        return names
+
+    def _result_airline_keys(self, result: ProviderResult) -> set[str]:
         return {
-            airline
-            for airline in (self._airline_match_key(value) for value in raw_values)
-            if airline
+            name.casefold()
+            for name in self._result_airline_names(result)
+            if name != "__multiple__"
         }
 
     def _same_airline_results_only(self, results: list[ProviderResult]) -> list[ProviderResult]:
-        return [result for result in results if len(self._result_airline_keys(result)) == 1]
+        filtered: list[ProviderResult] = []
+        for result in results:
+            airline_names = self._result_airline_names(result)
+            if "__multiple__" in airline_names:
+                continue
+            airline_keys = {name.casefold() for name in airline_names}
+            if len(airline_keys) != 1:
+                continue
+            result.airline = airline_names[0]
+            filtered.append(result)
+        return filtered
 
     def _result_leg_stops(self, result: ProviderResult, trip_type: str) -> list[int]:
         if trip_type == "one_way":
