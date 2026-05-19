@@ -803,7 +803,7 @@ class ScrapingBeeProvider:
     ) -> list[ProviderResult]:
         if max_stops is None:
             return results
-        return [result for result in results if result.stops <= max_stops]
+        return [result for result in results if result.stops == max_stops]
 
     def _extract_rendered_cards_payload(self, rendered: dict) -> dict[str, object] | None:
         evaluate_results = rendered.get("evaluate_results")
@@ -1433,9 +1433,7 @@ class ScrapingBeeProvider:
                     market=market,
                     currency=currency,
                 )
-                if max_stops is None:
-                    return results
-                return [result for result in results if result.stops <= max_stops]
+                return self._filter_results_by_stops(results, max_stops)
 
         return []
 
@@ -1469,9 +1467,7 @@ class ScrapingBeeProvider:
                     market=market,
                     currency=currency,
                 )
-                if max_stops is None:
-                    return results
-                return [result for result in results if result.stops <= max_stops]
+                return self._filter_results_by_stops(results, max_stops)
 
         return []
 

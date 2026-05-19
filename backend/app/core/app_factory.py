@@ -168,10 +168,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         db_status = "ok" if db_ok else "down"
         scheduler_running = request.app.state.scheduler.is_running
-        provider_ready = s.demo_mode or any(
-            status in {"configured", "active"}
-            for status in provider_status.values()
-        )
+        provider_ready = any(status == "configured" for status in provider_status.values())
         overall = "ok" if db_ok and scheduler_running and provider_ready else "degraded"
 
         return HealthResponse(
@@ -180,7 +177,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             database_status=db_status,
             scheduler_running=scheduler_running,
             provider_status=provider_status,
-            demo_mode=s.demo_mode,
         )
 
     @app.get("/health/live")
@@ -209,7 +205,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "database_status": "ok" if db_ok else "down",
                 "scheduler_running": scheduler_running,
                 "provider_status": provider_status,
-                "demo_mode": s.demo_mode,
                 "request_id": request.state.request_id,
             },
         )

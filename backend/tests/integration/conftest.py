@@ -44,7 +44,6 @@ _TEST_SETTINGS = Settings(
     environment="test",
     debug=False,
     searchapi_key="",
-    demo_mode=False,
 )
 
 _engine = create_async_engine(_DB_URL, pool_pre_ping=True)

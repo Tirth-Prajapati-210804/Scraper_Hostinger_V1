@@ -124,7 +124,7 @@ async def test_parse_one_way_offer_detects_market_currency_from_symbol(
 
 
 @pytest.mark.asyncio
-async def test_max_stops_filters_results(provider: ScrapingBeeProvider) -> None:
+async def test_max_stops_filters_results_exactly(provider: ScrapingBeeProvider) -> None:
     provider._client.get = AsyncMock(
         return_value=mock_response(
             {
@@ -159,6 +159,44 @@ async def test_max_stops_filters_results(provider: ScrapingBeeProvider) -> None:
 
     assert len(results) == 1
     assert results[0].airline == "Air Canada"
+
+
+@pytest.mark.asyncio
+async def test_max_stops_does_not_include_lower_stop_counts(provider: ScrapingBeeProvider) -> None:
+    provider._client.get = AsyncMock(
+        return_value=mock_response(
+            {
+                "offers": [
+                    {
+                        "price": 420,
+                        "airline": "ANA",
+                        "duration_text": "7h 40m",
+                        "stops": 0,
+                        "summary": "ANA nonstop",
+                        "link": "/flights/direct",
+                    },
+                    {
+                        "price": 560,
+                        "airline": "Lufthansa",
+                        "duration_text": "12h 20m",
+                        "stops": 1,
+                        "summary": "Lufthansa 1 stop",
+                        "link": "/flights/one-stop",
+                    },
+                ]
+            }
+        )
+    )
+
+    results = await provider.search_one_way(
+        origin="YVR",
+        destination="NRT",
+        depart_date=DEPART,
+        max_stops=1,
+    )
+
+    assert len(results) == 1
+    assert results[0].airline == "Lufthansa"
 
 
 @pytest.mark.asyncio

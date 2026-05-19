@@ -23,17 +23,9 @@ import { Card } from "../components/ui/Card";
 import { Skeleton } from "../components/ui/Skeleton";
 import { useToast } from "../context/ToastContext";
 import type { DailyPrice } from "../types/price";
+import { formatStopModeLabel } from "../utils/stopModes";
 import { formatFreshnessLabel } from "../utils/format";
 import { usePageTitle } from "../utils/usePageTitle";
-
-function formatStopsLabel(v: number | null): string {
-  if (v == null) return "Any";
-  if (v === 0) return "Direct only";
-  if (v === 1) return "Up to 1 stop";
-  if (v === 2) return "Up to 2 stops";
-  if (v === 3) return "Prefer 1 stop (fallback)";
-  return String(v);
-}
 
 export function RouteGroupDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -244,7 +236,7 @@ export function RouteGroupDetailPage() {
             </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Stops</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800">{formatStopsLabel(group.max_stops)}</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800">{formatStopModeLabel(group.max_stops)}</p>
             </div>
           </div>
 

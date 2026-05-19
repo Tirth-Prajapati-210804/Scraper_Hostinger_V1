@@ -178,8 +178,7 @@ export function DataExplorerPage() {
   const providerStatuses = Object.values(healthQuery.data?.provider_status ?? {});
   const noProvider =
     !healthQuery.isLoading &&
-    !providerStatuses.some((status) => status === "configured" || status === "active") &&
-    !healthQuery.data?.demo_mode;
+    !providerStatuses.some((status) => status === "configured");
 
   return (
     <ErrorBoundary>

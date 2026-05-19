@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 import pytest
 
+from app.providers.base import ProviderResult
 from app.providers.searchapi import SearchApiProvider
 
 
@@ -76,6 +77,37 @@ async def test_parse_best_flights(provider: SearchApiProvider) -> None:
     assert len(results) == 2
     assert results[0].price == 800
     assert results[1].price == 950
+
+
+@pytest.mark.asyncio
+async def test_search_one_way_filters_results_to_exact_stops(provider: SearchApiProvider) -> None:
+    provider._search_one_way_once = AsyncMock(
+        return_value=[
+            ProviderResult(
+                price=800,
+                currency="USD",
+                airline="Air Canada",
+                deep_link="",
+                provider=provider.name,
+                stops=0,
+                duration_minutes=600,
+            ),
+            ProviderResult(
+                price=950,
+                currency="USD",
+                airline="ANA",
+                deep_link="",
+                provider=provider.name,
+                stops=1,
+                duration_minutes=720,
+            ),
+        ]
+    )
+
+    results = await provider.search_one_way("YVR", "NRT", DEPART, max_stops=1)
+
+    assert len(results) == 1
+    assert results[0].airline == "ANA"
 
 
 @pytest.mark.asyncio
@@ -270,7 +302,7 @@ async def test_multi_city_uses_single_provider_request(provider: SearchApiProvid
     assert len(results) == 1
     assert results[0].price == 829
     assert results[0].stops == 2
-    assert results[0].raw_data["stop_result_label"] == "1 stop"
+    assert results[0].raw_data["stop_result_label"] == "1 Stop"
     assert provider._client.get.await_count == 1
 
 

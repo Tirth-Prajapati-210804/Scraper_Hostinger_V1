@@ -68,7 +68,6 @@ class Settings(BaseSettings):
     kayak_original_client_ip: str = ""
     searchapi_key: str = ""
     searchapi_keys: str = ""
-    demo_mode: bool = False
 
     # Scheduler
     scheduler_enabled: bool = True

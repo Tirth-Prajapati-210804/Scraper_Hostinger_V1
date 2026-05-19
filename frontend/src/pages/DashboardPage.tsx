@@ -102,8 +102,7 @@ export function DashboardPage() {
   const providerStatuses = Object.values(health?.provider_status ?? {});
   const noProvider =
     !healthQuery.isLoading &&
-    !providerStatuses.some((status) => status === "configured" || status === "active") &&
-    !health?.demo_mode;
+    !providerStatuses.some((status) => status === "configured");
   const activeGroups = groups.filter((group) => group.is_active).length;
   const pausedGroups = groups.length - activeGroups;
   useEffect(() => {
@@ -259,21 +258,12 @@ export function DashboardPage() {
           }
         />
 
-        {health?.demo_mode ? (
-          <Banner
-            tone="amber"
-            icon={<AlertTriangle className="h-[15px] w-[15px]" />}
-            title="Demo mode active"
-            text="Prices are simulated locally."
-          />
-        ) : null}
-
-        {!health?.demo_mode && noProvider ? (
+        {noProvider ? (
           <Banner
             tone="amber"
             icon={<AlertTriangle className="h-[15px] w-[15px]" />}
             title="No API key configured"
-            text="Add SCRAPINGBEE_API_KEY or SCRAPINGBEE_API_KEYS, or enable DEMO_MODE=true."
+            text="Add SCRAPINGBEE_API_KEY or SCRAPINGBEE_API_KEYS."
           />
         ) : null}
 

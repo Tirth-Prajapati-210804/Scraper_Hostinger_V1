@@ -14,6 +14,7 @@ import { getErrorMessage } from "../api/client";
 import { createRouteGroup, updateRouteGroup } from "../api/route-groups";
 import { useToast } from "../context/ToastContext";
 import type { RouteGroup, RouteMarket, SpecialSheet, TripType } from "../types/route-group";
+import { STOP_MODE_OPTIONS, stopModeToApi, stopModeToUi, type StopModeId } from "../utils/stopModes";
 import { Button } from "./ui/Button";
 import { Modal } from "./ui/Modal";
 import { TagInput } from "./ui/TagInput";
@@ -43,7 +44,7 @@ interface ManualState {
   currency: string;
   startDate: string;
   endDate: string;
-  stops: string;
+  stops: StopModeId;
   isActive: boolean;
 }
 
@@ -63,14 +64,6 @@ const TRIP_TYPES: Array<{
   { id: "multicity", label: "Multi-city", description: "Open-jaw itinerary" },
 ];
 
-const STOP_OPTIONS = [
-  { id: "any", label: "All", value: null as number | null },
-  { id: "prefer-1", label: "1 Stop First", value: 3 },
-  { id: "direct", label: "Non Stop", value: 0 },
-  { id: "1-stop", label: "Up to 1 Stop", value: 1 },
-  { id: "2-stops", label: "Up to 2 Stops", value: 2 },
-];
-
 function tripTypeToUi(type?: TripType | null): UiTripType {
   if (type === "multi_city") return "multicity";
   if (type === "one_way") return "oneway";
@@ -81,14 +74,6 @@ function tripTypeToApi(type: UiTripType): TripType {
   if (type === "multicity") return "multi_city";
   if (type === "oneway") return "one_way";
   return "round_trip";
-}
-
-function stopToUi(value: number | null | undefined): string {
-  return STOP_OPTIONS.find((option) => option.value === value)?.id ?? "prefer-1";
-}
-
-function stopToApi(value: string): number | null {
-  return STOP_OPTIONS.find((option) => option.id === value)?.value ?? null;
 }
 
 function parsePositiveInt(value: string, fallback: number) {
@@ -126,7 +111,7 @@ function buildInitialManualState(initial?: RouteGroup | null): ManualState {
     currency: initial?.currency ?? "USD",
     startDate: initial?.start_date ?? "",
     endDate: initial?.end_date ?? "",
-    stops: stopToUi(initial?.max_stops),
+    stops: stopModeToUi(initial?.max_stops),
     isActive: initial?.is_active ?? true,
   };
 }
@@ -298,16 +283,16 @@ function ConnectionSelector({
   value,
   onChange,
 }: {
-  value: string;
-  onChange: (value: string) => void;
+  value: StopModeId;
+  onChange: (value: StopModeId) => void;
 }) {
   return (
     <div>
-      <FieldLabel hint="Controls how broadly the search expands across stop counts.">
+      <FieldLabel hint="Use an exact stop count or a preferred fallback order before collection starts.">
         Connections
       </FieldLabel>
       <div className="flex flex-wrap gap-2">
-        {STOP_OPTIONS.map((option) => {
+        {STOP_MODE_OPTIONS.map((option) => {
           const active = value === option.id;
           return (
             <button
@@ -351,7 +336,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         from: current.returnLeg.from,
         to: current.mainLeg.from,
       },
-      stops: current.stops === "any" ? "prefer-1" : current.stops,
+      stops: current.stops,
     }));
   }, [state.tripType, state.mainLeg.from]);
 
@@ -407,7 +392,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         special_sheets: specialSheets,
         market: state.market,
         currency: state.currency,
-        max_stops: stopToApi(state.stops),
+        max_stops: stopModeToApi(state.stops),
         start_date: state.startDate || null,
         end_date: state.endDate || null,
         trip_type: tripTypeToApi(state.tripType),

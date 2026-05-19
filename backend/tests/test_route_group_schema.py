@@ -65,3 +65,15 @@ def test_route_group_rejects_invalid_date_range() -> None:
             start_date=date(2026, 5, 10),
             end_date=date(2026, 5, 1),
         )
+
+
+def test_route_group_accepts_prefer_two_stop_mode() -> None:
+    payload = RouteGroupCreate(
+        name="Canada to Japan",
+        destination_label="Japan",
+        destinations=["NRT"],
+        origins=["YVR"],
+        max_stops=4,
+    )
+
+    assert payload.max_stops == 4

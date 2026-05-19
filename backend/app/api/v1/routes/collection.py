@@ -60,8 +60,7 @@ def _provider_unavailable_detail(registry) -> str:
 
     return (
         "No flight data provider is configured. Add SCRAPINGBEE_API_KEY or "
-        "SCRAPINGBEE_API_KEYS to your .env file, or enable DEMO_MODE=true to "
-        "use demo data."
+        "SCRAPINGBEE_API_KEYS to your .env file."
     )
 
 

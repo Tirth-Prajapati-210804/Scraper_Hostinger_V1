@@ -10,7 +10,6 @@ from app.providers.registry import ProviderRegistry
 
 def make_settings(**overrides) -> MagicMock:
     settings = MagicMock()
-    settings.demo_mode = False
     settings.scrapingbee_api_key = ""
     settings.scrapingbee_api_keys = ""
     settings.scrapingbee_base_url = "https://app.scrapingbee.com/api/v1"
@@ -33,16 +32,9 @@ def make_settings(**overrides) -> MagicMock:
     return settings
 
 
-def test_no_providers_when_no_key_and_no_demo() -> None:
+def test_no_providers_when_no_key() -> None:
     registry = ProviderRegistry(make_settings())
     assert registry.get_enabled() == []
-
-
-def test_demo_mode_creates_mock_provider() -> None:
-    registry = ProviderRegistry(make_settings(demo_mode=True))
-    providers = registry.get_enabled()
-    assert len(providers) == 1
-    assert providers[0].name == "demo"
 
 
 def test_scrapingbee_key_creates_scrapingbee_provider() -> None:
@@ -77,21 +69,6 @@ def test_scrapingbee_provider_uses_minimum_concurrency_of_two() -> None:
 
     assert provider._providers[0]._semaphore._value == 2
 
-
-def test_demo_mode_takes_priority_over_scrapingbee_key() -> None:
-    registry = ProviderRegistry(make_settings(demo_mode=True, scrapingbee_api_key="bee-key"))
-    providers = registry.get_enabled()
-    assert len(providers) == 1
-    assert providers[0].name == "demo"
-
-
-def test_status_demo_mode() -> None:
-    registry = ProviderRegistry(make_settings(demo_mode=True))
-    status = registry.status()
-    assert status["demo"] == "active"
-    assert status["scrapingbee"] == "disabled"
-
-
 def test_status_scrapingbee_configured() -> None:
     registry = ProviderRegistry(make_settings(scrapingbee_api_key="bee-key"))
     status = registry.status()
@@ -124,5 +101,5 @@ def test_status_nothing_configured() -> None:
 
 @pytest.mark.asyncio
 async def test_close_all() -> None:
-    registry = ProviderRegistry(make_settings(demo_mode=True))
+    registry = ProviderRegistry(make_settings(scrapingbee_api_key="bee-key"))
     await registry.close_all()

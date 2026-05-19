@@ -9,4 +9,3 @@ class HealthResponse(BaseModel):
     database_status: str
     scheduler_running: bool
     provider_status: dict[str, str]
-    demo_mode: bool = False

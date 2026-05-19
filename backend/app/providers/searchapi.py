@@ -117,6 +117,15 @@ class SearchApiProvider:
         2: "two_stops_or_fewer",
     }
 
+    @staticmethod
+    def _filter_results_by_stops(
+        results: list[ProviderResult],
+        max_stops: int | None,
+    ) -> list[ProviderResult]:
+        if max_stops is None:
+            return results
+        return [result for result in results if result.stops == max_stops]
+
     def __init__(
         self,
         api_key: str,
@@ -192,7 +201,7 @@ class SearchApiProvider:
             reraise=True,
         ):
             with attempt:
-                return await self._search_one_way_once(
+                results = await self._search_one_way_once(
                     origin=origin,
                     destination=destination,
                     depart_date=depart_date,
@@ -201,6 +210,7 @@ class SearchApiProvider:
                     currency=currency,
                     max_stops=max_stops,
                 )
+                return self._filter_results_by_stops(results, max_stops)
         return []
 
     async def search_round_trip(
@@ -236,7 +246,7 @@ class SearchApiProvider:
             reraise=True,
         ):
             with attempt:
-                return await self._search_round_trip_once(
+                results = await self._search_round_trip_once(
                     origin=origin,
                     destination=destination,
                     depart_date=depart_date,
@@ -246,6 +256,7 @@ class SearchApiProvider:
                     currency=currency,
                     max_stops=max_stops,
                 )
+                return self._filter_results_by_stops(results, max_stops)
 
         return []
 
@@ -279,13 +290,14 @@ class SearchApiProvider:
             reraise=True,
         ):
             with attempt:
-                return await self._search_multi_city_once(
+                results = await self._search_multi_city_once(
                     legs=legs,
                     adults=adults,
                     cabin=cabin,
                     currency=currency,
                     max_stops=max_stops,
                 )
+                return self._filter_results_by_stops(results, max_stops)
 
         return []
 
@@ -643,11 +655,11 @@ class SearchApiProvider:
         }
 
         stop_label = (
-            "Direct (1 stop and 2 stop unavailable)"
+            "Direct"
             if max_stops == 0
-            else "2 stop (1 stop unavailable)"
+            else "2 Stop"
             if max_stops == 2
-            else "1 stop"
+            else "1 Stop"
         )
 
         multi_city_json = json.dumps(

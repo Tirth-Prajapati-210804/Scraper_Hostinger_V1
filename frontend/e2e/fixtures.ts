@@ -75,7 +75,6 @@ const MOCK_HEALTH = {
   provider_status: {
     scrapingbee: "configured",
   },
-  demo_mode: false,
 };
 
 function jsonRoute(data: unknown) {

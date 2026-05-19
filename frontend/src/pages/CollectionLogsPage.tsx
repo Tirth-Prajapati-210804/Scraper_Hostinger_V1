@@ -32,7 +32,7 @@ export function CollectionLogsPage() {
   const [filterGroupId, setFilterGroupId] = useState("");
   const [filterProvider, setFilterProvider] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
-  const [visibleRuns, setVisibleRuns] = useState(25);
+  const [visibleRuns, setVisibleRuns] = useState(5);
   const [visibleLogs, setVisibleLogs] = useState(25);
 
   const groupsQuery = useQuery({
@@ -178,14 +178,14 @@ export function CollectionLogsPage() {
             onStop={() => stopMut.mutate()}
             stopping={stopMut.isPending}
           />
-          {(runsQuery.data?.length ?? 0) > 25 ? (
+          {(runsQuery.data?.length ?? 0) > 5 ? (
             <div className="flex justify-end pt-2">
               {visibleRuns < (runsQuery.data?.length ?? 0) ? (
                 <Button
                   type="button"
                   variant="secondary"
                   size="sm"
-                  onClick={() => setVisibleRuns((current) => current + 25)}
+                  onClick={() => setVisibleRuns((current) => current + 5)}
                   className="rounded-2xl"
                 >
                   <ChevronDown className="h-4 w-4" />
@@ -196,7 +196,7 @@ export function CollectionLogsPage() {
                   type="button"
                   variant="secondary"
                   size="sm"
-                  onClick={() => setVisibleRuns(25)}
+                  onClick={() => setVisibleRuns(5)}
                   className="rounded-2xl"
                 >
                   <ChevronUp className="h-4 w-4" />

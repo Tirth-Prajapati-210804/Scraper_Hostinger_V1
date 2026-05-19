@@ -94,12 +94,13 @@ async def test_multi_city_fallback_prefers_1_then_2_then_direct() -> None:
         return_origin="BUD",
         return_date=date(2026, 5, 31),
         currency="CAD",
+        max_stops=3,
     )
 
     assert provider.calls == [1, 2, 0]
     assert len(results) == 1
     assert results[0].price == 829.0
-    assert stop_label == "Direct (1 stop and 2 stop unavailable)"
+    assert stop_label == "Direct"
     assert results[0].raw_data["return_origin"] == "BUD"
     assert results[0].raw_data["return_destination"] == "YYZ"
     assert results[0].raw_data["return_date"] == "2026-05-31"
@@ -119,13 +120,38 @@ async def test_one_way_fallback_prefers_1_then_2_then_direct() -> None:
         destination="BER",
         depart_date=date(2026, 5, 20),
         currency="CAD",
+        max_stops=3,
     )
 
     assert provider.calls == [1, 2]
     assert len(results) == 1
     assert results[0].price == 540.0
-    assert stop_label == "2 stop (1 stop unavailable)"
-    assert results[0].raw_data["stop_result_label"] == "2 stop (1 stop unavailable)"
+    assert stop_label == "2 Stop"
+    assert results[0].raw_data["stop_result_label"] == "2 Stop"
+
+
+@pytest.mark.asyncio
+async def test_one_way_fallback_prefers_2_then_1_then_direct() -> None:
+    collector = PriceCollector(
+        session_factory=SimpleNamespace(),
+        providers=[],
+    )
+    provider = DummyOneWayProvider()
+
+    results, stop_label = await collector._search_one_way_with_fallback(
+        provider=provider,
+        origin="YYZ",
+        destination="BER",
+        depart_date=date(2026, 5, 20),
+        currency="CAD",
+        max_stops=4,
+    )
+
+    assert provider.calls == [2]
+    assert len(results) == 1
+    assert results[0].price == 540.0
+    assert stop_label == "2 Stop"
+    assert results[0].raw_data["stop_result_label"] == "2 Stop"
 
 
 def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
@@ -143,13 +169,13 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
             depart_date=date(2026, 5, 20),
             airline="Icelandair / Lufthansa",
             price=829.0,
-            stop_label="1 stop",
+            stop_label="1 Stop",
             itinerary_data={
                 "return_date": "2026-05-31",
                 "return_origin": "BUD",
                 "outbound_airline": "Icelandair",
                 "return_airline": "Lufthansa",
-                "stop_result_label": "1 stop",
+                "stop_result_label": "1 Stop",
             },
         ),
         SimpleNamespace(
@@ -158,13 +184,13 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
             depart_date=date(2026, 5, 21),
             airline="Air Canada / LOT",
             price=851.0,
-            stop_label="2 stop (1 stop unavailable)",
+            stop_label="2 Stop",
             itinerary_data={
                 "return_date": "2026-06-01",
                 "return_origin": "BUD",
                 "outbound_airline": "Air Canada",
                 "return_airline": "LOT",
-                "stop_result_label": "2 stop (1 stop unavailable)",
+                "stop_result_label": "2 Stop",
             },
         ),
     ]
