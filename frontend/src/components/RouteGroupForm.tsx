@@ -689,7 +689,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         <div className="flex flex-col gap-3 border-t border-[#e8edf5] pt-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[13px] text-[#92a0b7]">
             {state.tripType === "multicity"
-              ? "One multi-city itinerary is saved per date using the stop-filter fallback result."
+              ? "One matching multi-city itinerary is saved per date using the exact stop filter."
               : "Airport codes can be added manually or chosen from the location suggestions."}
           </p>
           <div className="flex gap-3 self-end">

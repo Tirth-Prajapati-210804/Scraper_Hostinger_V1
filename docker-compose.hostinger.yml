@@ -1,0 +1,27 @@
+services:
+  db:
+    # Keep Postgres private on the VPS. Access it through Docker networking
+    # instead of publishing port 5432 publicly.
+    ports: !override []
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-flight_data_scrapper}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in your VPS env file}
+
+  backend:
+    # Do not inherit backend/.env on the VPS. Keep production values in
+    # .env.hostinger and pass it to Compose with --env-file .env.hostinger.
+    env_file: !override
+      - ./.env.hostinger
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${DB_PASSWORD:?Set DB_PASSWORD in your VPS env file}@db:5432/${POSTGRES_DB:-flight_data_scrapper}
+      ENVIRONMENT: production
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://your-frontend-domain.com}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-your-api-domain.com}
+    restart: unless-stopped
+
+  frontend:
+    restart: unless-stopped
+    ports:
+      - "80:80"

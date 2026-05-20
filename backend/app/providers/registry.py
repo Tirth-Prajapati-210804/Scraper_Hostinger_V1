@@ -20,7 +20,7 @@ class ProviderRegistry:
     Adds:
     - provider health memory
     - temporary cooldown for failing providers
-    - future multi-provider ready design
+    - ScrapingBee-only production provider registration
     - cleaner status reporting
     """
 

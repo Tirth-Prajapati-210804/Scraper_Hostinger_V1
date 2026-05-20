@@ -6,7 +6,12 @@ from datetime import date
 from time import monotonic
 
 import httpx
-from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 
 from app.core.logging import get_logger
 from app.providers.base import (
@@ -116,7 +121,11 @@ class KayakProvider:
             parts: list[str] = []
             for item in errors:
                 if isinstance(item, dict):
-                    text = item.get("localizedDescription") or item.get("description") or item.get("code")
+                    text = (
+                        item.get("localizedDescription")
+                        or item.get("description")
+                        or item.get("code")
+                    )
                     if isinstance(text, str) and text.strip():
                         parts.append(text.strip())
             if parts:
@@ -175,7 +184,10 @@ class KayakProvider:
 
         return None
 
-    def _choose_regular_option(self, result: dict[str, object]) -> tuple[dict[str, object], float] | None:
+    def _choose_regular_option(
+        self,
+        result: dict[str, object],
+    ) -> tuple[dict[str, object], float] | None:
         best: tuple[dict[str, object], float] | None = None
         for option in result.get("bookingOptions", []):
             if not isinstance(option, dict):
@@ -250,10 +262,22 @@ class KayakProvider:
                 stop_count = max(0, len(segments) - 1)
                 total_stops += stop_count
                 leg_stops.append(stop_count)
-                first_segment_id = segments[0].get("id") if isinstance(segments[0], dict) else None
-                last_segment_id = segments[-1].get("id") if isinstance(segments[-1], dict) else None
-                first_segment = segments_map.get(first_segment_id) if isinstance(first_segment_id, str) else None
-                last_segment = segments_map.get(last_segment_id) if isinstance(last_segment_id, str) else None
+                first_segment_id = (
+                    segments[0].get("id") if isinstance(segments[0], dict) else None
+                )
+                last_segment_id = (
+                    segments[-1].get("id") if isinstance(segments[-1], dict) else None
+                )
+                first_segment = (
+                    segments_map.get(first_segment_id)
+                    if isinstance(first_segment_id, str)
+                    else None
+                )
+                last_segment = (
+                    segments_map.get(last_segment_id)
+                    if isinstance(last_segment_id, str)
+                    else None
+                )
 
                 for segment_ref in segments:
                     if not isinstance(segment_ref, dict):
@@ -348,8 +372,16 @@ class KayakProvider:
             if parsed:
                 normalized.append(parsed)
 
-        if max_stops == 2:
-            normalized = [item for item in normalized if item.stops <= 2]
+        if max_stops in {0, 1, 2}:
+            normalized = [
+                item
+                for item in normalized
+                if (
+                    item.stops == max_stops
+                    if trip_type == "one_way"
+                    else max_stops in item.raw_data.get("leg_stops", [])
+                )
+            ]
 
         return sorted(normalized, key=lambda item: item.price)
 
@@ -406,16 +438,28 @@ class KayakProvider:
                 search_id = payload.get("searchId")
                 cluster = payload.get("cluster")
                 if not isinstance(search_id, str) or not search_id.strip():
-                    return self._parse_results(payload, currency=currency, trip_type=trip_type, max_stops=max_stops)
+                    return self._parse_results(
+                        payload,
+                        currency=currency,
+                        trip_type=trip_type,
+                        max_stops=max_stops,
+                    )
 
                 latest_payload = payload
                 deadline = monotonic() + self._poll_timeout_seconds
                 while latest_payload.get("status") != "complete":
                     if monotonic() >= deadline:
-                        parsed = self._parse_results(latest_payload, currency=currency, trip_type=trip_type, max_stops=max_stops)
+                        parsed = self._parse_results(
+                            latest_payload,
+                            currency=currency,
+                            trip_type=trip_type,
+                            max_stops=max_stops,
+                        )
                         if parsed:
                             return parsed
-                        raise RuntimeError("KAYAK polling timed out before returning complete results.")
+                        raise RuntimeError(
+                            "KAYAK polling timed out before returning complete results."
+                        )
 
                     await asyncio.sleep(self._poll_interval_seconds)
 
@@ -435,7 +479,12 @@ class KayakProvider:
                     )
                     cluster = latest_payload.get("cluster") or cluster
 
-                parsed = self._parse_results(latest_payload, currency=currency, trip_type=trip_type, max_stops=max_stops)
+                parsed = self._parse_results(
+                    latest_payload,
+                    currency=currency,
+                    trip_type=trip_type,
+                    max_stops=max_stops,
+                )
                 log.info(
                     "kayak_results",
                     trip_type=trip_type,

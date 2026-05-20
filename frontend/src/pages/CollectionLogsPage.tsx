@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, ChevronDown, ChevronUp, Square } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   fetchCollectionRuns,
@@ -100,10 +100,6 @@ export function CollectionLogsPage() {
   const last = runsQuery.data?.[0];
   const visibleRunRows = (runsQuery.data ?? []).slice(0, visibleRuns);
   const visibleLogRows = filteredLogs.slice(0, visibleLogs);
-
-  useEffect(() => {
-    setVisibleLogs(25);
-  }, [filterGroupId, filterProvider, filterStatus]);
 
   return (
     <ErrorBoundary>
@@ -218,7 +214,13 @@ export function CollectionLogsPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:w-[560px]">
-                <Select value={filterGroupId} onChange={(e) => setFilterGroupId(e.target.value)}>
+                <Select
+                  value={filterGroupId}
+                  onChange={(e) => {
+                    setFilterGroupId(e.target.value);
+                    setVisibleLogs(25);
+                  }}
+                >
                   <option value="">All groups</option>
                   {groupsQuery.data?.map((group) => (
                     <option key={group.id} value={group.id}>
@@ -227,7 +229,13 @@ export function CollectionLogsPage() {
                   ))}
                 </Select>
 
-                <Select value={filterProvider} onChange={(e) => setFilterProvider(e.target.value)}>
+                <Select
+                  value={filterProvider}
+                  onChange={(e) => {
+                    setFilterProvider(e.target.value);
+                    setVisibleLogs(25);
+                  }}
+                >
                   <option value="">All providers</option>
                   {providers.map((provider) => (
                     <option key={provider} value={provider}>
@@ -236,7 +244,13 @@ export function CollectionLogsPage() {
                   ))}
                 </Select>
 
-                <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                <Select
+                  value={filterStatus}
+                  onChange={(e) => {
+                    setFilterStatus(e.target.value);
+                    setVisibleLogs(25);
+                  }}
+                >
                   <option value="">All statuses</option>
                   <option value="success">Success</option>
                   <option value="no_results">No results</option>

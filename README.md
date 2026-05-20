@@ -2,14 +2,36 @@
 
 Flight Harvester is a full-stack flight-price collection system with a FastAPI backend, a React + Vite frontend, and PostgreSQL persistence. It supports JWT authentication, scheduled collection, manual collection triggers, historical price views, logs, Excel export, round-trip groups, and multi-city groups.
 
-The primary production provider is ScrapingBee against Google Flights, with Travelpayouts and KAYAK remaining optional secondary providers when their credentials are configured.
+The production provider is ScrapingBee scraping live KAYAK result pages.
 
 ## Stack
 
 Backend: FastAPI, SQLAlchemy 2.x async, Alembic, APScheduler.
 Frontend: React, TypeScript, Vite, Tailwind, React Query.
 Storage: PostgreSQL.
-Deployment: Render backend, Vercel frontend, Supabase Postgres.
+Deployment: Docker Compose for VPS, or Render backend + Vercel frontend + managed Postgres.
+
+## VPS / Hostinger readiness
+
+This repo is already deployable on a VPS with Docker Compose.
+
+Files prepared for that path:
+
+- `docker-compose.yml`
+- `docker-compose.hostinger.yml`
+- `backend/Dockerfile`
+- `frontend/Dockerfile`
+- `.env.hostinger.example`
+- `docs/HOSTINGER_VPS.md`
+
+Recommended practical production move:
+
+- keep frontend on Vercel
+- move backend + database to a VPS with at least `8 GB RAM`
+
+For step-by-step VPS deployment, see:
+
+- `docs/HOSTINGER_VPS.md`
 
 ## Repository layout
 
@@ -75,11 +97,9 @@ The frontend expects `VITE_API_BASE_URL` to point at the backend in local develo
 
 `SCRAPINGBEE_API_KEY` / `SCRAPINGBEE_API_KEYS` - enables the primary real provider. Use one key in `SCRAPINGBEE_API_KEY` or a comma-separated / JSON array pool in `SCRAPINGBEE_API_KEYS`.
 
-`SCRAPINGBEE_COUNTRY_CODE` - default country or market passed to ScrapingBee for KAYAK rendering. Default `us`.
+`SCRAPINGBEE_COUNTRY_CODE` - default country or market used for KAYAK rendering through ScrapingBee. Default `us`.
 
 `SCRAPINGBEE_PREMIUM_PROXY`, `SCRAPINGBEE_STEALTH_PROXY` - optional higher-cost proxy modes for tougher routes or higher anti-bot pressure.
-
-`DEMO_MODE` - set `true` for fake/demo data.
 
 `CORS_ORIGINS` - explicit allowed browser origins.
 
@@ -114,7 +134,6 @@ Set these required Render environment variables:
 
 Recommended backend values:
 
-- `DEMO_MODE=false`
 - `SCHEDULER_ENABLED=true`
 - `ALLOWED_HOSTS` = your exact backend hostnames, for example `flight-harvester-backend.onrender.com`
 - `SCRAPINGBEE_COUNTRY_CODE=us`
@@ -205,7 +224,7 @@ If login fails, verify `JWT_SECRET_KEY`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD`.
 
 If the backend fails on startup with a PostgreSQL connection error, confirm a database is running on `localhost:5432` for host-based development, or start Docker Desktop and run `docker compose up -d db`.
 
-If collection is disabled or provider status looks degraded, confirm `SCRAPINGBEE_API_KEY` or `SCRAPINGBEE_API_KEYS` is set, make sure the ScrapingBee account still has credits available, and keep provider concurrency low enough to avoid `429` concurrent-request errors. You can still use `DEMO_MODE=true` for UI-only demos.
+If collection is disabled or provider status looks degraded, confirm `SCRAPINGBEE_API_KEY` or `SCRAPINGBEE_API_KEYS` is set, make sure the ScrapingBee account still has credits available, and keep provider concurrency low enough to avoid `429` concurrent-request errors.
 
 If the frontend cannot reach the API, verify `VITE_API_BASE_URL`, `CORS_ORIGINS`, and the deployed Render backend URL.
 

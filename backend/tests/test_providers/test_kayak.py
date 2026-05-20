@@ -97,17 +97,17 @@ async def test_search_one_way_polls_and_parses_results(provider: KayakProvider) 
 
 
 @pytest.mark.asyncio
-async def test_max_stops_two_filters_out_results_above_two_stops(provider: KayakProvider) -> None:
+async def test_max_stops_two_filters_to_exact_two_stops(provider: KayakProvider) -> None:
     provider._post_json = AsyncMock(  # type: ignore[method-assign]
         return_value=_complete_payload(
             results=[
                 {
-                    "id": "too-many-stops",
-                    "legs": [{"id": "leg-3stops"}],
+                    "id": "one-stop",
+                    "legs": [{"id": "leg-1stop"}],
                     "bookingOptions": [
                         {
                             "type": "regular",
-                            "bookingUrl": "https://kayak.test/three-stops",
+                            "bookingUrl": "https://kayak.test/one-stop",
                             "displayPrice": {"price": 900},
                             "providerCode": "KA",
                         }
@@ -127,13 +127,11 @@ async def test_max_stops_two_filters_out_results_above_two_stops(provider: Kayak
                 },
             ],
             legs={
-                "leg-3stops": {
+                "leg-1stop": {
                     "duration": 900,
                     "segments": [
                         {"id": "seg-a1"},
                         {"id": "seg-a2"},
-                        {"id": "seg-a3"},
-                        {"id": "seg-a4"},
                     ],
                 },
                 "leg-2stops": {
@@ -171,7 +169,9 @@ async def test_max_stops_two_filters_out_results_above_two_stops(provider: Kayak
 
 
 @pytest.mark.asyncio
-async def test_round_trip_results_expose_outbound_and_return_airlines(provider: KayakProvider) -> None:
+async def test_round_trip_results_expose_outbound_and_return_airlines(
+    provider: KayakProvider,
+) -> None:
     provider._post_json = AsyncMock(  # type: ignore[method-assign]
         return_value=_complete_payload(
             results=[
@@ -215,7 +215,7 @@ async def test_round_trip_results_expose_outbound_and_return_airlines(provider: 
         depart_date=date(2026, 10, 3),
         return_date=date(2026, 10, 14),
         currency="CAD",
-        max_stops=1,
+        max_stops=0,
     )
 
     assert len(results) == 1
