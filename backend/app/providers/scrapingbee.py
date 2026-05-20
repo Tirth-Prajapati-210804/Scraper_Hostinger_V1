@@ -39,13 +39,17 @@ _KAYAK_HOST_BY_COUNTRY = {
     "de": "www.kayak.de",
     "es": "www.kayak.es",
     "fr": "www.kayak.fr",
+    "gb": "www.kayak.co.uk",
     "ie": "www.kayak.ie",
     "in": "www.kayak.co.in",
     "it": "www.kayak.it",
     "jp": "www.kayak.co.jp",
     "mx": "www.kayak.com.mx",
+    "nl": "www.kayak.nl",
     "nz": "www.kayak.co.nz",
+    "se": "www.kayak.se",
     "sg": "www.kayak.sg",
+    "ch": "www.kayak.ch",
     "uk": "www.kayak.co.uk",
     "us": "www.kayak.com",
 }
@@ -67,13 +71,17 @@ _CURRENCY_BY_COUNTRY = {
     "de": "EUR",
     "es": "EUR",
     "fr": "EUR",
+    "gb": "GBP",
     "ie": "EUR",
     "in": "INR",
     "it": "EUR",
     "jp": "JPY",
     "mx": "MXN",
+    "nl": "EUR",
     "nz": "NZD",
+    "se": "SEK",
     "sg": "SGD",
+    "ch": "CHF",
     "uk": "GBP",
     "us": "USD",
 }
@@ -109,7 +117,10 @@ _CURRENCY_BY_PRICE_TOKEN = {
     "SGD$": "SGD",
     "US$": "USD",
 }
-_ALLOWED_MARKETS = {"us", "ca"}
+_MARKET_RE = re.compile(r"^[a-z]{2}$")
+_SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
+    "uk": "gb",
+}
 _FAST_MULTI_CITY_CARD_LIMIT = 30
 _DEEP_MULTI_CITY_CARD_LIMIT = 180
 
@@ -122,8 +133,8 @@ def _normalize_market(value: object) -> str | None:
     market = str(value or "").strip().lower()
     if not market:
         return None
-    if market not in _ALLOWED_MARKETS:
-        raise ValueError("market must be one of: us, ca")
+    if not _MARKET_RE.match(market):
+        raise ValueError("market must be a 2-letter country code such as us, ca, uk, or in")
     return market
 
 
@@ -386,6 +397,10 @@ class ScrapingBeeProvider:
         }
         effective_country_code = _clean_text(country_code).lower() or self._country_code
         if effective_country_code:
+            effective_country_code = _SCRAPINGBEE_COUNTRY_CODE_ALIASES.get(
+                effective_country_code,
+                effective_country_code,
+            )
             params["country_code"] = effective_country_code
         if self._premium_proxy:
             params["premium_proxy"] = "True"

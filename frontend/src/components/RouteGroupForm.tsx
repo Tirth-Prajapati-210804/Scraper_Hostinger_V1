@@ -53,6 +53,27 @@ const CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "SGD", "AED", "INR
 const MARKETS: Array<{ value: RouteMarket; label: string }> = [
   { value: "us", label: "US - United States" },
   { value: "ca", label: "CA - Canada" },
+  { value: "uk", label: "UK - United Kingdom" },
+  { value: "in", label: "IN - India" },
+  { value: "au", label: "AU - Australia" },
+  { value: "ie", label: "IE - Ireland" },
+  { value: "de", label: "DE - Germany" },
+  { value: "fr", label: "FR - France" },
+  { value: "es", label: "ES - Spain" },
+  { value: "it", label: "IT - Italy" },
+  { value: "nl", label: "NL - Netherlands" },
+  { value: "ch", label: "CH - Switzerland" },
+  { value: "se", label: "SE - Sweden" },
+  { value: "no", label: "NO - Norway" },
+  { value: "dk", label: "DK - Denmark" },
+  { value: "fi", label: "FI - Finland" },
+  { value: "jp", label: "JP - Japan" },
+  { value: "sg", label: "SG - Singapore" },
+  { value: "ae", label: "AE - United Arab Emirates" },
+  { value: "mx", label: "MX - Mexico" },
+  { value: "nz", label: "NZ - New Zealand" },
+  { value: "br", label: "BR - Brazil" },
+  { value: "za", label: "ZA - South Africa" },
 ];
 
 const TRIP_TYPES: Array<{
@@ -157,15 +178,18 @@ function StepperField({
   value,
   onChange,
   min = 1,
+  max,
   suffix,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   min?: number;
+  max?: number;
   suffix?: string;
 }) {
   const numeric = parsePositiveInt(value, min);
+  const bounded = max ? Math.min(numeric, max) : numeric;
 
   return (
     <div>
@@ -179,12 +203,20 @@ function StepperField({
           <Minus className="h-4 w-4" />
         </button>
         <div className="flex flex-1 items-center justify-center gap-1 text-[16px] font-semibold text-[#0f172a]">
-          <span>{numeric}</span>
+          <input
+            type="number"
+            min={min}
+            max={max}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            onBlur={() => onChange(String(bounded))}
+            className="w-20 bg-transparent text-center text-[16px] font-semibold text-[#0f172a] outline-none"
+          />
           {suffix ? <span className="text-[13px] font-medium text-[#7b89a3]">{suffix}</span> : null}
         </div>
         <button
           type="button"
-          onClick={() => onChange(String(numeric + 1))}
+          onClick={() => onChange(String(max ? Math.min(max, numeric + 1) : numeric + 1))}
           className="flex h-full w-12 items-center justify-center text-[#6b7a93] transition hover:bg-slate-50"
         >
           <Plus className="h-4 w-4" />
@@ -607,6 +639,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
           <StepperField
             label="Booking Window (Days)"
             value={state.days}
+            max={730}
             onChange={(days) => setState((current) => ({ ...current, days }))}
           />
 

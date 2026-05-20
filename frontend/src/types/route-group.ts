@@ -1,5 +1,5 @@
 export type TripType = "one_way" | "round_trip" | "multi_city";
-export type RouteMarket = "us" | "ca";
+export type RouteMarket = string;
 
 export interface RouteGroup {
   id: string;

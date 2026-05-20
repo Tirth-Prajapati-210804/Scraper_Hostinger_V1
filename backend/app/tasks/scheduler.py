@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import func, select, text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+)
 
 from app.core.config import Settings
 from app.core.logging import get_logger
@@ -403,6 +406,7 @@ class FlightScheduler:
 
                     total_success = 0
                     total_errors = 0
+                    total_skipped = 0
                     planned_routes: list[tuple[RouteGroup, object, list[date]]] = []
                     self._reset_progress()
 
@@ -475,6 +479,7 @@ class FlightScheduler:
 
                             total_success += stats["success"]
                             total_errors += stats["errors"]
+                            total_skipped += stats["skipped"]
                             self._progress["routes_done"] += 1
 
                         except Exception as exc:
@@ -493,6 +498,17 @@ class FlightScheduler:
                         run.errors = []
                     elif total_success == 0 and total_errors > 0:
                         run.status = "failed"
+                    elif total_skipped > 0:
+                        run.status = "partial"
+                        run.errors = [
+                            {
+                                "code": "missing_dates",
+                                "detail": (
+                                    f"{total_skipped} date/destination check(s) returned "
+                                    "no valid result and still need retry."
+                                ),
+                            }
+                        ]
                     else:
                         run.status = "completed"
                         run.errors = []
@@ -817,6 +833,17 @@ class FlightScheduler:
                         run.errors = []
                     elif stats["success"] == 0 and stats["errors"] > 0:
                         run.status = "failed"
+                    elif stats["skipped"] > 0:
+                        run.status = "partial"
+                        run.errors = [
+                            {
+                                "code": "missing_dates",
+                                "detail": (
+                                    f"{stats['skipped']} date/destination check(s) returned "
+                                    "no valid result and still need retry."
+                                ),
+                            }
+                        ]
                     else:
                         run.status = "completed"
                         run.errors = []

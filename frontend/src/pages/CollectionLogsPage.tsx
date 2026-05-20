@@ -23,6 +23,17 @@ import { useToast } from "../context/ToastContext";
 import type { ScrapeLogEntry } from "../types/price";
 import { usePageTitle } from "../utils/usePageTitle";
 
+function formatRunError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const code = typeof record.code === "string" ? record.code : "collection_error";
+    const detail = typeof record.detail === "string" ? record.detail : JSON.stringify(record);
+    return `${code}: ${detail}`;
+  }
+  return String(error ?? "Unknown error");
+}
+
 export function CollectionLogsPage() {
   usePageTitle("Collection Logs");
 
@@ -154,7 +165,7 @@ export function CollectionLogsPage() {
                 <ul className="mt-1 space-y-1 text-xs text-red-700">
                   {last.errors.slice(0, 5).map((error, index) => (
                     <li key={index} className="font-mono">
-                      {error}
+                      {formatRunError(error)}
                     </li>
                   ))}
                 </ul>

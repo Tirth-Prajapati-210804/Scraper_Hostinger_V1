@@ -129,6 +129,8 @@ export function DashboardPage() {
             }
           } else if (last.status === "stopped") {
             showToast("Collection was stopped.", "info");
+          } else if (last.status === "partial") {
+            showToast("Collection finished with missing dates. Run it again to retry the gaps.", "error");
           } else if (last.status === "failed") {
             showToast("Collection failed. Check Collection Logs for details.", "error");
           }

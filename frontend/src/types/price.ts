@@ -23,12 +23,12 @@ export interface CollectionRun {
   id: string;
   started_at: string;
   finished_at: string | null;
-  status: "running" | "completed" | "failed" | "stopped";
+  status: "running" | "completed" | "partial" | "failed" | "stopped";
   routes_total: number;
   routes_success: number;
   routes_failed: number;
   dates_scraped: number;
-  errors: string[] | null;
+  errors: unknown[] | null;
 }
 
 export interface ScrapeLogEntry {

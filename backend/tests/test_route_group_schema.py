@@ -41,6 +41,21 @@ def test_route_group_rejects_invalid_currency() -> None:
         )
 
 
+def test_route_group_accepts_two_letter_market() -> None:
+    payload = RouteGroupCreate(
+        name="India market",
+        destination_label="Japan",
+        destinations=["NRT"],
+        origins=["YVR"],
+        nights=7,
+        days_ahead=30,
+        market="IN",
+        currency="USD",
+    )
+
+    assert payload.market == "in"
+
+
 def test_route_group_rejects_invalid_market() -> None:
     with pytest.raises(ValidationError):
         RouteGroupCreate(
@@ -50,7 +65,7 @@ def test_route_group_rejects_invalid_market() -> None:
             origins=["YVR"],
             nights=7,
             days_ahead=30,
-            market="in",
+            market="india",
             currency="USD",
         )
 

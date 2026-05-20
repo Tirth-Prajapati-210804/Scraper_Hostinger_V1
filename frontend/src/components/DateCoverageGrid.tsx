@@ -14,7 +14,10 @@ function addDays(date: Date, days: number): Date {
 }
 
 function toIso(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 interface MonthGroup {
@@ -49,7 +52,7 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
       const sorted = [...progress.scraped_dates].sort();
       return new Date(`${sorted[0]}T00:00:00`);
     }
-    return addDays(today, 1);
+    return today;
   }, [progress.scraped_dates, today]);
 
   const months = useMemo<MonthGroup[]>(() => {

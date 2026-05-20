@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime
 
@@ -8,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 _IATA_PATTERN = r"^[A-Z0-9]{2,4}$"
 _CURRENCY_PATTERN = r"^[A-Z]{3}$"
 _ALLOWED_TRIP_TYPES = {"one_way", "round_trip", "multi_city"}
-_ALLOWED_MARKETS = {"us", "ca"}
+_MARKET_PATTERN = re.compile(r"^[a-z]{2}$")
 
 
 def _normalize_iata_codes(v: object) -> list[str] | object:
@@ -47,8 +48,8 @@ def _normalize_trip_type(value: object) -> str:
 def _normalize_market(value: object) -> str:
     market = str(value).strip().lower()
 
-    if market not in _ALLOWED_MARKETS:
-        raise ValueError("market must be one of: us, ca")
+    if not _MARKET_PATTERN.match(market):
+        raise ValueError("market must be a 2-letter country code such as us, ca, uk, or in")
 
     return market
 

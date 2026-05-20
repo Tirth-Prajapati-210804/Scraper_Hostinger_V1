@@ -20,6 +20,17 @@ function formatDuration(startedAt: string, finishedAt: string | null): string {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
+function formatRunError(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const code = typeof record.code === "string" ? record.code : "collection_error";
+    const detail = typeof record.detail === "string" ? record.detail : JSON.stringify(record);
+    return `${code}: ${detail}`;
+  }
+  return String(error ?? "Unknown error");
+}
+
 interface CollectionRunsTableProps {
   runs: CollectionRun[];
   isLoading: boolean;
@@ -91,6 +102,10 @@ export function CollectionRunsTable({
                     <span className="flex items-center gap-1 text-amber-500">
                       <Square className="h-3.5 w-3.5" /> stopped
                     </span>
+                  ) : run.status === "partial" ? (
+                    <span className="flex items-center gap-1 text-amber-600">
+                      <AlertTriangle className="h-3.5 w-3.5" /> partial
+                    </span>
                   ) : (
                     <span className="flex items-center gap-1 text-brand-600">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" /> running
@@ -118,7 +133,7 @@ export function CollectionRunsTable({
                         <ul className="mt-1 space-y-0.5">
                           {run.errors.map((error, errorIndex) => (
                             <li key={errorIndex} className="font-mono text-xs text-red-700">
-                              {error}
+                              {formatRunError(error)}
                             </li>
                           ))}
                         </ul>

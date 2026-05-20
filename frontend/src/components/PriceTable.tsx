@@ -232,7 +232,7 @@ export function PriceTable({
                   ) : null}
                   {isMultiCity ? (
                     <td className="whitespace-nowrap px-6 py-3 text-slate-700">
-                      {addDays(price.depart_date, nights)}
+                      {addDays(price.depart_date, nights + 1)}
                     </td>
                   ) : null}
                   <td className="min-w-[16rem] px-6 py-3 text-slate-700">{price.airline}</td>
