@@ -124,7 +124,7 @@ async def test_parse_one_way_offer_detects_market_currency_from_symbol(
 
 
 @pytest.mark.asyncio
-async def test_max_stops_filters_results_exactly(provider: ScrapingBeeProvider) -> None:
+async def test_max_stops_does_not_hide_cheapest_valid_result(provider: ScrapingBeeProvider) -> None:
     provider._client.get = AsyncMock(
         return_value=mock_response(
             {
@@ -157,12 +157,12 @@ async def test_max_stops_filters_results_exactly(provider: ScrapingBeeProvider) 
         max_stops=1,
     )
 
-    assert len(results) == 1
+    assert len(results) == 2
     assert results[0].airline == "Air Canada"
 
 
 @pytest.mark.asyncio
-async def test_max_stops_does_not_include_lower_stop_counts(provider: ScrapingBeeProvider) -> None:
+async def test_max_stops_temporarily_allows_lower_stop_counts(provider: ScrapingBeeProvider) -> None:
     provider._client.get = AsyncMock(
         return_value=mock_response(
             {
@@ -195,8 +195,8 @@ async def test_max_stops_does_not_include_lower_stop_counts(provider: ScrapingBe
         max_stops=1,
     )
 
-    assert len(results) == 1
-    assert results[0].airline == "Lufthansa"
+    assert len(results) == 2
+    assert results[0].airline == "ANA"
 
 
 @pytest.mark.asyncio
@@ -249,6 +249,7 @@ async def test_round_trip_builds_round_trip_search_url(provider: ScrapingBeeProv
         currency="USD",
     )
 
+    assert provider._client.get.await_count == 1
     params = provider._client.get.call_args.kwargs["params"]
     target_url = params["url"]
     assert "kayak.com/flights/YYZ-DPS/" in target_url
@@ -385,7 +386,9 @@ async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider
         market="ca",
     )
 
-    params = provider._client.get.call_args.kwargs["params"]
+    assert provider._client.get.await_count == 2
+    fast_params = provider._client.get.await_args_list[0].kwargs["params"]
+    params = provider._client.get.await_args_list[1].kwargs["params"]
 
     assert len(results) == 1
     assert (
@@ -398,7 +401,8 @@ async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider
     assert "nrc6-price-section" in params["js_scenario"]
     assert "cheapest" in params["js_scenario"].lower()
     assert "scrollBy" in params["js_scenario"]
-    assert "cardLimit=30" in params["js_scenario"]
+    assert "cardLimit=30" in fast_params["js_scenario"]
+    assert "cardLimit=180" in params["js_scenario"]
     assert results[0].price == 829.0
     assert results[0].airline == "Icelandair / Lufthansa"
     assert results[0].duration_minutes == 1439
@@ -665,7 +669,7 @@ async def test_multi_city_retries_with_deeper_capture_for_one_stop_results(
     assert provider._client.get.await_count == 2
     assert len(results) == 1
     assert results[0].price == 991.0
-    assert results[0].stops == 1
+    assert results[0].stops == 2
     assert results[0].airline == "Cathay Pacific"
     assert results[0].deep_link == "https://www.kayak.com/book/cheapest-one-stop"
 

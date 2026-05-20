@@ -109,6 +109,7 @@ export function CollectionLogsPage() {
 
   const isCollecting = statusQuery.data?.is_collecting ?? false;
   const last = runsQuery.data?.[0];
+  const lastIsPartial = last?.status === "partial";
   const visibleRunRows = (runsQuery.data ?? []).slice(0, visibleRuns);
   const visibleLogRows = filteredLogs.slice(0, visibleLogs);
 
@@ -155,14 +156,20 @@ export function CollectionLogsPage() {
         ) : null}
 
         {last?.errors?.length ? (
-          <div className="rounded-[20px] border border-red-200 bg-red-50 px-4 py-3">
+          <div
+            className={`rounded-[20px] border px-4 py-3 ${
+              lastIsPartial ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50"
+            }`}
+          >
             <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-4 w-4 text-red-600" />
+              <AlertTriangle className={`mt-0.5 h-4 w-4 ${lastIsPartial ? "text-amber-600" : "text-red-600"}`} />
               <div>
-                <p className="text-sm font-semibold text-red-800">
-                  Last collection had {last.errors.length} failure(s)
+                <p className={`text-sm font-semibold ${lastIsPartial ? "text-amber-800" : "text-red-800"}`}>
+                  {lastIsPartial
+                    ? "Last collection needs retry for missing dates"
+                    : `Last collection had ${last.errors.length} failure(s)`}
                 </p>
-                <ul className="mt-1 space-y-1 text-xs text-red-700">
+                <ul className={`mt-1 space-y-1 text-xs ${lastIsPartial ? "text-amber-700" : "text-red-700"}`}>
                   {last.errors.slice(0, 5).map((error, index) => (
                     <li key={index} className="font-mono">
                       {formatRunError(error)}

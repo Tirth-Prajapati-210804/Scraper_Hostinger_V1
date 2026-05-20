@@ -124,15 +124,26 @@ export function CollectionRunsTable({
                       <button
                         onClick={() => setExpandedId(expandedId === run.id ? null : run.id)}
                         aria-expanded={expandedId === run.id}
-                        className="flex items-center gap-1 text-xs text-red-600 hover:text-red-800"
+                        className={`flex items-center gap-1 text-xs ${
+                          run.status === "partial"
+                            ? "text-amber-600 hover:text-amber-800"
+                            : "text-red-600 hover:text-red-800"
+                        }`}
                       >
                         <AlertTriangle className="h-3.5 w-3.5" />
-                        {run.errors.length} route{run.errors.length > 1 ? "s" : ""}
+                        {run.status === "partial"
+                          ? "retry needed"
+                          : `${run.errors.length} route${run.errors.length > 1 ? "s" : ""}`}
                       </button>
                       {expandedId === run.id ? (
                         <ul className="mt-1 space-y-0.5">
                           {run.errors.map((error, errorIndex) => (
-                            <li key={errorIndex} className="font-mono text-xs text-red-700">
+                            <li
+                              key={errorIndex}
+                              className={`font-mono text-xs ${
+                                run.status === "partial" ? "text-amber-700" : "text-red-700"
+                              }`}
+                            >
                               {formatRunError(error)}
                             </li>
                           ))}

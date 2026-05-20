@@ -407,6 +407,8 @@ class FlightScheduler:
                     total_success = 0
                     total_errors = 0
                     total_skipped = 0
+                    route_success = 0
+                    route_failed = 0
                     planned_routes: list[tuple[RouteGroup, object, list[date]]] = []
                     self._reset_progress()
 
@@ -480,10 +482,15 @@ class FlightScheduler:
                             total_success += stats["success"]
                             total_errors += stats["errors"]
                             total_skipped += stats["skipped"]
+                            if stats["success"] > 0:
+                                route_success += 1
+                            if stats["errors"] > 0:
+                                route_failed += 1
                             self._progress["routes_done"] += 1
 
                         except Exception as exc:
                             total_errors += 1
+                            route_failed += 1
                             self._progress["routes_done"] += 1
                             self._progress["routes_failed"] += 1
 
@@ -513,8 +520,8 @@ class FlightScheduler:
                         run.status = "completed"
                         run.errors = []
                     run.routes_total = len(planned_routes)
-                    run.routes_success = total_success
-                    run.routes_failed = total_errors
+                    run.routes_success = route_success
+                    run.routes_failed = route_failed
                     run.dates_scraped = total_success
                     run.finished_at = datetime.now(UTC)
                     await session.commit()
@@ -759,6 +766,8 @@ class FlightScheduler:
                     dates = target_dates if target_dates else self._group_dates(group)
                     planned_segments: list[tuple[object, list[date]]] = []
                     self._reset_progress()
+                    route_success = 0
+                    route_failed = 0
 
                     for segment in iter_group_segments(group):
                         remaining = await self._filter_already_scraped(
@@ -826,6 +835,10 @@ class FlightScheduler:
                         stats["success"] += part["success"]
                         stats["errors"] += part["errors"]
                         stats["skipped"] += part["skipped"]
+                        if part["success"] > 0:
+                            route_success += 1
+                        if part["errors"] > 0:
+                            route_failed += 1
                         self._progress["routes_done"] += 1
 
                     if self._stop_requested:
@@ -847,8 +860,8 @@ class FlightScheduler:
                     else:
                         run.status = "completed"
                         run.errors = []
-                    run.routes_success = stats["success"]
-                    run.routes_failed = stats["errors"]
+                    run.routes_success = route_success
+                    run.routes_failed = route_failed
                     run.dates_scraped = stats["success"]
                     run.finished_at = datetime.now(UTC)
                     await session.commit()

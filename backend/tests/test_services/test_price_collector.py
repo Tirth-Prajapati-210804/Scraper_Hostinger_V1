@@ -533,3 +533,35 @@ async def test_collect_single_date_prefers_shorter_duration_when_price_ties() ->
     assert result.cheapest.price == 1500
     assert result.cheapest.duration_minutes == 780
 
+
+@pytest.mark.asyncio
+async def test_collect_single_date_stop_mode_does_not_hide_cheapest_valid_result() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = make_provider(
+        "scrapingbee",
+        [
+            make_result(900, airline="Air Canada", provider="scrapingbee", stops=0),
+            make_result(1100, airline="Air Canada", provider="scrapingbee", stops=1),
+        ],
+    )
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+    collector._save_all_results = AsyncMock()
+
+    result = await collector.collect_single_date(
+        origin="YYZ",
+        destination="EDI",
+        depart_date=DEPART,
+        route_group_id=ROUTE_ID,
+        max_stops=1,
+    )
+
+    assert result.cheapest is not None
+    assert result.cheapest.price == 900
+    assert result.cheapest.stops == 0

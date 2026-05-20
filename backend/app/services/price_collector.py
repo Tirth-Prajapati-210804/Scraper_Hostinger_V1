@@ -255,13 +255,10 @@ class PriceCollector:
         stop_count: int | None,
         trip_type: str,
     ) -> list[ProviderResult]:
-        if stop_count not in {0, 1, 2}:
-            return results
-        return [
-            result
-            for result in results
-            if stop_count in self._result_leg_stops(result, trip_type)
-        ]
+        # Temporary client requirement: selected stop mode should not reject a
+        # cheaper valid itinerary. Same-airline and transport filters still run.
+        del stop_count, trip_type
+        return results
 
     def _result_sort_key(self, result: ProviderResult) -> tuple[float, int, int]:
         duration_rank = result.duration_minutes if result.duration_minutes and result.duration_minutes > 0 else 10**9

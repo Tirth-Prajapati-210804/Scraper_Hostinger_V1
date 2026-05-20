@@ -816,25 +816,11 @@ class ScrapingBeeProvider:
         results: list[ProviderResult],
         max_stops: int | None,
     ) -> list[ProviderResult]:
-        if max_stops is None:
-            return results
-        filtered: list[ProviderResult] = []
-        for result in results:
-            raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
-            leg_stops = raw_data.get("leg_stops")
-            if isinstance(leg_stops, list):
-                normalized = [
-                    int(value)
-                    for value in leg_stops
-                    if isinstance(value, (int, float))
-                ]
-                if normalized and max_stops in normalized:
-                    result.stops = max_stops
-                    filtered.append(result)
-                    continue
-            if result.stops == max_stops:
-                filtered.append(result)
-        return filtered
+        # Temporary client requirement: stop mode should not exclude the cheapest
+        # valid flight. Keep the argument for API compatibility, but let the
+        # collector apply only airline/transport validity filters.
+        del max_stops
+        return results
 
     def _extract_rendered_cards_payload(self, rendered: dict) -> dict[str, object] | None:
         evaluate_results = rendered.get("evaluate_results")
@@ -1371,36 +1357,20 @@ class ScrapingBeeProvider:
             market_country_code=market_country_code,
         )
         eligible_results = self._filter_results_by_stops(results, max_stops)
-        needs_deep_pass = not results or not eligible_results
-        used_deep_pass = False
-        if (
-            not needs_deep_pass
-            and captured_count >= _FAST_MULTI_CITY_CARD_LIMIT
-            and card_count > captured_count
-            and len(eligible_results) < 5
-        ):
-            needs_deep_pass = True
-        if (
-            not needs_deep_pass
-            and summary_prices.get("cheapest")
-            and not self._results_include_badge(eligible_results or results, "cheapest")
-        ):
-            needs_deep_pass = True
-        if needs_deep_pass:
-            used_deep_pass = True
-            rendered = await self._get_rendered_payload(
-                target_url,
-                js_scenario=self._build_multi_city_results_scenario(deep=True),
-                country_code=market_country_code,
-            )
-            summary_prices = self._multi_city_summary_prices(rendered)
-            results, card_count, captured_count = await self._parse_multi_city_rendered_payload(
-                rendered,
-                currency=currency,
-                deep_link=target_url,
-                market_country_code=market_country_code,
-            )
-            eligible_results = self._filter_results_by_stops(results, max_stops)
+        used_deep_pass = True
+        rendered = await self._get_rendered_payload(
+            target_url,
+            js_scenario=self._build_multi_city_results_scenario(deep=True),
+            country_code=market_country_code,
+        )
+        summary_prices = self._multi_city_summary_prices(rendered)
+        results, card_count, captured_count = await self._parse_multi_city_rendered_payload(
+            rendered,
+            currency=currency,
+            deep_link=target_url,
+            market_country_code=market_country_code,
+        )
+        eligible_results = self._filter_results_by_stops(results, max_stops)
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
         self._log_multi_city_debug_snapshot(

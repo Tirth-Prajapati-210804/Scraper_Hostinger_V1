@@ -204,13 +204,12 @@ function StepperField({
         </button>
         <div className="flex flex-1 items-center justify-center gap-1 text-[16px] font-semibold text-[#0f172a]">
           <input
-            type="number"
-            min={min}
-            max={max}
+            type="text"
+            inputMode="numeric"
             value={value}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => onChange(event.target.value.replace(/\D/g, ""))}
             onBlur={() => onChange(String(bounded))}
-            className="w-20 bg-transparent text-center text-[16px] font-semibold text-[#0f172a] outline-none"
+            className="w-20 border-0 bg-transparent text-center text-[16px] font-semibold text-[#0f172a] outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0"
           />
           {suffix ? <span className="text-[13px] font-medium text-[#7b89a3]">{suffix}</span> : null}
         </div>
