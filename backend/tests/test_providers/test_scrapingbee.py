@@ -124,7 +124,7 @@ async def test_parse_one_way_offer_detects_market_currency_from_symbol(
 
 
 @pytest.mark.asyncio
-async def test_max_stops_does_not_hide_cheapest_valid_result(provider: ScrapingBeeProvider) -> None:
+async def test_max_stops_filters_out_higher_stop_results(provider: ScrapingBeeProvider) -> None:
     provider._client.get = AsyncMock(
         return_value=mock_response(
             {
@@ -157,7 +157,7 @@ async def test_max_stops_does_not_hide_cheapest_valid_result(provider: ScrapingB
         max_stops=1,
     )
 
-    assert len(results) == 2
+    assert len(results) == 1
     assert results[0].airline == "Air Canada"
 
 

@@ -315,6 +315,38 @@ async def test_collect_route_batch_cooled_route_reports_skipped_progress() -> No
 
 
 @pytest.mark.asyncio
+async def test_collect_route_batch_no_results_do_not_cool_later_dates() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = make_provider("serpapi", [])
+    progress_calls: list[tuple[str, str, str, date]] = []
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+        on_item_progress=lambda status, origin, destination, depart_date: progress_calls.append(
+            (status, origin, destination, depart_date)
+        ),
+    )
+    collector._upsert_cheapest = AsyncMock()
+
+    dates = [DEPART + timedelta(days=i) for i in range(5)]
+    stats = await collector.collect_route_batch(
+        origin="YYZ",
+        destinations=["NRT"],
+        dates=dates,
+        route_group_id=ROUTE_ID,
+        batch_size=1,
+        delay_seconds=0,
+    )
+
+    assert stats == {"success": 0, "errors": 0, "skipped": 5}
+    assert provider.search_one_way.await_count == 5
+    assert [call[0] for call in progress_calls] == ["skipped"] * 5
+
+
+@pytest.mark.asyncio
 async def test_collect_route_batch_cancels_inflight_scrape_when_stop_requested() -> None:
     session = AsyncMock()
     session.add = MagicMock()

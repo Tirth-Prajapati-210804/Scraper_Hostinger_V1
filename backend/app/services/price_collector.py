@@ -611,7 +611,6 @@ class PriceCollector:
                             self.on_item_progress("success", origin, dest, depart_date)
                         return "success"
 
-                    self._mark_route_failure(route_key)
                     if self.on_item_progress:
                         self.on_item_progress("skipped", origin, dest, depart_date)
                     return "skipped"
