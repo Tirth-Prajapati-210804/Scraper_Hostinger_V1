@@ -18,12 +18,14 @@ from app.core.logging import get_logger
 from app.core.redaction import redact_text
 from app.models.collection_run import CollectionRun
 from app.models.route_group import RouteGroup
+from app.models.scrape_log import ScrapeLog
 from app.providers.registry import ProviderRegistry
 from app.services.alert_service import AlertService
 from app.services.price_collector import PriceCollector
 from app.utils.route_segments import iter_group_segments
 
 log = get_logger(__name__)
+_DURATION_RETRY_STEPS = (480, 720, 960, 1440, 2160)
 
 
 class FlightScheduler:
@@ -407,6 +409,183 @@ class FlightScheduler:
             configured = 1
         return max(1, min(configured, max(route_count, 1)))
 
+    def _next_duration_retry_limit(self, current: int | None) -> int | None:
+        if not isinstance(current, int) or current <= 0:
+            return None
+        for step in _DURATION_RETRY_STEPS:
+            if current < step:
+                return step
+        return None
+
+    async def _duration_filtered_retry_dates(
+        self,
+        session: AsyncSession,
+        *,
+        route_group_id: UUID,
+        origin: str,
+        destinations: list[str],
+        dates: list[date],
+    ) -> list[date]:
+        if not dates or not destinations:
+            return []
+
+        result = await session.execute(
+            select(
+                ScrapeLog.origin,
+                ScrapeLog.destination,
+                ScrapeLog.depart_date,
+                ScrapeLog.result_reason,
+                ScrapeLog.filtered_by_duration,
+                ScrapeLog.created_at,
+            )
+            .where(
+                ScrapeLog.route_group_id == route_group_id,
+                ScrapeLog.origin == origin,
+                ScrapeLog.destination.in_(list(destinations)),
+                ScrapeLog.depart_date.in_(list(dates)),
+            )
+            .order_by(ScrapeLog.created_at.desc())
+        )
+
+        latest_by_key: set[tuple[str, str, date]] = set()
+        duration_dates: set[date] = set()
+        for row in result:
+            key = (row.origin, row.destination, row.depart_date)
+            if key in latest_by_key:
+                continue
+            latest_by_key.add(key)
+            if row.result_reason == "filtered_out" and int(row.filtered_by_duration or 0) > 0:
+                duration_dates.add(row.depart_date)
+
+        return [depart_date for depart_date in dates if depart_date in duration_dates]
+
+    async def _apply_group_duration_retry(
+        self,
+        *,
+        session: AsyncSession,
+        collector: PriceCollector,
+        group: RouteGroup,
+        planned_segments: list[tuple[object, list[date]]],
+    ) -> dict[str, object]:
+        retry_limit = self._next_duration_retry_limit(getattr(group, "max_leg_duration_minutes", None))
+        result: dict[str, object] = {
+            "success": 0,
+            "errors": 0,
+            "skipped": 0,
+            "paused": False,
+            "triggered": False,
+            "retry_limit": retry_limit,
+        }
+        if retry_limit is None or self._stop_requested:
+            return result
+
+        retry_targets: list[tuple[object, list[date]]] = []
+        async with self.session_factory() as check_session:
+            for segment, dates in planned_segments:
+                missing = await self._filter_already_scraped(
+                    session=check_session,
+                    route_group_id=group.id,
+                    origin=segment.origin,
+                    destinations=segment.destinations,
+                    dates=dates,
+                )
+                if not missing:
+                    continue
+                retry_dates = await self._duration_filtered_retry_dates(
+                    check_session,
+                    route_group_id=group.id,
+                    origin=segment.origin,
+                    destinations=segment.destinations,
+                    dates=missing,
+                )
+                if retry_dates:
+                    retry_targets.append((segment, retry_dates))
+
+        if not retry_targets:
+            return result
+
+        result["triggered"] = True
+        for segment, retry_dates in retry_targets:
+            if self._stop_requested:
+                break
+            part = await collector.collect_route_batch(
+                origin=segment.origin,
+                destinations=segment.destinations,
+                dates=retry_dates,
+                route_group_id=group.id,
+                batch_size=self.settings.scrape_batch_size,
+                delay_seconds=self.settings.scrape_delay_seconds,
+                stop_check=lambda: self._stop_requested,
+                market=getattr(group, "market", None),
+                currency=group.currency,
+                max_stops=group.max_stops,
+                same_airline_only=getattr(group, "same_airline_only", False),
+                max_leg_duration_minutes=retry_limit,
+                trip_type=segment.trip_type,
+                nights=segment.nights,
+                return_origin=segment.return_origin,
+                is_retry=True,
+            )
+            result["success"] = int(result["success"]) + part["success"]
+            result["errors"] = int(result["errors"]) + part["errors"]
+            result["skipped"] = int(result["skipped"]) + part["skipped"]
+
+        if self._stop_requested:
+            return result
+
+        still_missing = False
+        async with self.session_factory() as check_session:
+            for segment, retry_dates in retry_targets:
+                remaining = await self._filter_already_scraped(
+                    session=check_session,
+                    route_group_id=group.id,
+                    origin=segment.origin,
+                    destinations=segment.destinations,
+                    dates=retry_dates,
+                )
+                if remaining:
+                    still_missing = True
+                    break
+
+        if still_missing:
+            group.is_active = False
+            result["paused"] = True
+            log.warning(
+                "group_paused_after_duration_retry",
+                group_id=str(group.id),
+                retry_limit=retry_limit,
+            )
+
+        return result
+
+    async def _summarize_group_completion(
+        self,
+        *,
+        group: RouteGroup,
+        planned_segments: list[tuple[object, list[date]]],
+    ) -> dict[str, int]:
+        summary = {
+            "routes_success": 0,
+            "routes_failed": 0,
+            "final_missing": 0,
+        }
+        async with self.session_factory() as check_session:
+            for segment, dates in planned_segments:
+                remaining = await self._filter_already_scraped(
+                    session=check_session,
+                    route_group_id=group.id,
+                    origin=segment.origin,
+                    destinations=segment.destinations,
+                    dates=dates,
+                )
+                final_missing = len(remaining) * len(segment.destinations)
+                summary["final_missing"] += final_missing
+                if final_missing == 0:
+                    summary["routes_success"] += 1
+                else:
+                    summary["routes_failed"] += 1
+        return summary
+
     async def _collect_segment_with_retry(
         self,
         *,
@@ -578,6 +757,7 @@ class FlightScheduler:
                     route_success = 0
                     route_failed = 0
                     planned_routes: list[tuple[RouteGroup, object, list[date]]] = []
+                    planned_routes_by_group: dict[UUID, dict[str, object]] = {}
                     self._reset_progress()
 
                     for _, group, segment, dates in ranked_routes:
@@ -596,6 +776,11 @@ class FlightScheduler:
                             continue
 
                         planned_routes.append((group, segment, remaining))
+                        group_bucket = planned_routes_by_group.setdefault(
+                            group.id,
+                            {"group": group, "segments": []},
+                        )
+                        group_bucket["segments"].append((segment, remaining))
                         self._planned_checks_total += len(remaining) * len(segment.destinations)
 
                     self._sync_progress()
@@ -664,27 +849,54 @@ class FlightScheduler:
                         )
                     )
 
-                    total_final_missing = 0
+                    duration_pause_errors: list[dict[str, str]] = []
                     for stats in route_results:
                         try:
                             total_success += stats["success"]
                             total_errors += stats["errors"]
                             total_skipped += stats["skipped"]
-                            total_final_missing += stats["final_missing"]
-                            if stats["success"] > 0 and stats["final_missing"] == 0:
-                                route_success += 1
-                            if stats["errors"] > 0 or stats["final_missing"] > 0:
-                                route_failed += 1
 
                         except Exception as exc:
                             total_errors += 1
-                            route_failed += 1
                             self._progress["routes_failed"] += 1
 
                             log.exception(
                                 "route_result_failed",
                                 error=redact_text(str(exc)),
                             )
+
+                    for group_plan in planned_routes_by_group.values():
+                        extra = await self._apply_group_duration_retry(
+                            session=session,
+                            collector=collector,
+                            group=group_plan["group"],
+                            planned_segments=group_plan["segments"],
+                        )
+                        total_success += int(extra["success"])
+                        total_errors += int(extra["errors"])
+                        total_skipped += int(extra["skipped"])
+                        if extra["paused"]:
+                            duration_pause_errors.append(
+                                {
+                                    "code": "group_paused_after_duration_retry",
+                                    "detail": (
+                                        f"{group_plan['group'].name} was paused after one duration retry "
+                                        f"to {int(extra['retry_limit']) // 60}h still returned no valid fare."
+                                    ),
+                                }
+                            )
+
+                    total_final_missing = 0
+                    route_success = 0
+                    route_failed = 0
+                    for group_plan in planned_routes_by_group.values():
+                        summary = await self._summarize_group_completion(
+                            group=group_plan["group"],
+                            planned_segments=group_plan["segments"],
+                        )
+                        route_success += summary["routes_success"]
+                        route_failed += summary["routes_failed"]
+                        total_final_missing += summary["final_missing"]
 
                     if self._stop_requested:
                         run.status = "stopped"
@@ -701,10 +913,10 @@ class FlightScheduler:
                                         "no valid fare after filtering and still need collection."
                                     ),
                             }
-                        ]
+                        ] + duration_pause_errors
                     else:
                         run.status = "completed"
-                        run.errors = []
+                        run.errors = duration_pause_errors
                     run.routes_total = len(planned_routes)
                     run.routes_success = route_success
                     run.routes_failed = route_failed
@@ -1033,16 +1245,38 @@ class FlightScheduler:
                         )
                     )
 
-                    total_final_missing = 0
                     for part in segment_results:
                         stats["success"] += part["success"]
                         stats["errors"] += part["errors"]
                         stats["skipped"] += part["skipped"]
-                        total_final_missing += part["final_missing"]
-                        if part["success"] > 0 and part["final_missing"] == 0:
-                            route_success += 1
-                        if part["errors"] > 0 or part["final_missing"] > 0:
-                            route_failed += 1
+                    duration_pause_errors: list[dict[str, str]] = []
+                    extra = await self._apply_group_duration_retry(
+                        session=session,
+                        collector=collector,
+                        group=group,
+                        planned_segments=planned_segments,
+                    )
+                    stats["success"] += int(extra["success"])
+                    stats["errors"] += int(extra["errors"])
+                    stats["skipped"] += int(extra["skipped"])
+                    if extra["paused"]:
+                        duration_pause_errors.append(
+                            {
+                                "code": "group_paused_after_duration_retry",
+                                "detail": (
+                                    f"{group.name} was paused after one duration retry "
+                                    f"to {int(extra['retry_limit']) // 60}h still returned no valid fare."
+                                ),
+                            }
+                        )
+
+                    summary = await self._summarize_group_completion(
+                        group=group,
+                        planned_segments=planned_segments,
+                    )
+                    total_final_missing = summary["final_missing"]
+                    route_success = summary["routes_success"]
+                    route_failed = summary["routes_failed"]
 
                     if self._stop_requested:
                         run.status = "stopped"
@@ -1059,10 +1293,10 @@ class FlightScheduler:
                                         "no valid fare after filtering and still need collection."
                                     ),
                             }
-                        ]
+                        ] + duration_pause_errors
                     else:
                         run.status = "completed"
-                        run.errors = []
+                        run.errors = duration_pause_errors
                     run.routes_success = route_success
                     run.routes_failed = route_failed
                     run.dates_scraped = stats["success"]

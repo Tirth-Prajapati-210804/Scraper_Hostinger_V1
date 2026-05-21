@@ -37,9 +37,6 @@ _ROUTE_IDENTITY_FIELDS = (
     "special_sheets",
     "market",
     "currency",
-    "max_stops",
-    "same_airline_only",
-    "max_leg_duration_minutes",
     "start_date",
     "end_date",
 )

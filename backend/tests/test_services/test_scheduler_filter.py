@@ -137,6 +137,7 @@ async def test_trigger_single_group_forwards_trip_type_and_nights(
     group.market = "ca"
     group.max_stops = None
     group.same_airline_only = True
+    group.max_leg_duration_minutes = None
     group.trip_type = "round_trip"
     group.nights = 14
     group.start_date = None
@@ -171,7 +172,7 @@ async def test_trigger_single_group_forwards_trip_type_and_nights(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(return_value=[D1])
+    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [], []])
 
     await scheduler.trigger_single_group(group.id)
 
@@ -203,6 +204,7 @@ async def test_trigger_single_group_collects_multi_city_special_sheets(
     group.market = "ca"
     group.max_stops = None
     group.same_airline_only = False
+    group.max_leg_duration_minutes = None
     group.trip_type = "multi_city"
     group.nights = 7
     group.start_date = None
@@ -245,7 +247,13 @@ async def test_trigger_single_group_collects_multi_city_special_sheets(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(side_effect=lambda **kwargs: kwargs["dates"])
+    scheduler._filter_already_scraped = AsyncMock(
+        side_effect=[
+            [D1, D2, D3, D3 + timedelta(days=1), D3 + timedelta(days=2)],
+            [],
+            [],
+        ]
+    )
 
     await scheduler.trigger_single_group(group.id)
 
@@ -281,6 +289,7 @@ async def test_trigger_single_group_updates_live_progress(
     group.market = "us"
     group.max_stops = None
     group.same_airline_only = False
+    group.max_leg_duration_minutes = None
     group.trip_type = "one_way"
     group.nights = 0
     group.start_date = None
@@ -292,8 +301,8 @@ async def test_trigger_single_group_updates_live_progress(
             self.on_item_progress = kw["on_item_progress"]
 
         async def collect_route_batch(self, **kwargs):
-            self.on_item_progress("success", "AMD", "YYZ", D1)
-            self.on_item_progress("skipped", "AMD", "YYZ", D2)
+            self.on_item_progress("success", "AMD", "YYZ", D1, False)
+            self.on_item_progress("skipped", "AMD", "YYZ", D2, False)
             return {"success": 1, "errors": 0, "skipped": 1}
 
     monkeypatch.setattr(scheduler_module, "PriceCollector", DummyCollector)
@@ -313,7 +322,7 @@ async def test_trigger_single_group_updates_live_progress(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(return_value=[D1, D2])
+    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1, D2], [], []])
 
     stats = await scheduler.trigger_single_group(group.id)
 
@@ -349,6 +358,7 @@ async def test_trigger_single_group_clears_stale_errors_on_success(
     group.market = "ca"
     group.max_stops = 1
     group.same_airline_only = True
+    group.max_leg_duration_minutes = None
     group.trip_type = "multi_city"
     group.nights = 12
     group.start_date = None
@@ -397,13 +407,122 @@ async def test_trigger_single_group_clears_stale_errors_on_success(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(return_value=[D1])
+    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [], []])
 
     await scheduler.trigger_single_group(group.id)
 
     assert captured_runs
     assert captured_runs[0].status == "completed"
     assert captured_runs[0].errors == []
+
+
+def test_next_duration_retry_limit_steps_up_once() -> None:
+    scheduler = make_scheduler()
+
+    assert scheduler._next_duration_retry_limit(480) == 720
+    assert scheduler._next_duration_retry_limit(720) == 960
+    assert scheduler._next_duration_retry_limit(960) == 1440
+    assert scheduler._next_duration_retry_limit(1440) == 2160
+    assert scheduler._next_duration_retry_limit(2160) is None
+    assert scheduler._next_duration_retry_limit(None) is None
+
+
+@pytest.mark.asyncio
+async def test_apply_group_duration_retry_uses_next_limit_and_pauses_group() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_batch_size = 1
+    scheduler.settings.scrape_delay_seconds = 0.0
+
+    check_session = AsyncMock()
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=check_session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    scheduler.session_factory = factory
+
+    group = MagicMock()
+    group.id = uuid4()
+    group.name = "YYC-EDI"
+    group.market = "ca"
+    group.currency = "CAD"
+    group.max_stops = 1
+    group.same_airline_only = True
+    group.max_leg_duration_minutes = 960
+    group.is_active = True
+
+    segment = MagicMock()
+    segment.origin = "YYC"
+    segment.destinations = ["EDI"]
+    segment.trip_type = "one_way"
+    segment.nights = 0
+    segment.return_origin = None
+
+    collector = MagicMock()
+    collector.collect_route_batch = AsyncMock(return_value={"success": 0, "errors": 0, "skipped": 1})
+
+    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [D1]])
+    scheduler._duration_filtered_retry_dates = AsyncMock(return_value=[D1])
+
+    result = await scheduler._apply_group_duration_retry(
+        session=AsyncMock(),
+        collector=collector,
+        group=group,
+        planned_segments=[(segment, [D1])],
+    )
+
+    assert result["triggered"] is True
+    assert result["paused"] is True
+    assert group.is_active is False
+    assert collector.collect_route_batch.await_count == 1
+    assert collector.collect_route_batch.await_args.kwargs["max_leg_duration_minutes"] == 1440
+    assert collector.collect_route_batch.await_args.kwargs["is_retry"] is True
+
+
+@pytest.mark.asyncio
+async def test_apply_group_duration_retry_keeps_group_active_when_retry_recovers_data() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_batch_size = 1
+    scheduler.settings.scrape_delay_seconds = 0.0
+
+    check_session = AsyncMock()
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=check_session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    scheduler.session_factory = factory
+
+    group = MagicMock()
+    group.id = uuid4()
+    group.name = "YVR-EDI"
+    group.market = "ca"
+    group.currency = "CAD"
+    group.max_stops = 1
+    group.same_airline_only = True
+    group.max_leg_duration_minutes = 1440
+    group.is_active = True
+
+    segment = MagicMock()
+    segment.origin = "YVR"
+    segment.destinations = ["EDI"]
+    segment.trip_type = "one_way"
+    segment.nights = 0
+    segment.return_origin = None
+
+    collector = MagicMock()
+    collector.collect_route_batch = AsyncMock(return_value={"success": 1, "errors": 0, "skipped": 0})
+
+    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], []])
+    scheduler._duration_filtered_retry_dates = AsyncMock(return_value=[D1])
+
+    result = await scheduler._apply_group_duration_retry(
+        session=AsyncMock(),
+        collector=collector,
+        group=group,
+        planned_segments=[(segment, [D1])],
+    )
+
+    assert result["triggered"] is True
+    assert result["paused"] is False
+    assert group.is_active is True
+    assert collector.collect_route_batch.await_args.kwargs["max_leg_duration_minutes"] == 2160
 
 
 @pytest.mark.asyncio
