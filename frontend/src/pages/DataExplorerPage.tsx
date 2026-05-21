@@ -22,6 +22,7 @@ import { PriceChart } from "../components/PriceChart";
 import { PriceTable } from "../components/PriceTable";
 import { useToast } from "../context/ToastContext";
 import type { DailyPrice } from "../types/price";
+import { formatDisplayDate } from "../utils/format";
 import { usePageTitle } from "../utils/usePageTitle";
 
 interface Filters {
@@ -44,7 +45,7 @@ function exportCsv(rows: DailyPrice[]) {
   const header = "Date,Origin,Destination,Airline,Price,Currency,Stops,Duration(min),Provider\n";
   const lines = rows.map((row) =>
     [
-      row.depart_date,
+      formatDisplayDate(row.depart_date),
       row.origin,
       row.destination,
       row.airline,

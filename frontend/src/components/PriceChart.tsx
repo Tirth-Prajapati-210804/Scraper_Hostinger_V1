@@ -8,6 +8,7 @@ import {
   YAxis,
 } from "recharts";
 import type { PriceTrend } from "../types/price";
+import { formatDisplayDate } from "../utils/format";
 
 interface PriceChartProps {
   data: PriceTrend[];
@@ -15,10 +16,7 @@ interface PriceChartProps {
 
 function fmtDate(d: unknown): string {
   if (typeof d !== "string") return String(d ?? "");
-  return new Date(d + "T00:00:00").toLocaleDateString("en-CA", {
-    month: "short",
-    day: "numeric",
-  });
+  return formatDisplayDate(d);
 }
 
 interface CustomTooltipProps {

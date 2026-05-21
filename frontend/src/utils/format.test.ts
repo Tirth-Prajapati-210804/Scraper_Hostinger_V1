@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { formatNumber, formatRelativeTime, formatPercent } from "./format";
+import {
+  formatDisplayDate,
+  formatDisplayDateTime,
+  formatFreshnessLabel,
+  formatNumber,
+  formatPercent,
+  formatRelativeTime,
+} from "./format";
 
 describe("formatNumber", () => {
   it("formats zero", () => {
@@ -17,43 +24,25 @@ describe("formatNumber", () => {
   });
 });
 
-describe("formatRelativeTime", () => {
-  it("returns 'Never' for null", () => {
-    expect(formatRelativeTime(null)).toBe("Never");
+describe("date and time formatting", () => {
+  it("formats date-only values as dd-MM-yyyy", () => {
+    expect(formatDisplayDate("2026-06-01")).toBe("01-06-2026");
   });
 
-  it("returns 'Never' for undefined", () => {
-    expect(formatRelativeTime(undefined)).toBe("Never");
+  it("returns exact local date-time instead of relative text", () => {
+    const raw = "2026-06-01T13:05:00";
+    expect(formatDisplayDateTime(raw)).toBe("01-06-2026 01:05 PM");
+    expect(formatRelativeTime(raw)).toBe("01-06-2026 01:05 PM");
   });
 
-  it("returns 'Just now' for 10 seconds ago", () => {
-    const d = new Date(Date.now() - 10_000).toISOString();
-    expect(formatRelativeTime(d)).toBe("Just now");
+  it("formats scraped labels with exact time", () => {
+    expect(formatFreshnessLabel("2026-06-01T01:09:00")).toBe("Scraped 01-06-2026 01:09 AM");
   });
 
-  it("returns minutes ago for 5 minutes ago", () => {
-    const d = new Date(Date.now() - 5 * 60_000).toISOString();
-    expect(formatRelativeTime(d)).toBe("5 min ago");
-  });
-
-  it("uses singular for 1 hour ago", () => {
-    const d = new Date(Date.now() - 60 * 60_000).toISOString();
-    expect(formatRelativeTime(d)).toBe("1 hour ago");
-  });
-
-  it("uses plural for 3 hours ago", () => {
-    const d = new Date(Date.now() - 3 * 60 * 60_000).toISOString();
-    expect(formatRelativeTime(d)).toBe("3 hours ago");
-  });
-
-  it("uses singular for 1 day ago", () => {
-    const d = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-    expect(formatRelativeTime(d)).toBe("1 day ago");
-  });
-
-  it("uses plural for 3 days ago", () => {
-    const d = new Date(Date.now() - 3 * 24 * 60 * 60_000).toISOString();
-    expect(formatRelativeTime(d)).toBe("3 days ago");
+  it("handles empty dates", () => {
+    expect(formatDisplayDate(null)).toBe("-");
+    expect(formatDisplayDateTime(undefined)).toBe("Never");
+    expect(formatFreshnessLabel(null)).toBe("Not scraped yet");
   });
 });
 

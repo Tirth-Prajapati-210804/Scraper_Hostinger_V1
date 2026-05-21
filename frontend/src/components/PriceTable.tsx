@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 
 import type { DailyPrice } from "../types/price";
 import type { TripType } from "../types/route-group";
-import { formatFreshnessLabel, formatRelativeTime } from "../utils/format";
+import { formatDisplayDate, formatFreshnessLabel } from "../utils/format";
 import { Button } from "./ui/Button";
 import { Skeleton } from "./ui/Skeleton";
 
@@ -212,7 +212,7 @@ export function PriceTable({
                     i % 2 !== 0 ? "bg-slate-50/50" : ""
                   }`}
                 >
-                  <td className="whitespace-nowrap px-6 py-3 text-slate-700">{price.depart_date}</td>
+                  <td className="whitespace-nowrap px-6 py-3 text-slate-700">{formatDisplayDate(price.depart_date)}</td>
                   <td className="whitespace-nowrap px-6 py-3 font-medium text-slate-800">
                     <span className="rounded-md bg-indigo-50 px-2 py-1 font-mono text-xs font-semibold text-brand-700">
                       {price.origin}
@@ -232,7 +232,7 @@ export function PriceTable({
                   ) : null}
                   {isMultiCity ? (
                     <td className="whitespace-nowrap px-6 py-3 text-slate-700">
-                      {addDays(price.depart_date, nights + 1)}
+                      {formatDisplayDate(addDays(price.depart_date, nights + 1))}
                     </td>
                   ) : null}
                   <td className="min-w-[16rem] px-6 py-3 text-slate-700">{price.airline}</td>
@@ -250,10 +250,7 @@ export function PriceTable({
                   </td>
                   <td className="whitespace-nowrap px-6 py-3 capitalize text-slate-500">{price.provider}</td>
                   <td className="whitespace-nowrap px-6 py-3 text-slate-400">
-                    <div className="font-medium text-slate-600">
-                      {formatFreshnessLabel(price.scraped_at)}
-                    </div>
-                    <div className="text-xs text-slate-400">{formatRelativeTime(price.scraped_at)}</div>
+                    <div className="font-medium text-slate-600">{formatFreshnessLabel(price.scraped_at)}</div>
                   </td>
                 </tr>
               );

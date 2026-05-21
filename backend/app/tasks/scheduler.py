@@ -459,7 +459,7 @@ class FlightScheduler:
                         self._progress["current_origin"] = segment.origin
                         self._progress["current_destination"] = ""
                         self._progress["current_date"] = ""
-                        batch_size = 2 if segment.trip_type == "multi_city" else self.settings.scrape_batch_size
+                        batch_size = self.settings.scrape_batch_size
 
                         try:
                             stats = await collector.collect_route_batch(
@@ -509,11 +509,11 @@ class FlightScheduler:
                         run.status = "partial"
                         run.errors = [
                             {
-                                "code": "missing_dates",
-                                "detail": (
-                                    f"{total_skipped} date/destination check(s) returned "
-                                    "no valid result and still need retry."
-                                ),
+                                    "code": "missing_fares",
+                                    "detail": (
+                                        f"{total_skipped} date/destination check(s) returned "
+                                        "no valid fare after filtering and still need collection."
+                                    ),
                             }
                         ]
                     else:
@@ -585,11 +585,8 @@ class FlightScheduler:
 
         configured_start = group.start_date or today
         start = max(configured_start, today)
-        end = group.end_date or (
-            start + timedelta(
-                days=min(group.days_ahead, self._MAX_DATES)
-            )
-        )
+        date_count = max(1, min(group.days_ahead, self._MAX_DATES))
+        end = group.end_date or (start + timedelta(days=date_count - 1))
         if end < start:
             return []
 
@@ -813,7 +810,7 @@ class FlightScheduler:
                         self._progress["current_origin"] = segment.origin
                         self._progress["current_destination"] = ""
                         self._progress["current_date"] = ""
-                        batch_size = 2 if segment.trip_type == "multi_city" else self.settings.scrape_batch_size
+                        batch_size = self.settings.scrape_batch_size
 
                         part = await collector.collect_route_batch(
                             origin=segment.origin,
@@ -850,11 +847,11 @@ class FlightScheduler:
                         run.status = "partial"
                         run.errors = [
                             {
-                                "code": "missing_dates",
-                                "detail": (
-                                    f"{stats['skipped']} date/destination check(s) returned "
-                                    "no valid result and still need retry."
-                                ),
+                                    "code": "missing_fares",
+                                    "detail": (
+                                        f"{stats['skipped']} date/destination check(s) returned "
+                                        "no valid fare after filtering and still need collection."
+                                    ),
                             }
                         ]
                     else:

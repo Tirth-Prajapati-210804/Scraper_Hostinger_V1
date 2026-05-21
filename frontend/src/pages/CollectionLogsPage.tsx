@@ -166,7 +166,7 @@ export function CollectionLogsPage() {
               <div>
                 <p className={`text-sm font-semibold ${lastIsPartial ? "text-amber-800" : "text-red-800"}`}>
                   {lastIsPartial
-                    ? "Last collection needs retry for missing dates"
+                    ? "Last collection has missing fare dates"
                     : `Last collection had ${last.errors.length} failure(s)`}
                 </p>
                 <ul className={`mt-1 space-y-1 text-xs ${lastIsPartial ? "text-amber-700" : "text-red-700"}`}>
@@ -271,7 +271,7 @@ export function CollectionLogsPage() {
                 >
                   <option value="">All statuses</option>
                   <option value="success">Success</option>
-                  <option value="no_results">No results</option>
+                  <option value="no_results">No valid fare</option>
                   <option value="rate_limited">Rate limited</option>
                   <option value="quota_exhausted">Quota exhausted</option>
                   <option value="auth_error">Auth error</option>

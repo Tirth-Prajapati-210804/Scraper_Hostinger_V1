@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from io import BytesIO
 from statistics import mean
 
@@ -30,6 +31,7 @@ _MULTI_CITY_HEADERS = [
     "Arrival Airport",
     "Nights",
     "Airline",
+    "Stop Result",
     "Flight Price",
 ]
 
@@ -61,6 +63,31 @@ _WEEKEND_HEADERS = [
 
 def _safe_stop_label(value: object) -> str:
     return value if isinstance(value, str) else ""
+
+
+def _duration_rank(result: AllFlightResult) -> int:
+    duration = getattr(result, "duration_minutes", None)
+    return duration if isinstance(duration, int) and duration > 0 else 10**9
+
+
+def _stops_rank(result: AllFlightResult) -> int:
+    stops = getattr(result, "stops", None)
+    return stops if isinstance(stops, int) and stops >= 0 else 10**9
+
+
+def _result_sort_key(result: AllFlightResult) -> tuple[float, int, int]:
+    return (float(result.price), _duration_rank(result), _stops_rank(result))
+
+
+def _set_date_cell(ws, *, row: int, column: int, value: object):
+    if isinstance(value, str):
+        try:
+            value = date.fromisoformat(value)
+        except ValueError:
+            pass
+    cell = ws.cell(row=row, column=column, value=value)
+    cell.number_format = "DD-MM-YYYY"
+    return cell
 
 
 def export_route_group(
@@ -95,7 +122,7 @@ def export_route_group(
 
         if key not in cheapest_by_origin_date:
             cheapest_by_origin_date[key] = r
-        elif r.price < cheapest_by_origin_date[key].price:
+        elif _result_sort_key(r) < _result_sort_key(cheapest_by_origin_date[key]):
             cheapest_by_origin_date[key] = r
 
         route_key = (r.origin, r.destination)
@@ -116,7 +143,7 @@ def export_route_group(
         for row_idx, d in enumerate(all_dates, start=2):
             result = cheapest_by_origin_date.get((origin, d))
 
-            ws.cell(row=row_idx, column=1, value=d).number_format = "YYYY-MM-DD"
+            _set_date_cell(ws, row=row_idx, column=1, value=d)
             ws.cell(row=row_idx, column=2, value=origin)
             ws.cell(
                 row=row_idx,
@@ -168,14 +195,14 @@ def export_route_group(
                 continue
             if (
                 r.depart_date not in cheapest_per_date
-                or r.price < cheapest_per_date[r.depart_date].price
+                or _result_sort_key(r) < _result_sort_key(cheapest_per_date[r.depart_date])
             ):
                 cheapest_per_date[r.depart_date] = r
 
         for row_idx, d in enumerate(all_dates, start=2):
             result = cheapest_per_date.get(d)
 
-            ws.cell(row=row_idx, column=1, value=d).number_format = "YYYY-MM-DD"
+            _set_date_cell(ws, row=row_idx, column=1, value=d)
             ws.cell(row=row_idx, column=2, value=sheet_origin)
             ws.cell(row=row_idx, column=3, value=sheet_dest_label)
 
@@ -236,7 +263,7 @@ def export_route_group(
         ws.cell(row=i, column=1, value=i - 1)
         ws.cell(row=i, column=2, value=d["origin"])
         ws.cell(row=i, column=3, value=d["destination"])
-        ws.cell(row=i, column=4, value=d["date"]).number_format = "YYYY-MM-DD"
+        _set_date_cell(ws, row=i, column=4, value=d["date"])
         ws.cell(row=i, column=5, value=d["airline"])
         ws.cell(row=i, column=6, value=int(round(d["price"])))
         ws.cell(row=i, column=7, value=int(round(d["savings"])))
@@ -252,7 +279,7 @@ def export_route_group(
         if r.depart_date.weekday() in (4, 5, 6)
     ]
 
-    weekend.sort(key=lambda r: float(r.price))
+    weekend.sort(key=_result_sort_key)
 
     ws = wb.create_sheet("Weekend Deals")
     _write_header_row(ws, _WEEKEND_HEADERS)
@@ -260,7 +287,7 @@ def export_route_group(
     for i, r in enumerate(weekend[:25], start=2):
         ws.cell(row=i, column=1, value=r.origin)
         ws.cell(row=i, column=2, value=r.destination)
-        ws.cell(row=i, column=3, value=r.depart_date).number_format = "YYYY-MM-DD"
+        _set_date_cell(ws, row=i, column=3, value=r.depart_date)
         ws.cell(row=i, column=4, value=r.airline)
         ws.cell(row=i, column=5, value=int(round(float(r.price))))
 
@@ -323,7 +350,7 @@ def _export_multi_city_route_group(
     for row in itinerary_rows:
         key = (row.origin, row.destination, row.depart_date)
         current = cheapest_by_route_date.get(key)
-        if current is None or float(row.price) < float(current.price):
+        if current is None or _result_sort_key(row) < _result_sort_key(current):
             cheapest_by_route_date[key] = row
 
     rows_by_route: dict[tuple[str, str], list[AllFlightResult]] = {}
@@ -369,13 +396,14 @@ def _export_multi_city_route_group(
             itinerary = result.itinerary_data or {}
             return_date = itinerary.get("return_date")
 
-            ws.cell(row=row_idx, column=1, value=result.depart_date).number_format = "YYYY-MM-DD"
-            ws.cell(row=row_idx, column=2, value=return_date).number_format = "YYYY-MM-DD"
+            _set_date_cell(ws, row=row_idx, column=1, value=result.depart_date)
+            _set_date_cell(ws, row=row_idx, column=2, value=return_date)
             ws.cell(row=row_idx, column=3, value=result.origin)
             ws.cell(row=row_idx, column=4, value=result.destination)
             ws.cell(row=row_idx, column=5, value=route_group.nights)
             ws.cell(row=row_idx, column=6, value=result.airline)
-            ws.cell(row=row_idx, column=7, value=int(round(float(result.price))))
+            ws.cell(row=row_idx, column=7, value=_safe_stop_label(result.stop_label))
+            ws.cell(row=row_idx, column=8, value=int(round(float(result.price))))
 
             itinerary_prices_by_origin.setdefault(origin, []).append(float(result.price))
             all_itinerary_prices.append(result)

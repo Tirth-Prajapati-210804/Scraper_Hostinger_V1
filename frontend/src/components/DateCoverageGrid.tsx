@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
 import type { RouteGroupProgress } from "../types/route-group";
-import { formatFreshnessLabel, formatNumber } from "../utils/format";
+import { formatDisplayDate, formatFreshnessLabel, formatNumber } from "../utils/format";
 
 interface DateCoverageGridProps {
   progress: RouteGroupProgress;
@@ -129,7 +129,7 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
               {month.days.map(({ iso, hasData, isToday }) => (
                 <div
                   key={iso}
-                  title={iso}
+                  title={formatDisplayDate(iso)}
                   className={[
                     "h-4 w-4 rounded-[4px] transition-colors",
                     hasData ? "bg-brand-500 hover:bg-brand-600" : "bg-slate-200 hover:bg-slate-300",

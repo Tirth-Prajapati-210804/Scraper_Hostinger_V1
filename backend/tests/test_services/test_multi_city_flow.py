@@ -60,7 +60,7 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
     assert workbook.sheetnames == ["Toronto Open Jaw"]
 
     sheet = workbook["Toronto Open Jaw"]
-    headers = [sheet.cell(row=1, column=index).value for index in range(1, 8)]
+    headers = [sheet.cell(row=1, column=index).value for index in range(1, 9)]
     assert headers == [
         "Date",
         "Ending Date",
@@ -68,11 +68,13 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
         "Arrival Airport",
         "Nights",
         "Airline",
+        "Stop Result",
         "Flight Price",
     ]
     assert sheet["A2"].value == datetime(2026, 5, 20)
-    assert sheet["B2"].value == "2026-05-31"
+    assert sheet["B2"].value == datetime(2026, 5, 31)
     assert sheet["D2"].value == "BER"
     assert sheet["E2"].value == 11
     assert sheet["F2"].value == "Icelandair / Lufthansa"
-    assert sheet["G2"].value == 829
+    assert sheet["G2"].value == "1 Stop"
+    assert sheet["H2"].value == 829

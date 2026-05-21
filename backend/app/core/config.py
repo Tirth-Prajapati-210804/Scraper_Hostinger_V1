@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # Auth
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 120
+    jwt_access_token_expire_minutes: int = 525600
     admin_email: str
     admin_password: str
     admin_full_name: str = "System Admin"
@@ -73,11 +73,11 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_interval_minutes: int = 60
     scrape_days_ahead: int = 365
-    scrape_batch_size: int = 10
+    scrape_batch_size: int = 3
     scrape_delay_seconds: float = 1.0
     provider_timeout_seconds: int = 30
     provider_max_retries: int = 3
-    provider_concurrency_limit: int = 2
+    provider_concurrency_limit: int = 3
     provider_min_delay_seconds: float = 1.0
     login_rate_limit_attempts: int = 5
     login_rate_limit_window_seconds: int = 300

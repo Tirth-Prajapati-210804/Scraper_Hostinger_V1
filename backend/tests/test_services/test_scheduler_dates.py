@@ -36,9 +36,9 @@ def test_group_dates_normal_range() -> None:
     scheduler = make_scheduler()
     group = make_group(days_ahead=7)
     dates = scheduler._group_dates(group)
-    assert len(dates) == 8  # today + 7 days
+    assert len(dates) == 7
     assert dates[0] == date.today()
-    assert dates[-1] == date.today() + timedelta(days=7)
+    assert dates[-1] == date.today() + timedelta(days=6)
 
 
 def test_group_dates_explicit_range() -> None:
@@ -84,7 +84,8 @@ def test_group_dates_one_day() -> None:
     scheduler = make_scheduler()
     group = make_group(days_ahead=1)
     dates = scheduler._group_dates(group)
-    assert len(dates) == 2
+    assert len(dates) == 1
+    assert dates[0] == date.today()
 
 
 def test_group_dates_clamps_past_start_to_today() -> None:

@@ -1344,32 +1344,31 @@ class ScrapingBeeProvider:
             currency=currency,
         )
 
-        rendered = await self._get_rendered_payload(
-            target_url,
-            js_scenario=self._build_multi_city_results_scenario(deep=False),
-            country_code=market_country_code,
-        )
-        summary_prices = self._multi_city_summary_prices(rendered)
-        results, card_count, captured_count = await self._parse_multi_city_rendered_payload(
-            rendered,
-            currency=currency,
-            deep_link=target_url,
-            market_country_code=market_country_code,
-        )
-        eligible_results = self._filter_results_by_stops(results, max_stops)
         used_deep_pass = True
-        rendered = await self._get_rendered_payload(
-            target_url,
-            js_scenario=self._build_multi_city_results_scenario(deep=True),
-            country_code=market_country_code,
-        )
-        summary_prices = self._multi_city_summary_prices(rendered)
-        results, card_count, captured_count = await self._parse_multi_city_rendered_payload(
-            rendered,
-            currency=currency,
-            deep_link=target_url,
-            market_country_code=market_country_code,
-        )
+        rendered: dict = {}
+        summary_prices: list[float] = []
+        results: list[ProviderResult] = []
+        card_count = 0
+        captured_count = 0
+
+        for deep_attempt in range(2):
+            rendered = await self._get_rendered_payload(
+                target_url,
+                js_scenario=self._build_multi_city_results_scenario(deep=True),
+                country_code=market_country_code,
+            )
+            summary_prices = self._multi_city_summary_prices(rendered)
+            results, card_count, captured_count = await self._parse_multi_city_rendered_payload(
+                rendered,
+                currency=currency,
+                deep_link=target_url,
+                market_country_code=market_country_code,
+            )
+            if results or card_count > 0 or self._rendered_payload_has_summary_prices(rendered):
+                break
+            if deep_attempt == 0:
+                continue
+
         eligible_results = self._filter_results_by_stops(results, max_stops)
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")

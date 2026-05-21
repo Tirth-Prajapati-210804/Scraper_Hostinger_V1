@@ -132,7 +132,7 @@ export function CollectionRunsTable({
                       >
                         <AlertTriangle className="h-3.5 w-3.5" />
                         {run.status === "partial"
-                          ? "retry needed"
+                          ? "missing fare dates"
                           : `${run.errors.length} route${run.errors.length > 1 ? "s" : ""}`}
                       </button>
                       {expandedId === run.id ? (

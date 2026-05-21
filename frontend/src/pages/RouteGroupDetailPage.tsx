@@ -20,6 +20,7 @@ import { PriceTable } from "../components/PriceTable";
 import { RouteGroupForm } from "../components/RouteGroupForm";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { Select } from "../components/ui/Select";
 import { Skeleton } from "../components/ui/Skeleton";
 import { useToast } from "../context/ToastContext";
 import type { DailyPrice } from "../types/price";
@@ -313,7 +314,7 @@ export function RouteGroupDetailPage() {
           <div className="mb-4 flex min-w-0 flex-wrap items-center justify-between gap-4">
             <h3 className="text-[15px] font-semibold text-slate-900">Price Trend</h3>
             <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 overflow-x-hidden text-sm">
-              <select
+              <Select
                 aria-label="Select origin"
                 value={selectedOrigin || group.origins[0]}
                 onChange={(e) => setSelectedOrigin(e.target.value)}
@@ -324,7 +325,7 @@ export function RouteGroupDetailPage() {
                     {origin}
                   </option>
                 ))}
-              </select>
+              </Select>
               <span className="text-slate-400">-&gt;</span>
               <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm font-medium text-slate-700">
                 {destForQuery}
@@ -356,7 +357,7 @@ export function RouteGroupDetailPage() {
               ) : null}
             </div>
             <div className="flex min-w-0 items-center gap-2">
-              <select
+              <Select
                 aria-label="Filter by origin"
                 value={selectedOrigin}
                 onChange={(e) => setSelectedOrigin(e.target.value)}
@@ -368,7 +369,7 @@ export function RouteGroupDetailPage() {
                     {origin}
                   </option>
                 ))}
-              </select>
+              </Select>
               {allPrices.length > 0 ? (
                 <span className="text-xs text-slate-400">
                   {allPrices.length} rows{priceHasMore ? "+" : ""}

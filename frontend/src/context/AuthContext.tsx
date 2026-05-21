@@ -24,27 +24,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   // Start as loading only if a token is present; otherwise we know immediately
   const [loading, setLoading] = useState(
-    () => !!sessionStorage.getItem(TOKEN_STORAGE_KEY),
+    () => !!localStorage.getItem(TOKEN_STORAGE_KEY),
   );
 
   // Restore session on mount
   useEffect(() => {
-    const token = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
     if (!token) return;
     getMe()
       .then(setUser)
-      .catch(() => sessionStorage.removeItem(TOKEN_STORAGE_KEY))
+      .catch(() => localStorage.removeItem(TOKEN_STORAGE_KEY))
       .finally(() => setLoading(false));
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const tokenRes = await apiLogin(email, password);
-    sessionStorage.setItem(TOKEN_STORAGE_KEY, tokenRes.access_token);
+    localStorage.setItem(TOKEN_STORAGE_KEY, tokenRes.access_token);
     setUser(tokenRes.user);
   }, []);
 
   const logout = useCallback(() => {
-    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
     setUser(null);
     window.location.href = "/login";
   }, []);

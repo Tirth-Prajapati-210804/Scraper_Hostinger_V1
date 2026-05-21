@@ -147,7 +147,7 @@ function StatusBadge({
     return (
       <Badge
         icon={<MinusCircle className="h-3.5 w-3.5" />}
-        text="No Results"
+        text="No valid fare"
         cls="bg-amber-50 text-amber-700"
       />
     );
@@ -247,9 +247,12 @@ function DurationCell({ ms }: { ms: number | null }) {
   const cls =
     ms < 1000
       ? "text-emerald-600"
-      : ms < 5000
+      : ms < 30_000
         ? "text-amber-600"
         : "text-red-600";
 
-  return <span className={`font-medium ${cls}`}>{ms.toLocaleString()}</span>;
+  const seconds = ms / 1000;
+  const label = seconds < 60 ? `${seconds.toFixed(seconds < 10 ? 1 : 0)}s` : `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+
+  return <span className={`font-medium ${cls}`}>{label}</span>;
 }

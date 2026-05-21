@@ -89,7 +89,7 @@ Important:
 - Use only one ScrapingBee key source if possible.
 - Prefer `SCRAPINGBEE_API_KEY` for a single key.
 - Leave `SCRAPINGBEE_API_KEYS` empty unless you intentionally want a key pool.
-- Start with `PROVIDER_CONCURRENCY_LIMIT=2`; increase only after a stable live scrape run.
+- Start with `PROVIDER_CONCURRENCY_LIMIT=3`; reduce to `2` if ScrapingBee starts returning rate-limit errors.
 
 ## 4. Start the stack
 
@@ -174,7 +174,9 @@ Why:
 
 - `PROVIDER_TIMEOUT_SECONDS=60`
 - `PROVIDER_MAX_RETRIES=1`
-- `PROVIDER_CONCURRENCY_LIMIT=2`
-- `PROVIDER_MIN_DELAY_SECONDS=0.5`
+- `JWT_ACCESS_TOKEN_EXPIRE_MINUTES=525600`
+- `PROVIDER_CONCURRENCY_LIMIT=3`
+- `PROVIDER_MIN_DELAY_SECONDS=1.0`
+- `SCRAPE_BATCH_SIZE=3`
 - `SCRAPINGBEE_PREMIUM_PROXY=false`
 - `SCRAPINGBEE_STEALTH_PROXY=false`

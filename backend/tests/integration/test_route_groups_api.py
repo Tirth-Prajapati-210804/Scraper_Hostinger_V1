@@ -263,8 +263,8 @@ async def test_progress_returns_zero_for_new_group(auth_client):
     assert data["dates_with_data"] == 0
     assert data["coverage_percent"] == 0.0
     assert data["scraped_dates"] == []
-    # total = origins x destinations x (today + days_ahead inclusive)
-    assert data["total_dates"] == 2 * 2 * 91
+    # total = origins x destinations x booking-window dates, including today
+    assert data["total_dates"] == 2 * 2 * 90
 
 
 @pytest.mark.asyncio

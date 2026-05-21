@@ -1,7 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
-  ChevronDown,
   CircleHelp,
   Minus,
   Plane,
@@ -17,6 +16,7 @@ import type { RouteGroup, RouteMarket, SpecialSheet, TripType } from "../types/r
 import { STOP_MODE_OPTIONS, stopModeToApi, stopModeToUi, type StopModeId } from "../utils/stopModes";
 import { Button } from "./ui/Button";
 import { Modal } from "./ui/Modal";
+import { Select } from "./ui/Select";
 import { TagInput } from "./ui/TagInput";
 
 interface RouteGroupFormProps {
@@ -103,6 +103,36 @@ function parsePositiveInt(value: string, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function toIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function todayIso(): string {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return toIsoDate(today);
+}
+
+function addDaysIso(isoDate: string, days: number): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const date = new Date(year, (month ?? 1) - 1, day ?? 1);
+  date.setDate(date.getDate() + days);
+  return toIsoDate(date);
+}
+
+function inclusiveDayCount(startDate: string, endDate: string): number | null {
+  if (!startDate || !endDate) return null;
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return null;
+  }
+  return Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+}
+
 function normalizeCodes(values: string[]) {
   return values.map((item) => item.trim().toUpperCase()).filter(Boolean);
 }
@@ -163,13 +193,14 @@ function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
 
 function SelectInput(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <div className="relative">
-      <select
-        {...props}
-        className={`h-[50px] w-full appearance-none rounded-2xl border border-[#dfe6f0] bg-white px-4 pr-10 text-[15px] text-[#0f172a] outline-none transition focus:border-brand-500 ${props.className ?? ""}`}
-      />
-      <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9ba8bf]" />
-    </div>
+    <Select
+      value={props.value as string}
+      disabled={props.disabled}
+      onChange={(event) => props.onChange?.(event as unknown as React.ChangeEvent<HTMLSelectElement>)}
+      className={`h-[50px] border-[#dfe6f0] px-4 text-[15px] text-[#0f172a] focus:border-brand-500 ${props.className ?? ""}`}
+    >
+      {props.children}
+    </Select>
   );
 }
 
@@ -424,6 +455,10 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
       }
 
       const specialSheets: SpecialSheet[] = [];
+      const resolvedDays = parsePositiveInt(state.days, 365);
+      const resolvedStartDate = state.startDate || todayIso();
+      const resolvedEndDate = state.endDate || addDaysIso(resolvedStartDate, resolvedDays - 1);
+      const resolvedDayCount = inclusiveDayCount(resolvedStartDate, resolvedEndDate) ?? resolvedDays;
 
       if (state.tripType === "multicity") {
         const returnOrigins = normalizeCodes(state.returnLeg.from);
@@ -446,15 +481,15 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         origins: mainOrigins,
         destinations: mainDestinations,
         nights: parsePositiveInt(state.nights, 10),
-        days_ahead: parsePositiveInt(state.days, 365),
+        days_ahead: resolvedDayCount,
         sheet_name_map: Object.fromEntries(mainOrigins.map((origin) => [origin, origin])),
         special_sheets: specialSheets,
         market: state.market,
         currency: state.currency,
         max_stops: stopModeToApi(state.stops),
         same_airline_only: state.sameAirlineOnly,
-        start_date: state.startDate || null,
-        end_date: state.endDate || null,
+        start_date: resolvedStartDate,
+        end_date: resolvedEndDate,
         trip_type: tripTypeToApi(state.tripType),
         ...(isEditing ? { is_active: state.isActive } : {}),
       };
@@ -639,7 +674,18 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
             label="Booking Window (Days)"
             value={state.days}
             max={730}
-            onChange={(days) => setState((current) => ({ ...current, days }))}
+            onChange={(days) =>
+              setState((current) => {
+                const parsedDays = parsePositiveInt(days, 1);
+                const startDate = current.startDate || todayIso();
+                return {
+                  ...current,
+                  days,
+                  startDate,
+                  endDate: addDaysIso(startDate, Math.min(parsedDays, 730) - 1),
+                };
+              })
+            }
           />
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -648,7 +694,25 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
               <TextInput
                 type="date"
                 value={state.startDate}
-                onChange={(e) => setState((current) => ({ ...current, startDate: e.target.value }))}
+                onChange={(e) =>
+                  setState((current) => {
+                    const startDate = e.target.value;
+                    if (!startDate) {
+                      return { ...current, startDate: "", endDate: "" };
+                    }
+                    const parsedDays = parsePositiveInt(current.days, 1);
+                    const endDate = current.endDate && current.endDate >= startDate
+                      ? current.endDate
+                      : addDaysIso(startDate, parsedDays - 1);
+                    const dayCount = inclusiveDayCount(startDate, endDate);
+                    return {
+                      ...current,
+                      startDate,
+                      endDate,
+                      days: dayCount ? String(Math.min(dayCount, 730)) : current.days,
+                    };
+                  })
+                }
               />
             </div>
             <div>
@@ -656,7 +720,22 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
               <TextInput
                 type="date"
                 value={state.endDate}
-                onChange={(e) => setState((current) => ({ ...current, endDate: e.target.value }))}
+                onChange={(e) =>
+                  setState((current) => {
+                    const endDate = e.target.value;
+                    if (!endDate) {
+                      return { ...current, endDate: "" };
+                    }
+                    const startDate = current.startDate || todayIso();
+                    const dayCount = inclusiveDayCount(startDate, endDate);
+                    return {
+                      ...current,
+                      startDate,
+                      endDate,
+                      days: dayCount ? String(Math.min(dayCount, 730)) : current.days,
+                    };
+                  })
+                }
               />
             </div>
           </div>
@@ -721,7 +800,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         <div className="flex flex-col gap-3 border-t border-[#e8edf5] pt-5 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[13px] text-[#92a0b7]">
             {state.tripType === "multicity"
-              ? "One matching multi-city itinerary is saved per date using the exact stop filter."
+              ? "One matching multi-city itinerary is saved per date using the cheapest valid fare."
               : "Airport codes can be added manually or chosen from the location suggestions."}
           </p>
           <div className="flex gap-3 self-end">

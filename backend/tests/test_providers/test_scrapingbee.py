@@ -386,9 +386,8 @@ async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider
         market="ca",
     )
 
-    assert provider._client.get.await_count == 2
-    fast_params = provider._client.get.await_args_list[0].kwargs["params"]
-    params = provider._client.get.await_args_list[1].kwargs["params"]
+    assert provider._client.get.await_count == 1
+    params = provider._client.get.await_args_list[0].kwargs["params"]
 
     assert len(results) == 1
     assert (
@@ -401,7 +400,6 @@ async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider
     assert "nrc6-price-section" in params["js_scenario"]
     assert "cheapest" in params["js_scenario"].lower()
     assert "scrollBy" in params["js_scenario"]
-    assert "cardLimit=30" in fast_params["js_scenario"]
     assert "cardLimit=180" in params["js_scenario"]
     assert results[0].price == 829.0
     assert results[0].airline == "Icelandair / Lufthansa"
@@ -544,7 +542,7 @@ async def test_multi_city_filters_out_bus_results(provider: ScrapingBeeProvider)
 
 
 @pytest.mark.asyncio
-async def test_multi_city_retries_with_deeper_capture_for_one_stop_results(
+async def test_multi_city_retries_deep_capture_when_cards_are_not_extractable(
     provider: ScrapingBeeProvider,
 ) -> None:
     provider._client.get = AsyncMock(
@@ -555,47 +553,11 @@ async def test_multi_city_retries_with_deeper_capture_for_one_stop_results(
                         True,
                         json.dumps(
                             {
-                                "card_count": 200,
-                                "captured_count": 90,
-                                "cards": [
-                                    {
-                                        "text": (
-                                            "12:30 pm - 10:05 am+2 "
-                                            "YVR Vancouver Intl - DPS Bali Ngurah Rai "
-                                            "2 stops 30h 35m "
-                                            "11:05 am - 2:50 pm "
-                                            "SIN Changi - YVR Vancouver Intl "
-                                            "1 stop 18h 45m "
-                                            "$1128 Economy Value"
-                                        ),
-                                        "price_text": "$1128",
-                                        "booking_href": "/book/best-visible",
-                                        "cabin": "Economy Value",
-                                        "airline_text": "ANA / Garuda Indonesia",
-                                        "legs": [
-                                            {
-                                                "text": "YVR Vancouver Intl - DPS Bali Ngurah Rai 2 stops 30h 35m",
-                                                "airline": "ANA",
-                                                "time_text": "12:30 pm - 10:05 am+2",
-                                                "route_text": "YVR Vancouver Intl - DPS Bali Ngurah Rai",
-                                                "stops_text": "2 stops",
-                                                "layover_text": "NRT 1h 15m layover, Tokyo",
-                                                "duration_text": "30h 35m",
-                                            },
-                                            {
-                                                "text": "SIN Changi - YVR Vancouver Intl 1 stop 18h 45m",
-                                                "airline": "Garuda Indonesia",
-                                                "time_text": "11:05 am - 2:50 pm",
-                                                "route_text": "SIN Changi - YVR Vancouver Intl",
-                                                "stops_text": "1 stop",
-                                                "layover_text": "HND 55m layover, Tokyo",
-                                                "duration_text": "18h 45m",
-                                            },
-                                        ],
-                                    }
-                                ],
+                                "card_count": 0,
+                                "captured_count": 0,
+                                "cards": [],
                             }
-                        )
+                        ),
                     ]
                 }
             ),

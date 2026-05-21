@@ -4,14 +4,14 @@ import axios from "axios";
 // keeps the app working behind the same-origin proxy in production builds.
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 
-// SECURITY NOTE: We use sessionStorage (not localStorage) for JWT tokens.
-// - sessionStorage is cleared when the browser tab closes, limiting exposure.
+// SECURITY NOTE: We use localStorage so operators stay signed in across browser restarts.
+// - Manual sign-out clears the token.
 // - Bearer token auth is inherently CSRF-resistant (no auto-attached cookies).
 // - XSS remains the primary risk vector; CSP headers are set in nginx.conf to mitigate.
 const TOKEN_STORAGE_KEY = "token";
 
 function readToken(): string | null {
-  return sessionStorage.getItem(TOKEN_STORAGE_KEY);
+  return localStorage.getItem(TOKEN_STORAGE_KEY);
 }
 
 export const api = axios.create({
@@ -34,7 +34,7 @@ api.interceptors.response.use(
       err.response?.status === 401 &&
       window.location.pathname !== "/login"
     ) {
-      sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
       window.location.href = "/login";
     }
     return Promise.reject(err);

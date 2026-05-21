@@ -43,6 +43,8 @@ def make_result(
     r.price = price
     r.airline = airline
     r.stop_label = ""
+    r.stops = 1
+    r.duration_minutes = 120
     return r
 
 
@@ -67,6 +69,7 @@ def test_export_has_correct_headers() -> None:
     assert ws.cell(1, 5).value == "Airline"
     assert ws.cell(1, 6).value == "Stop Result"
     assert ws.cell(1, 7).value == "Flight Price"
+    assert ws.cell(2, 1).number_format == "DD-MM-YYYY"
 
 
 def test_export_destination_label_in_arrivel_column() -> None:
@@ -175,5 +178,9 @@ def test_multi_city_export_creates_one_sheet_per_route() -> None:
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [first, second])))
 
     assert wb.sheetnames == ["YOW-LGW", "YOW-LHR"]
+    assert wb["YOW-LHR"].cell(1, 7).value == "Stop Result"
+    assert wb["YOW-LHR"].cell(1, 8).value == "Flight Price"
     assert wb["YOW-LHR"].cell(2, 4).value == "LHR"
     assert wb["YOW-LGW"].cell(2, 4).value == "LGW"
+    assert wb["YOW-LHR"].cell(2, 1).number_format == "DD-MM-YYYY"
+    assert wb["YOW-LHR"].cell(2, 2).number_format == "DD-MM-YYYY"

@@ -262,7 +262,8 @@ def _group_dates(group: RouteGroup) -> list[date]:
 
     configured_start = group.start_date or today
     start = max(configured_start, today)
-    end = group.end_date or (start + timedelta(days=min(group.days_ahead, 730)))
+    date_count = max(1, min(group.days_ahead, 730))
+    end = group.end_date or (start + timedelta(days=date_count - 1))
     if end < start:
         return []
     total_days = min((end - start).days + 1, 730)
