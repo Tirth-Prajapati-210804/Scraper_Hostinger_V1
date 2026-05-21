@@ -95,7 +95,7 @@ def test_export_prices_are_integers() -> None:
     rg = make_route_group()
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [make_result(price=199.75)])))
     ws = wb["YVR"]
-    assert ws.cell(2, 7).value == "2h0min"
+    assert ws.cell(2, 7).value == "2h 0m"
     assert ws.cell(2, 8).value == 200
 
 
@@ -172,7 +172,7 @@ def test_export_uses_per_leg_duration_label_when_available() -> None:
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
     ws = wb["YVR"]
 
-    assert ws.cell(2, 7).value == "24h10min / 12h5min"
+    assert ws.cell(2, 7).value == "24h 10m / 12h 5m"
 
 
 def test_multi_city_export_creates_one_sheet_per_route() -> None:

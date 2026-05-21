@@ -20,6 +20,8 @@ from app.providers.base import (
     ProviderAuthError,
     ProviderQuotaExhaustedError,
     ProviderRateLimitedError,
+    ProviderSearchDiagnostics,
+    ProviderSearchOutcome,
     ProviderResult,
 )
 from app.utils.airline_codes import normalize_airline
@@ -64,6 +66,7 @@ class CollectionResult:
     stop_label: str | None = None
     provider_results: dict[str, list[ProviderResult]] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
+    provider_diagnostics: dict[str, ProviderSearchDiagnostics] = field(default_factory=dict)
 
 
 class PriceCollector:
@@ -81,8 +84,8 @@ class PriceCollector:
         providers: list[FlightProvider],
         on_provider_success: Callable[[str], None] | None = None,
         on_provider_failure: Callable[[str, BaseException], None] | None = None,
-        on_item_started: Callable[[str, str, date], None] | None = None,
-        on_item_progress: Callable[[str, str, str, date], None] | None = None,
+        on_item_started: Callable[[str, str, date, bool], None] | None = None,
+        on_item_progress: Callable[[str, str, str, date, bool], None] | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.providers = providers
@@ -160,7 +163,9 @@ class PriceCollector:
     def _allowed_leg_stop_limit(self, stop_count: int | None) -> int | None:
         if stop_count is None:
             return None
-        if stop_count <= 1:
+        if stop_count <= 0:
+            return 0
+        if stop_count == 1:
             return 1
         return 2
 
@@ -342,6 +347,116 @@ class PriceCollector:
         stops_rank = result.stops if result.stops >= 0 else 10**9
         return (result.price, duration_rank, stops_rank)
 
+    def _detected_currency_label(self, results: list[ProviderResult]) -> str | None:
+        currencies = sorted(
+            {
+                str(result.currency).strip().upper()
+                for result in results
+                if str(result.currency).strip()
+            }
+        )
+        if not currencies:
+            return None
+        if len(currencies) == 1:
+            return currencies[0]
+        return ",".join(currencies)
+
+    async def _search_with_diagnostics(
+        self,
+        provider: FlightProvider,
+        *,
+        trip_type: str,
+        origin: str,
+        destination: str,
+        depart_date: date,
+        currency: str,
+        requested_stop_mode: int | None,
+        market: str | None,
+        nights: int | None,
+        return_origin: str | None,
+        return_date: date | None,
+    ) -> ProviderSearchOutcome:
+        if trip_type == "multi_city":
+            method = getattr(provider, "search_multi_city_diagnostic", None)
+            legs = [
+                {
+                    "departure_id": origin,
+                    "arrival_id": destination,
+                    "outbound_date": depart_date,
+                },
+                {
+                    "departure_id": return_origin,
+                    "arrival_id": origin,
+                    "outbound_date": return_date,
+                },
+            ]
+            if callable(method):
+                return await method(
+                    legs=legs,
+                    currency=currency,
+                    max_stops=requested_stop_mode,
+                    **self._provider_search_kwargs(provider, market=market),
+                )
+            results = await provider.search_multi_city(
+                legs=legs,
+                currency=currency,
+                max_stops=requested_stop_mode,
+                **self._provider_search_kwargs(provider, market=market),
+            )
+        elif trip_type == "round_trip":
+            method = getattr(provider, "search_round_trip_diagnostic", None)
+            if callable(method):
+                return await method(
+                    origin=origin,
+                    destination=destination,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    currency=currency,
+                    max_stops=requested_stop_mode,
+                    **self._provider_search_kwargs(provider, market=market),
+                )
+            results = await provider.search_round_trip(
+                origin=origin,
+                destination=destination,
+                depart_date=depart_date,
+                return_date=return_date,
+                currency=currency,
+                max_stops=requested_stop_mode,
+                **self._provider_search_kwargs(provider, market=market),
+            )
+        else:
+            method = getattr(provider, "search_one_way_diagnostic", None)
+            if callable(method):
+                return await method(
+                    origin=origin,
+                    destination=destination,
+                    depart_date=depart_date,
+                    currency=currency,
+                    max_stops=requested_stop_mode,
+                    **self._provider_search_kwargs(provider, market=market),
+                )
+            results = await provider.search_one_way(
+                origin=origin,
+                destination=destination,
+                depart_date=depart_date,
+                currency=currency,
+                max_stops=requested_stop_mode,
+                **self._provider_search_kwargs(provider, market=market),
+            )
+
+        diagnostics = ProviderSearchDiagnostics(
+            raw_offers_found=len(results),
+            eligible_offers_found=len(results),
+            requested_market=market,
+            requested_currency=currency,
+            detected_currencies=(
+                [currency_label]
+                if (currency_label := self._detected_currency_label(results)) is not None
+                else []
+            ),
+        )
+        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
+
     # --------------------------------------------------
     # SINGLE SEARCH
     # --------------------------------------------------
@@ -363,7 +478,8 @@ class PriceCollector:
     ) -> CollectionResult:
 
         all_results: list[ProviderResult] = []
-        provider_results: dict[str, list[ProviderResult]] = {}  
+        provider_results: dict[str, list[ProviderResult]] = {}
+        provider_diagnostics: dict[str, ProviderSearchDiagnostics] = {}
         errors: dict[str, str] = {}
         return_date: date | None = None
         requested_stop_mode = self._normalize_stop_mode(max_stops)
@@ -379,64 +495,107 @@ class PriceCollector:
                             raise RuntimeError("multi_city collection requires a return origin.")
 
                         return_date = _derive_return_date(depart_date, stay_nights)
-                        results = await provider.search_multi_city(
-                            legs=[
-                                {
-                                    "departure_id": origin,
-                                    "arrival_id": destination,
-                                    "outbound_date": depart_date,
-                                },
-                                {
-                                    "departure_id": return_origin,
-                                    "arrival_id": origin,
-                                    "outbound_date": return_date,
-                                },
-                            ],
+                        outcome = await self._search_with_diagnostics(
+                            provider,
+                            trip_type=trip_type,
+                            origin=origin,
+                            destination=destination,
+                            depart_date=depart_date,
                             currency=currency,
-                            max_stops=requested_stop_mode,
-                            **self._provider_search_kwargs(provider, market=market),
+                            requested_stop_mode=requested_stop_mode,
+                            market=market,
+                            nights=stay_nights,
+                            return_origin=return_origin,
+                            return_date=return_date,
                         )
-                        results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
-                        results = self._duration_results_only(results, max_leg_duration_minutes, trip_type)
-                        stop_label = None
-
                     elif trip_type == "round_trip":
                         stay_nights = nights or 3
                         return_date = _derive_return_date(depart_date, stay_nights)
-                        results = await provider.search_round_trip(
+                        outcome = await self._search_with_diagnostics(
+                            provider,
+                            trip_type=trip_type,
                             origin=origin,
                             destination=destination,
                             depart_date=depart_date,
-                            return_date=return_date,
                             currency=currency,
-                            max_stops=requested_stop_mode,
-                            **self._provider_search_kwargs(provider, market=market),
+                            requested_stop_mode=requested_stop_mode,
+                            market=market,
+                            nights=stay_nights,
+                            return_origin=return_origin,
+                            return_date=return_date,
                         )
-                        results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
-                        results = self._duration_results_only(results, max_leg_duration_minutes, trip_type)
-                        stop_label = None
-
                     else:
                         return_date = None
-                        results = await provider.search_one_way(
+                        outcome = await self._search_with_diagnostics(
+                            provider,
+                            trip_type=trip_type,
                             origin=origin,
                             destination=destination,
                             depart_date=depart_date,
                             currency=currency,
-                            max_stops=requested_stop_mode,
-                            **self._provider_search_kwargs(provider, market=market),
+                            requested_stop_mode=requested_stop_mode,
+                            market=market,
+                            nights=nights,
+                            return_origin=return_origin,
+                            return_date=None,
                         )
-                        results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
-                        results = self._duration_results_only(results, max_leg_duration_minutes, trip_type)
-                        stop_label = None
+
+                    raw_results = list(outcome.results)
+                    diagnostics = outcome.diagnostics
+                    after_stop = self._exact_stop_results_only(raw_results, requested_stop_mode, trip_type)
+                    filtered_by_stop_count = max(0, len(raw_results) - len(after_stop))
+                    after_duration = self._duration_results_only(
+                        after_stop,
+                        max_leg_duration_minutes,
+                        trip_type,
+                    )
+                    filtered_by_duration = max(0, len(after_stop) - len(after_duration))
+                    final_results = after_duration
+                    filtered_by_same_airline = 0
 
                     if same_airline_only:
-                        results = self._same_airline_results_only(results)
+                        same_airline_results = self._same_airline_results_only(final_results)
+                        filtered_by_same_airline = max(0, len(final_results) - len(same_airline_results))
+                        final_results = same_airline_results
 
                     elapsed_ms = int((time.monotonic() - start) * 1000)
 
-                    provider_results[provider.name] = results
-                    all_results.extend(results)
+                    detected_currency = self._detected_currency_label(raw_results or final_results)
+                    result_reason = diagnostics.result_reason
+                    if final_results:
+                        result_reason = "success"
+                    elif raw_results:
+                        requested_currency = currency.strip().upper()
+                        detected_currencies = {
+                            str(result.currency).strip().upper()
+                            for result in raw_results
+                            if str(result.currency).strip()
+                        }
+                        if (
+                            requested_currency
+                            and detected_currencies
+                            and requested_currency not in detected_currencies
+                        ):
+                            result_reason = "market_mismatch"
+                        else:
+                            result_reason = "filtered_out"
+                    else:
+                        result_reason = result_reason or (
+                            "extract_failed"
+                            if diagnostics.visible_results_found or diagnostics.summary_price_found
+                            else "page_empty"
+                        )
+
+                    diagnostics.result_reason = result_reason
+                    diagnostics.raw_offers_found = len(raw_results)
+                    diagnostics.eligible_offers_found = len(final_results)
+                    diagnostics.requested_market = market
+                    diagnostics.requested_currency = currency
+                    diagnostics.detected_currencies = [detected_currency] if detected_currency else []
+                    provider_diagnostics[provider.name] = diagnostics
+
+                    provider_results[provider.name] = final_results
+                    all_results.extend(final_results)
                     if self.on_provider_success:
                         self.on_provider_success(provider.name)
 
@@ -447,9 +606,22 @@ class PriceCollector:
                             destination=destination,
                             depart_date=depart_date,
                             provider=provider.name,
-                            status="success" if results else "no_results",
-                            offers_found=len(results),
-                            cheapest_price=min(results, key=self._result_sort_key).price if results else None,
+                            status="success" if final_results else "no_results",
+                            offers_found=len(final_results),
+                            result_reason=result_reason,
+                            raw_offers_found=len(raw_results),
+                            eligible_offers_found=len(final_results),
+                            filtered_by_stop_count=filtered_by_stop_count,
+                            filtered_by_same_airline=filtered_by_same_airline,
+                            filtered_by_duration=filtered_by_duration,
+                            requested_market=market,
+                            requested_currency=currency,
+                            detected_currency=detected_currency,
+                            cheapest_price=(
+                                min(final_results, key=self._result_sort_key).price
+                                if final_results
+                                else None
+                            ),
                             duration_ms=elapsed_ms,
                         )
                     )
@@ -516,6 +688,7 @@ class PriceCollector:
             ),
             provider_results=provider_results,
             errors=errors,
+            provider_diagnostics=provider_diagnostics,
         )
 
     # --------------------------------------------------
@@ -539,6 +712,7 @@ class PriceCollector:
         return_origin: str | None = None,
         same_airline_only: bool = False,
         max_leg_duration_minutes: int | None = None,
+        is_retry: bool = False,
     ) -> dict[str, int]:
 
         stats = {
@@ -572,7 +746,7 @@ class PriceCollector:
 
             if self._is_route_cooled(route_key):
                 if self.on_item_progress:
-                    self.on_item_progress("skipped", origin, dest, depart_date)
+                    self.on_item_progress("skipped", origin, dest, depart_date, is_retry)
                 return "skipped"
 
             if stop_check and stop_check():
@@ -583,7 +757,7 @@ class PriceCollector:
                     return "stopped"
 
                 if self.on_item_started:
-                    self.on_item_started(origin, dest, depart_date)
+                    self.on_item_started(origin, dest, depart_date, is_retry)
 
                 try:
                     result, was_stopped = await await_with_stop(
@@ -608,11 +782,11 @@ class PriceCollector:
                     if result.cheapest:
                         self._mark_route_success(route_key)
                         if self.on_item_progress:
-                            self.on_item_progress("success", origin, dest, depart_date)
+                            self.on_item_progress("success", origin, dest, depart_date, is_retry)
                         return "success"
 
                     if self.on_item_progress:
-                        self.on_item_progress("skipped", origin, dest, depart_date)
+                        self.on_item_progress("skipped", origin, dest, depart_date, is_retry)
                     return "skipped"
 
                 except Exception as exc:
@@ -627,7 +801,7 @@ class PriceCollector:
                     )
 
                     if self.on_item_progress:
-                        self.on_item_progress("error", origin, dest, depart_date)
+                        self.on_item_progress("error", origin, dest, depart_date, is_retry)
                     return "error"
 
         tasks = []

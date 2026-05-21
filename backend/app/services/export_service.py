@@ -78,7 +78,7 @@ def _safe_stop_label(value: object, stops: object = None) -> str:
 
 def _format_duration_minutes(minutes: int) -> str:
     hours, mins = divmod(minutes, 60)
-    return f"{hours}h{mins}min"
+    return f"{hours}h {mins}m"
 
 
 def _parse_duration_text(value: object) -> int | None:

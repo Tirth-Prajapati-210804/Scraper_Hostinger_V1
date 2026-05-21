@@ -65,7 +65,7 @@ export function ScrapeLogsTable({
                 </Td>
                 <Td className="capitalize text-slate-700">{log.provider}</Td>
                 <Td>
-                  <StatusBadge status={log.status} />
+                  <StatusBadge log={log} />
                 </Td>
                 <Td align="right">
                   {log.cheapest_price != null ? (
@@ -129,10 +129,11 @@ function Td({
 }
 
 function StatusBadge({
-  status,
+  log,
 }: {
-  status: ScrapeLogEntry["status"];
+  log: ScrapeLogEntry;
 }) {
+  const { status, result_reason } = log;
   if (status === "success") {
     return (
       <Badge
@@ -144,12 +145,32 @@ function StatusBadge({
   }
 
   if (status === "no_results") {
+    const text =
+      result_reason === "filtered_out"
+        ? "Filtered out"
+        : result_reason === "market_mismatch"
+          ? "Market mismatch"
+          : result_reason === "extract_failed"
+            ? "Extract failed"
+            : "No fare on page";
+    const details = [];
+    if (log.filtered_by_stop_count > 0) details.push(`${log.filtered_by_stop_count} stop`);
+    if (log.filtered_by_same_airline > 0) details.push(`${log.filtered_by_same_airline} airline`);
+    if (log.filtered_by_duration > 0) details.push(`${log.filtered_by_duration} duration`);
     return (
-      <Badge
-        icon={<MinusCircle className="h-3.5 w-3.5" />}
-        text="No valid fare"
-        cls="bg-amber-50 text-amber-700"
-      />
+      <div className="space-y-1">
+        <Badge
+          icon={<MinusCircle className="h-3.5 w-3.5" />}
+          text={text}
+          cls="bg-amber-50 text-amber-700"
+        />
+        <div className="text-[11px] text-slate-500">
+          {log.eligible_offers_found > 0
+            ? `${log.eligible_offers_found} eligible`
+            : `${log.raw_offers_found} raw`}
+          {details.length ? ` | filtered ${details.join(" | ")}` : ""}
+        </div>
+      </div>
     );
   }
 

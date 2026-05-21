@@ -56,11 +56,23 @@ class FlightScheduler:
         self._stop_requested = False
         self._lock_connection: AsyncConnection | None = None
         self._active_task: asyncio.Task | None = None
+        self._check_states: dict[tuple[str, str, str], str] = {}
+        self._active_checks: set[tuple[str, str, str]] = set()
+        self._retry_started = 0
+        self._retry_done = 0
+        self._planned_checks_total = 0
 
         self._progress: dict = {
             "routes_total": 0,
             "routes_done": 0,
             "routes_failed": 0,
+            "checks_total": 0,
+            "checks_started": 0,
+            "checks_done": 0,
+            "checks_failed": 0,
+            "active_searches": 0,
+            "retries_started": 0,
+            "retries_done": 0,
             "prices_total": 0,
             "prices_started": 0,
             "prices_done": 0,
@@ -88,10 +100,22 @@ class FlightScheduler:
         return dict(self._progress)
 
     def _reset_progress(self) -> None:
+        self._check_states = {}
+        self._active_checks = set()
+        self._retry_started = 0
+        self._retry_done = 0
+        self._planned_checks_total = 0
         self._progress = {
             "routes_total": 0,
             "routes_done": 0,
             "routes_failed": 0,
+            "checks_total": 0,
+            "checks_started": 0,
+            "checks_done": 0,
+            "checks_failed": 0,
+            "active_searches": 0,
+            "retries_started": 0,
+            "retries_done": 0,
             "prices_total": 0,
             "prices_started": 0,
             "prices_done": 0,
@@ -102,16 +126,47 @@ class FlightScheduler:
             "current_date": "",
         }
 
+    def _check_key(self, origin: str, destination: str, depart_date: date) -> tuple[str, str, str]:
+        return (origin, destination, depart_date.isoformat())
+
+    def _sync_progress(self) -> None:
+        checks_started = len(self._check_states)
+        checks_done = sum(
+            1 for status in self._check_states.values() if status in {"success", "skipped", "error"}
+        )
+        checks_failed = sum(1 for status in self._check_states.values() if status == "error")
+
+        self._progress["checks_total"] = self._planned_checks_total
+        self._progress["checks_started"] = checks_started
+        self._progress["checks_done"] = checks_done
+        self._progress["checks_failed"] = checks_failed
+        self._progress["active_searches"] = len(self._active_checks)
+        self._progress["retries_started"] = self._retry_started
+        self._progress["retries_done"] = self._retry_done
+
+        # Preserve the old shape as aliases while the frontend transitions.
+        self._progress["prices_total"] = self._planned_checks_total
+        self._progress["prices_started"] = checks_started + self._retry_started
+        self._progress["prices_done"] = checks_done
+        self._progress["prices_failed"] = checks_failed
+
     def _record_item_started(
         self,
         origin: str,
         destination: str,
         depart_date: date,
+        is_retry: bool,
     ) -> None:
+        key = self._check_key(origin, destination, depart_date)
         self._progress["current_origin"] = origin
         self._progress["current_destination"] = destination
         self._progress["current_date"] = depart_date.isoformat()
-        self._progress["prices_started"] += 1
+        self._active_checks.add(key)
+        if is_retry:
+            self._retry_started += 1
+        else:
+            self._check_states.setdefault(key, "started")
+        self._sync_progress()
 
     def _record_item_progress(
         self,
@@ -119,20 +174,34 @@ class FlightScheduler:
         origin: str,
         destination: str,
         depart_date: date,
+        is_retry: bool,
     ) -> None:
+        key = self._check_key(origin, destination, depart_date)
         self._progress["current_origin"] = origin
         self._progress["current_destination"] = destination
         self._progress["current_date"] = depart_date.isoformat()
+        self._active_checks.discard(key)
 
         if status == "stopped":
+            if is_retry:
+                self._retry_done += 1
+            self._sync_progress()
             return
-
-        self._progress["prices_done"] += 1
 
         if status == "success":
             self._progress["dates_scraped"] += 1
+            self._check_states[key] = "success"
         elif status == "error":
-            self._progress["prices_failed"] += 1
+            self._check_states[key] = "error"
+        else:
+            self._check_states.setdefault(key, "skipped")
+
+        if is_retry:
+            self._retry_done += 1
+        elif key not in self._check_states:
+            self._check_states[key] = status
+
+        self._sync_progress()
 
     def request_stop(self) -> None:
         self._stop_requested = True
@@ -395,7 +464,6 @@ class FlightScheduler:
             )
 
         if missing:
-            self._progress["prices_total"] += len(missing) * len(segment.destinations)
             retry = await collector.collect_route_batch(
                 origin=segment.origin,
                 destinations=segment.destinations,
@@ -412,6 +480,7 @@ class FlightScheduler:
                 trip_type=segment.trip_type,
                 nights=segment.nights,
                 return_origin=segment.return_origin,
+                is_retry=True,
             )
             stats["success"] += retry["success"]
             stats["errors"] += retry["errors"]
@@ -527,8 +596,9 @@ class FlightScheduler:
                             continue
 
                         planned_routes.append((group, segment, remaining))
-                        self._progress["prices_total"] += len(remaining) * len(segment.destinations)
+                        self._planned_checks_total += len(remaining) * len(segment.destinations)
 
+                    self._sync_progress()
                     self._progress["routes_total"] = len(planned_routes)
                     run.routes_total = len(planned_routes)
                     await session.commit()
@@ -538,16 +608,18 @@ class FlightScheduler:
                         providers=providers,
                         on_provider_success=self.provider_registry.report_success,
                         on_provider_failure=self.provider_registry.report_failure,
-                        on_item_started=lambda origin, destination, depart_date: self._record_item_started(
+                        on_item_started=lambda origin, destination, depart_date, is_retry: self._record_item_started(
                             origin,
                             destination,
                             depart_date,
+                            is_retry,
                         ),
-                        on_item_progress=lambda status, origin, destination, depart_date: self._record_item_progress(
+                        on_item_progress=lambda status, origin, destination, depart_date, is_retry: self._record_item_progress(
                             status,
                             origin,
                             destination,
                             depart_date,
+                            is_retry,
                         ),
                     )
 
@@ -583,6 +655,7 @@ class FlightScheduler:
                                 }
                             finally:
                                 self._progress["routes_done"] += 1
+                                self._sync_progress()
 
                     route_results = await asyncio.gather(
                         *(
@@ -892,8 +965,9 @@ class FlightScheduler:
                             continue
 
                         planned_segments.append((segment, remaining))
-                        self._progress["prices_total"] += len(remaining) * len(segment.destinations)
+                        self._planned_checks_total += len(remaining) * len(segment.destinations)
 
+                    self._sync_progress()
                     self._progress["routes_total"] = len(planned_segments)
                     run.routes_total = len(planned_segments)
                     await session.commit()
@@ -903,16 +977,18 @@ class FlightScheduler:
                         providers=providers,
                         on_provider_success=self.provider_registry.report_success,
                         on_provider_failure=self.provider_registry.report_failure,
-                        on_item_started=lambda origin, destination, depart_date: self._record_item_started(
+                        on_item_started=lambda origin, destination, depart_date, is_retry: self._record_item_started(
                             origin,
                             destination,
                             depart_date,
+                            is_retry,
                         ),
-                        on_item_progress=lambda status, origin, destination, depart_date: self._record_item_progress(
+                        on_item_progress=lambda status, origin, destination, depart_date, is_retry: self._record_item_progress(
                             status,
                             origin,
                             destination,
                             depart_date,
+                            is_retry,
                         ),
                     )
 
@@ -948,6 +1024,7 @@ class FlightScheduler:
                                 }
                             finally:
                                 self._progress["routes_done"] += 1
+                                self._sync_progress()
 
                     segment_results = await asyncio.gather(
                         *(
