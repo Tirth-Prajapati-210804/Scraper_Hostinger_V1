@@ -157,6 +157,20 @@ class PriceCollector:
             return None
         return max_stops
 
+    def _allowed_leg_stop_limit(self, stop_count: int | None) -> int | None:
+        if stop_count is None:
+            return None
+        if stop_count <= 1:
+            return 1
+        return 2
+
+    def _stop_label_for_count(self, stops: int) -> str:
+        if stops <= 0:
+            return "Direct"
+        if stops == 1:
+            return "1 Stop"
+        return f"{stops} Stops"
+
     def _airline_match_key(self, value: object) -> str | None:
         if not isinstance(value, str):
             return None
@@ -249,16 +263,79 @@ class PriceCollector:
                 return normalized
         return [result.stops]
 
+    def _result_stop_label(self, result: ProviderResult, trip_type: str) -> str:
+        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+        raw_label = raw_data.get("stop_result_label")
+        if isinstance(raw_label, str) and raw_label.strip():
+            return raw_label.strip()
+
+        labels = [
+            self._stop_label_for_count(stops)
+            for stops in self._result_leg_stops(result, trip_type)
+        ]
+        return " / ".join(labels) if labels else self._stop_label_for_count(result.stops)
+
+    def _result_leg_durations(self, result: ProviderResult, trip_type: str) -> list[int]:
+        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+        raw_durations = raw_data.get("leg_durations")
+        if isinstance(raw_durations, list):
+            durations = [
+                int(value)
+                for value in raw_durations
+                if isinstance(value, (int, float)) and int(value) > 0
+            ]
+            if durations:
+                return durations
+
+        raw_legs = raw_data.get("legs")
+        if isinstance(raw_legs, list):
+            durations = []
+            for leg in raw_legs:
+                if not isinstance(leg, dict):
+                    continue
+                duration = leg.get("duration_minutes")
+                if isinstance(duration, (int, float)) and int(duration) > 0:
+                    durations.append(int(duration))
+            if durations:
+                return durations
+
+        if trip_type != "multi_city" and result.duration_minutes and result.duration_minutes > 0:
+            return [int(result.duration_minutes)]
+
+        return []
+
+    def _duration_results_only(
+        self,
+        results: list[ProviderResult],
+        max_leg_duration_minutes: int | None,
+        trip_type: str,
+    ) -> list[ProviderResult]:
+        if not max_leg_duration_minutes:
+            return results
+
+        filtered: list[ProviderResult] = []
+        for result in results:
+            leg_durations = self._result_leg_durations(result, trip_type)
+            if leg_durations and all(duration <= max_leg_duration_minutes for duration in leg_durations):
+                filtered.append(result)
+        return filtered
+
     def _exact_stop_results_only(
         self,
         results: list[ProviderResult],
         stop_count: int | None,
         trip_type: str,
     ) -> list[ProviderResult]:
-        # Temporary client requirement: selected stop mode should not reject a
-        # cheaper valid itinerary. Same-airline and transport filters still run.
-        del stop_count, trip_type
-        return results
+        limit = self._allowed_leg_stop_limit(stop_count)
+        if limit is None:
+            return results
+
+        filtered: list[ProviderResult] = []
+        for result in results:
+            leg_stops = self._result_leg_stops(result, trip_type)
+            if leg_stops and all(stops <= limit for stops in leg_stops):
+                filtered.append(result)
+        return filtered
 
     def _result_sort_key(self, result: ProviderResult) -> tuple[float, int, int]:
         duration_rank = result.duration_minutes if result.duration_minutes and result.duration_minutes > 0 else 10**9
@@ -282,6 +359,7 @@ class PriceCollector:
         nights: int | None = None,
         return_origin: str | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
     ) -> CollectionResult:
 
         all_results: list[ProviderResult] = []
@@ -319,6 +397,7 @@ class PriceCollector:
                             **self._provider_search_kwargs(provider, market=market),
                         )
                         results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
+                        results = self._duration_results_only(results, max_leg_duration_minutes, trip_type)
                         stop_label = None
 
                     elif trip_type == "round_trip":
@@ -334,6 +413,7 @@ class PriceCollector:
                             **self._provider_search_kwargs(provider, market=market),
                         )
                         results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
+                        results = self._duration_results_only(results, max_leg_duration_minutes, trip_type)
                         stop_label = None
 
                     else:
@@ -347,6 +427,7 @@ class PriceCollector:
                             **self._provider_search_kwargs(provider, market=market),
                         )
                         results = self._exact_stop_results_only(results, requested_stop_mode, trip_type)
+                        results = self._duration_results_only(results, max_leg_duration_minutes, trip_type)
                         stop_label = None
 
                     if same_airline_only:
@@ -429,8 +510,8 @@ class PriceCollector:
             cheapest=cheapest,
             return_date=return_date if trip_type == "multi_city" else None,
             stop_label=(
-                str(cheapest.raw_data.get("stop_result_label"))
-                if cheapest and isinstance(cheapest.raw_data, dict)
+                self._result_stop_label(cheapest, trip_type)
+                if cheapest
                 else None
             ),
             provider_results=provider_results,
@@ -457,6 +538,7 @@ class PriceCollector:
         nights: int | None = None,
         return_origin: str | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
     ) -> dict[str, int]:
 
         stats = {
@@ -488,9 +570,6 @@ class PriceCollector:
         async def run_one(dest: str, depart_date: date):
             route_key = self._route_key(origin, dest)
 
-            if self.on_item_started:
-                self.on_item_started(origin, dest, depart_date)
-
             if self._is_route_cooled(route_key):
                 if self.on_item_progress:
                     self.on_item_progress("skipped", origin, dest, depart_date)
@@ -502,6 +581,9 @@ class PriceCollector:
             async with semaphore:
                 if stop_check and stop_check():
                     return "stopped"
+
+                if self.on_item_started:
+                    self.on_item_started(origin, dest, depart_date)
 
                 try:
                     result, was_stopped = await await_with_stop(
@@ -517,6 +599,7 @@ class PriceCollector:
                             nights=nights,
                             return_origin=return_origin,
                             same_airline_only=same_airline_only,
+                            max_leg_duration_minutes=max_leg_duration_minutes,
                         )
                     )
                     if was_stopped or result is None:
@@ -657,10 +740,11 @@ class PriceCollector:
                 "provider": result.provider or "unknown",
                 "deep_link": result.deep_link[:2048] if result.deep_link else None,
                 "stops": result.stops,
-                "stop_label": (
-                    str(result.raw_data.get("stop_result_label"))
-                    if isinstance(result.raw_data, dict) and result.raw_data.get("stop_result_label")
-                    else None
+                "stop_label": self._result_stop_label(
+                    result,
+                    str(result.raw_data.get("trip_type"))
+                    if isinstance(result.raw_data, dict) and result.raw_data.get("trip_type")
+                    else "one_way",
                 ),
                 "duration_minutes": result.duration_minutes,
             },
@@ -705,10 +789,11 @@ class PriceCollector:
                     provider=result.provider or "unknown",
                     deep_link=result.deep_link[:2048] if result.deep_link else None,
                     stops=result.stops,
-                    stop_label=(
-                        str(result.raw_data.get("stop_result_label"))
-                        if isinstance(result.raw_data, dict) and result.raw_data.get("stop_result_label")
-                        else None
+                    stop_label=self._result_stop_label(
+                        result,
+                        str(result.raw_data.get("trip_type"))
+                        if isinstance(result.raw_data, dict) and result.raw_data.get("trip_type")
+                        else "one_way",
                     ),
                     duration_minutes=result.duration_minutes,
                     itinerary_data=result.raw_data if isinstance(result.raw_data, dict) else None,

@@ -10,6 +10,14 @@ export interface DailyPrice {
   stops: number | null;
   stop_label?: string | null;
   duration_minutes: number | null;
+  itinerary_data?: {
+    duration_text?: string | null;
+    leg_durations?: number[] | null;
+    legs?: Array<{
+      duration_text?: string | null;
+      duration_minutes?: number | null;
+    }> | null;
+  } | null;
   scraped_at: string;
 }
 

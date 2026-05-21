@@ -331,6 +331,105 @@ class FlightScheduler:
         self._track_task(task)
         return True
 
+    def _route_parallelism(self, route_count: int) -> int:
+        try:
+            configured = int(getattr(self.settings, "scrape_route_parallelism", 1) or 1)
+        except (TypeError, ValueError):
+            configured = 1
+        return max(1, min(configured, max(route_count, 1)))
+
+    async def _collect_segment_with_retry(
+        self,
+        *,
+        collector: PriceCollector,
+        group: RouteGroup,
+        segment: object,
+        remaining: list[date],
+    ) -> dict[str, int]:
+        stats = {
+            "success": 0,
+            "errors": 0,
+            "skipped": 0,
+            "final_missing": 0,
+        }
+
+        if self._stop_requested:
+            return stats
+
+        self._progress["current_origin"] = segment.origin
+        self._progress["current_destination"] = ""
+        self._progress["current_date"] = ""
+
+        part = await collector.collect_route_batch(
+            origin=segment.origin,
+            destinations=segment.destinations,
+            dates=remaining,
+            route_group_id=group.id,
+            batch_size=self.settings.scrape_batch_size,
+            delay_seconds=self.settings.scrape_delay_seconds,
+            stop_check=lambda: self._stop_requested,
+            market=getattr(group, "market", None),
+            currency=group.currency,
+            max_stops=group.max_stops,
+            same_airline_only=getattr(group, "same_airline_only", False),
+            max_leg_duration_minutes=getattr(group, "max_leg_duration_minutes", None),
+            trip_type=segment.trip_type,
+            nights=segment.nights,
+            return_origin=segment.return_origin,
+        )
+
+        stats["success"] += part["success"]
+        stats["errors"] += part["errors"]
+        stats["skipped"] += part["skipped"]
+
+        if self._stop_requested:
+            return stats
+
+        async with self.session_factory() as check_session:
+            missing = await self._filter_already_scraped(
+                session=check_session,
+                route_group_id=group.id,
+                origin=segment.origin,
+                destinations=segment.destinations,
+                dates=remaining,
+            )
+
+        if missing:
+            self._progress["prices_total"] += len(missing) * len(segment.destinations)
+            retry = await collector.collect_route_batch(
+                origin=segment.origin,
+                destinations=segment.destinations,
+                dates=missing,
+                route_group_id=group.id,
+                batch_size=self.settings.scrape_batch_size,
+                delay_seconds=self.settings.scrape_delay_seconds,
+                stop_check=lambda: self._stop_requested,
+                market=getattr(group, "market", None),
+                currency=group.currency,
+                max_stops=group.max_stops,
+                same_airline_only=getattr(group, "same_airline_only", False),
+                max_leg_duration_minutes=getattr(group, "max_leg_duration_minutes", None),
+                trip_type=segment.trip_type,
+                nights=segment.nights,
+                return_origin=segment.return_origin,
+            )
+            stats["success"] += retry["success"]
+            stats["errors"] += retry["errors"]
+            stats["skipped"] += retry["skipped"]
+
+            if not self._stop_requested:
+                async with self.session_factory() as check_session:
+                    missing = await self._filter_already_scraped(
+                        session=check_session,
+                        route_group_id=group.id,
+                        origin=segment.origin,
+                        destinations=segment.destinations,
+                        dates=missing,
+                    )
+
+        stats["final_missing"] = len(missing) * len(segment.destinations) if not self._stop_requested else 0
+        return stats
+
     # --------------------------------------------------
     # MAIN LOOP
     # --------------------------------------------------
@@ -452,51 +551,65 @@ class FlightScheduler:
                         ),
                     )
 
-                    for group, segment, remaining in planned_routes:
-                        if self._stop_requested:
-                            break
+                    route_semaphore = asyncio.Semaphore(self._route_parallelism(len(planned_routes)))
 
-                        self._progress["current_origin"] = segment.origin
-                        self._progress["current_destination"] = ""
-                        self._progress["current_date"] = ""
-                        batch_size = self.settings.scrape_batch_size
+                    async def collect_planned_route(group: RouteGroup, segment: object, remaining: list[date]):
+                        async with route_semaphore:
+                            if self._stop_requested:
+                                return {
+                                    "success": 0,
+                                    "errors": 0,
+                                    "skipped": len(remaining) * len(segment.destinations),
+                                    "final_missing": 0,
+                                }
+                            try:
+                                return await self._collect_segment_with_retry(
+                                    collector=collector,
+                                    group=group,
+                                    segment=segment,
+                                    remaining=remaining,
+                                )
+                            except Exception as exc:
+                                log.exception(
+                                    "route_failed",
+                                    origin=segment.origin,
+                                    error=redact_text(str(exc)),
+                                )
+                                return {
+                                    "success": 0,
+                                    "errors": 1,
+                                    "skipped": 0,
+                                    "final_missing": len(remaining) * len(segment.destinations),
+                                }
+                            finally:
+                                self._progress["routes_done"] += 1
 
+                    route_results = await asyncio.gather(
+                        *(
+                            collect_planned_route(group, segment, remaining)
+                            for group, segment, remaining in planned_routes
+                        )
+                    )
+
+                    total_final_missing = 0
+                    for stats in route_results:
                         try:
-                            stats = await collector.collect_route_batch(
-                                origin=segment.origin,
-                                destinations=segment.destinations,
-                                dates=remaining,
-                                route_group_id=group.id,
-                                batch_size=batch_size,
-                                delay_seconds=self.settings.scrape_delay_seconds,
-                                stop_check=lambda: self._stop_requested,
-                                market=getattr(group, "market", None),
-                                currency=group.currency,
-                                max_stops=group.max_stops,
-                                same_airline_only=getattr(group, "same_airline_only", False),
-                                trip_type=segment.trip_type,
-                                nights=segment.nights,
-                                return_origin=segment.return_origin,
-                            )
-
                             total_success += stats["success"]
                             total_errors += stats["errors"]
                             total_skipped += stats["skipped"]
-                            if stats["success"] > 0:
+                            total_final_missing += stats["final_missing"]
+                            if stats["success"] > 0 and stats["final_missing"] == 0:
                                 route_success += 1
-                            if stats["errors"] > 0:
+                            if stats["errors"] > 0 or stats["final_missing"] > 0:
                                 route_failed += 1
-                            self._progress["routes_done"] += 1
 
                         except Exception as exc:
                             total_errors += 1
                             route_failed += 1
-                            self._progress["routes_done"] += 1
                             self._progress["routes_failed"] += 1
 
                             log.exception(
-                                "route_failed",
-                                origin=segment.origin,
+                                "route_result_failed",
                                 error=redact_text(str(exc)),
                             )
 
@@ -505,13 +618,13 @@ class FlightScheduler:
                         run.errors = []
                     elif total_success == 0 and total_errors > 0:
                         run.status = "failed"
-                    elif total_skipped > 0:
+                    elif total_final_missing > 0:
                         run.status = "partial"
                         run.errors = [
                             {
                                     "code": "missing_fares",
                                     "detail": (
-                                        f"{total_skipped} date/destination check(s) returned "
+                                        f"{total_final_missing} date/destination check(s) returned "
                                         "no valid fare after filtering and still need collection."
                                     ),
                             }
@@ -803,53 +916,69 @@ class FlightScheduler:
                         ),
                     )
 
-                    for segment, remaining in planned_segments:
-                        if self._stop_requested:
-                            break
+                    route_semaphore = asyncio.Semaphore(self._route_parallelism(len(planned_segments)))
 
-                        self._progress["current_origin"] = segment.origin
-                        self._progress["current_destination"] = ""
-                        self._progress["current_date"] = ""
-                        batch_size = self.settings.scrape_batch_size
+                    async def collect_planned_segment(segment: object, remaining: list[date]):
+                        async with route_semaphore:
+                            if self._stop_requested:
+                                return {
+                                    "success": 0,
+                                    "errors": 0,
+                                    "skipped": len(remaining) * len(segment.destinations),
+                                    "final_missing": 0,
+                                }
+                            try:
+                                return await self._collect_segment_with_retry(
+                                    collector=collector,
+                                    group=group,
+                                    segment=segment,
+                                    remaining=remaining,
+                                )
+                            except Exception as exc:
+                                log.exception(
+                                    "route_failed",
+                                    origin=segment.origin,
+                                    error=redact_text(str(exc)),
+                                )
+                                return {
+                                    "success": 0,
+                                    "errors": 1,
+                                    "skipped": 0,
+                                    "final_missing": len(remaining) * len(segment.destinations),
+                                }
+                            finally:
+                                self._progress["routes_done"] += 1
 
-                        part = await collector.collect_route_batch(
-                            origin=segment.origin,
-                            destinations=segment.destinations,
-                            dates=remaining,
-                            route_group_id=group.id,
-                            batch_size=batch_size,
-                            delay_seconds=self.settings.scrape_delay_seconds,
-                            stop_check=lambda: self._stop_requested,
-                            market=getattr(group, "market", None),
-                            currency=group.currency,
-                            max_stops=group.max_stops,
-                            same_airline_only=getattr(group, "same_airline_only", False),
-                            trip_type=segment.trip_type,
-                            nights=segment.nights,
-                            return_origin=segment.return_origin,
+                    segment_results = await asyncio.gather(
+                        *(
+                            collect_planned_segment(segment, remaining)
+                            for segment, remaining in planned_segments
                         )
+                    )
 
+                    total_final_missing = 0
+                    for part in segment_results:
                         stats["success"] += part["success"]
                         stats["errors"] += part["errors"]
                         stats["skipped"] += part["skipped"]
-                        if part["success"] > 0:
+                        total_final_missing += part["final_missing"]
+                        if part["success"] > 0 and part["final_missing"] == 0:
                             route_success += 1
-                        if part["errors"] > 0:
+                        if part["errors"] > 0 or part["final_missing"] > 0:
                             route_failed += 1
-                        self._progress["routes_done"] += 1
 
                     if self._stop_requested:
                         run.status = "stopped"
                         run.errors = []
                     elif stats["success"] == 0 and stats["errors"] > 0:
                         run.status = "failed"
-                    elif stats["skipped"] > 0:
+                    elif total_final_missing > 0:
                         run.status = "partial"
                         run.errors = [
                             {
                                     "code": "missing_fares",
                                     "detail": (
-                                        f"{stats['skipped']} date/destination check(s) returned "
+                                        f"{total_final_missing} date/destination check(s) returned "
                                         "no valid fare after filtering and still need collection."
                                     ),
                             }

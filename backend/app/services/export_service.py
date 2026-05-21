@@ -21,6 +21,7 @@ _MAIN_HEADERS = [
     "Nights",
     "Airline",
     "Stop Result",
+    "Duration",
     "Flight Price",
 ]
 
@@ -32,6 +33,7 @@ _MULTI_CITY_HEADERS = [
     "Nights",
     "Airline",
     "Stop Result",
+    "Duration",
     "Flight Price",
 ]
 
@@ -61,8 +63,80 @@ _WEEKEND_HEADERS = [
 ]
 
 
-def _safe_stop_label(value: object) -> str:
-    return value if isinstance(value, str) else ""
+def _safe_stop_label(value: object, stops: object = None) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(stops, (int, float)):
+        stop_count = int(stops)
+        if stop_count <= 0:
+            return "Direct"
+        if stop_count == 1:
+            return "1 Stop"
+        return f"{stop_count} Stops"
+    return ""
+
+
+def _format_duration_minutes(minutes: int) -> str:
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h{mins}min"
+
+
+def _parse_duration_text(value: object) -> int | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    import re
+
+    text = value.lower().replace("hours", "h").replace("hour", "h")
+    text = text.replace("minutes", "m").replace("minute", "m").replace("mins", "m").replace("min", "m")
+    hours_match = re.search(r"(\d+)\s*h", text)
+    mins_match = re.search(r"(\d+)\s*m", text)
+    hours = int(hours_match.group(1)) if hours_match else 0
+    mins = int(mins_match.group(1)) if mins_match else 0
+    total = hours * 60 + mins
+    return total if total > 0 else None
+
+
+def _duration_label_from_minutes(values: list[int]) -> str:
+    return " / ".join(_format_duration_minutes(value) for value in values if value > 0)
+
+
+def _safe_duration_label(result: AllFlightResult) -> str:
+    itinerary = getattr(result, "itinerary_data", None)
+    if isinstance(itinerary, dict):
+        raw_durations = itinerary.get("leg_durations")
+        if isinstance(raw_durations, list):
+            durations = [int(value) for value in raw_durations if isinstance(value, (int, float)) and int(value) > 0]
+            if durations:
+                return _duration_label_from_minutes(durations)
+
+        legs = itinerary.get("legs")
+        if isinstance(legs, list):
+            durations: list[int] = []
+            for leg in legs:
+                if not isinstance(leg, dict):
+                    continue
+                raw_minutes = leg.get("duration_minutes")
+                if isinstance(raw_minutes, (int, float)) and int(raw_minutes) > 0:
+                    durations.append(int(raw_minutes))
+                    continue
+                parsed = _parse_duration_text(leg.get("duration_text"))
+                if parsed:
+                    durations.append(parsed)
+            if durations:
+                return _duration_label_from_minutes(durations)
+
+        parsed_parts = [
+            _parse_duration_text(part)
+            for part in str(itinerary.get("duration_text") or "").split("/")
+        ]
+        durations = [value for value in parsed_parts if value]
+        if durations:
+            return _duration_label_from_minutes(durations)
+
+    duration = getattr(result, "duration_minutes", None)
+    if isinstance(duration, int) and duration > 0:
+        return _format_duration_minutes(duration)
+    return ""
 
 
 def _duration_rank(result: AllFlightResult) -> int:
@@ -157,11 +231,16 @@ def export_route_group(
                 ws.cell(
                     row=row_idx,
                     column=6,
-                    value=_safe_stop_label(result.stop_label),
+                    value=_safe_stop_label(result.stop_label, result.stops),
                 )
                 ws.cell(
                     row=row_idx,
                     column=7,
+                    value=_safe_duration_label(result),
+                )
+                ws.cell(
+                    row=row_idx,
+                    column=8,
                     value=int(round(float(result.price))),
                 )
 
@@ -210,10 +289,11 @@ def export_route_group(
                 ws.cell(row=row_idx, column=4, value=route_group.nights)
                 if result:
                     ws.cell(row=row_idx, column=5, value=result.airline)
-                    ws.cell(row=row_idx, column=6, value=_safe_stop_label(result.stop_label))
+                    ws.cell(row=row_idx, column=6, value=_safe_stop_label(result.stop_label, result.stops))
+                    ws.cell(row=row_idx, column=7, value=_safe_duration_label(result))
                     ws.cell(
                         row=row_idx,
-                        column=7,
+                        column=8,
                         value=int(round(float(result.price))),
                     )
             else:
@@ -402,8 +482,9 @@ def _export_multi_city_route_group(
             ws.cell(row=row_idx, column=4, value=result.destination)
             ws.cell(row=row_idx, column=5, value=route_group.nights)
             ws.cell(row=row_idx, column=6, value=result.airline)
-            ws.cell(row=row_idx, column=7, value=_safe_stop_label(result.stop_label))
-            ws.cell(row=row_idx, column=8, value=int(round(float(result.price))))
+            ws.cell(row=row_idx, column=7, value=_safe_stop_label(result.stop_label, result.stops))
+            ws.cell(row=row_idx, column=8, value=_safe_duration_label(result))
+            ws.cell(row=row_idx, column=9, value=int(round(float(result.price))))
 
             itinerary_prices_by_origin.setdefault(origin, []).append(float(result.price))
             all_itinerary_prices.append(result)

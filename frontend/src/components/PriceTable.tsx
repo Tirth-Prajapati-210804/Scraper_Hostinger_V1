@@ -67,6 +67,33 @@ function formatStopResult(price: DailyPrice): { label: string; tone: string } {
   };
 }
 
+function formatDurationMinutes(minutes: number): string {
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function formatDuration(price: DailyPrice): string {
+  const itinerary = price.itinerary_data;
+  const legDurations = itinerary?.leg_durations?.filter((value) => Number.isFinite(value) && value > 0);
+  if (legDurations?.length) {
+    return legDurations.map(formatDurationMinutes).join(" / ");
+  }
+
+  const legText = itinerary?.legs
+    ?.map((leg) => {
+      if (leg.duration_minutes && leg.duration_minutes > 0) return formatDurationMinutes(leg.duration_minutes);
+      return leg.duration_text?.trim() || "";
+    })
+    .filter(Boolean);
+  if (legText?.length) {
+    return legText.join(" / ");
+  }
+
+  const explicit = itinerary?.duration_text?.trim();
+  if (explicit?.includes("/")) return explicit;
+
+  return price.duration_minutes == null ? "-" : formatDurationMinutes(price.duration_minutes);
+}
+
 function HeaderCell({
   column,
   sortDir,
@@ -240,9 +267,7 @@ export function PriceTable({
                     <span className={`font-medium ${stopResult.tone}`}>{stopResult.label}</span>
                   </td>
                   <td className="whitespace-nowrap px-6 py-3 text-slate-700">
-                    {price.duration_minutes == null
-                      ? "-"
-                      : `${Math.floor(price.duration_minutes / 60)}h ${price.duration_minutes % 60}m`}
+                    {formatDuration(price)}
                   </td>
                   <td className="whitespace-nowrap px-6 py-3 text-right font-medium text-slate-900">
                     {Math.round(price.price).toLocaleString()}{" "}

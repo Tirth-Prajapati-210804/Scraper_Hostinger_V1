@@ -42,7 +42,7 @@ import { Button } from "../components/ui/Button";
 import { Skeleton } from "../components/ui/Skeleton";
 import { useToast } from "../context/ToastContext";
 import type { RouteGroup } from "../types/route-group";
-import { formatNumber, formatRelativeTime } from "../utils/format";
+import { formatDisplayDateTime, formatNumber } from "../utils/format";
 import { usePageTitle } from "../utils/usePageTitle";
 
 export function DashboardPage() {
@@ -105,6 +105,16 @@ export function DashboardPage() {
     !providerStatuses.some((status) => status === "configured");
   const activeGroups = groups.filter((group) => group.is_active).length;
   const pausedGroups = groups.length - activeGroups;
+  const lastRunDisplay = useMemo(() => {
+    if (!stats?.last_collection_at) {
+      return { date: "Never", time: "" };
+    }
+    const [runDate, ...timeParts] = formatDisplayDateTime(stats.last_collection_at).split(" ");
+    return {
+      date: runDate || "Never",
+      time: timeParts.join(" "),
+    };
+  }, [stats?.last_collection_at]);
   useEffect(() => {
     if (wasCollecting.current && !isCollecting) {
       fetchCollectionRuns(1)
@@ -130,7 +140,7 @@ export function DashboardPage() {
           } else if (last.status === "stopped") {
             showToast("Collection was stopped.", "info");
           } else if (last.status === "partial") {
-            showToast("Collection finished with missing dates. Run it again to retry the gaps.", "error");
+            showToast("Collection finished with missing fare dates. Scheduler will retry the gaps automatically.", "error");
           } else if (last.status === "failed") {
             showToast("Collection failed. Check Collection Logs for details.", "error");
           }
@@ -332,8 +342,9 @@ export function DashboardPage() {
                 />
                 <StatCard
                   label="Last Run"
-                  value={stats?.last_collection_at ? formatRelativeTime(stats.last_collection_at) : "Never"}
-                  valueClassName="text-[24px]"
+                  value={lastRunDisplay.date}
+                  subtitle={lastRunDisplay.time ? `Completed at ${lastRunDisplay.time}` : undefined}
+                  valueClassName="text-[24px] tracking-[-0.02em]"
                   icon={Activity}
                 />
               </>

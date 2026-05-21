@@ -237,3 +237,49 @@ async def test_update_clears_collection_data_when_same_airline_only_changes() ->
     assert updated is group
     assert group.same_airline_only is True
     clear_mock.assert_awaited_once_with(session, group_id)
+
+
+@pytest.mark.asyncio
+async def test_update_allows_clearing_max_leg_duration() -> None:
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+
+    group_id = uuid.uuid4()
+    group = RouteGroup(
+        id=group_id,
+        name="Canada to Vietnam",
+        destination_label="Vietnam",
+        destinations=["SGN", "HAN"],
+        origins=["YVR", "YYZ"],
+        nights=10,
+        days_ahead=90,
+        sheet_name_map={"YVR": "Canada", "YYZ": "Canada"},
+        special_sheets=[],
+        is_active=True,
+        market="us",
+        currency="USD",
+        max_stops=1,
+        same_airline_only=False,
+        max_leg_duration_minutes=720,
+        start_date=None,
+        end_date=None,
+        trip_type="round_trip",
+        user_id=None,
+    )
+
+    with patch.object(route_group_service, "get_by_id", AsyncMock(return_value=group)):
+        with patch.object(
+            route_group_service,
+            "_clear_group_collection_data",
+            AsyncMock(),
+        ) as clear_mock:
+            updated = await route_group_service.update(
+                session=session,
+                group_id=group_id,
+                data=RouteGroupUpdate(max_leg_duration_minutes=None),
+            )
+
+    assert updated is group
+    assert group.max_leg_duration_minutes is None
+    clear_mock.assert_awaited_once_with(session, group_id)
