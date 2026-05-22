@@ -38,6 +38,21 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
 async def ensure_default_admin(session: AsyncSession, settings: Settings) -> None:
     existing = await get_user_by_email(session, settings.admin_email)
     if existing:
+        changed = False
+        if existing.full_name != settings.admin_full_name:
+            existing.full_name = settings.admin_full_name
+            changed = True
+        if existing.role != "admin":
+            existing.role = "admin"
+            changed = True
+        if not existing.is_active:
+            existing.is_active = True
+            changed = True
+        if not verify_password(settings.admin_password, existing.hashed_password):
+            existing.hashed_password = hash_password(settings.admin_password)
+            changed = True
+        if changed:
+            await session.commit()
         return
     admin = User(
         email=normalize_email(settings.admin_email),

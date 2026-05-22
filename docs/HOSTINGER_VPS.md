@@ -86,6 +86,7 @@ Important:
 
 - ScrapingBee is the only production provider.
 - The scraper collects from KAYAK pages through ScrapingBee.
+- The user matching `ADMIN_EMAIL` is synced to `ADMIN_PASSWORD` and `ADMIN_FULL_NAME` on backend startup.
 - Use only one ScrapingBee key source if possible.
 - Prefer `SCRAPINGBEE_API_KEY` for a single key.
 - Leave `SCRAPINGBEE_API_KEYS` empty unless you intentionally want a key pool.
