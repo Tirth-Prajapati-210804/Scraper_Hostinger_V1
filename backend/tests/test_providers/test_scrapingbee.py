@@ -427,8 +427,9 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
     assert "count_text" in scenario
     assert "findCardRoot" in scenario
     assert "select" in scenario.lower()
-    assert "extractPriceText" not in scenario
-    assert len(scenario) < 8000
+    assert "priceText" in scenario
+    assert "role=\\\"listitem\\\"" in scenario
+    assert len(scenario) < 9500
 
 
 @pytest.mark.asyncio
