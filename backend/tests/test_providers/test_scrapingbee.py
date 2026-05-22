@@ -425,6 +425,8 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
     assert "clickSort" in scenario
     assert "badges:Array.from(card.querySelectorAll" in scenario
     assert "count_text" in scenario
+    assert "findCardRoot" in scenario
+    assert "select" in scenario.lower()
 
 
 @pytest.mark.asyncio
