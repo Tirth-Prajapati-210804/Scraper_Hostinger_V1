@@ -24,12 +24,12 @@ test.describe("Login", () => {
     });
 
     await page.goto("/login");
-    await page.getByLabel("Email").fill("admin@example.com");
-    await page.getByLabel("Password").fill("Admin12345678");
+    await page.locator("#email").fill("admin@example.com");
+    await page.locator("#password").fill("Admin12345678");
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByRole("heading", { name: "Flight Collection Overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Flight Scraper Overview" })).toBeVisible();
   });
 
   test("failed login shows server message", async ({ page }) => {
@@ -42,8 +42,8 @@ test.describe("Login", () => {
     });
 
     await page.goto("/login");
-    await page.getByLabel("Email").fill("admin@example.com");
-    await page.getByLabel("Password").fill("wrong-password");
+    await page.locator("#email").fill("admin@example.com");
+    await page.locator("#password").fill("wrong-password");
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await expect(page.getByText("Invalid email or password")).toBeVisible();

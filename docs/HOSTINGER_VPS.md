@@ -1,11 +1,8 @@
 # Hostinger VPS Deployment
 
-This project is VPS-ready with Docker Compose. The simplest path is:
+This project is VPS-ready with Docker Compose, and this document is the canonical production deployment path for the repo.
 
-- keep the frontend on Vercel and move only the backend + database to the VPS, or
-- run the full stack with Docker Compose on the VPS
-
-For this repo, Docker Compose is the safest path. Production collection is ScrapingBee-only and ScrapingBee scrapes live KAYAK result pages.
+For this repo, full-stack Docker Compose on the Hostinger VPS is the maintained production setup. Production collection is ScrapingBee-only and ScrapingBee scrapes live KAYAK result pages.
 
 ## Recommended VPS size
 
@@ -146,18 +143,15 @@ Best practical setup:
 
 If you want HTTPS directly on the VPS, the clean next step is to add Caddy or Nginx Proxy Manager in front of the frontend/backend containers.
 
-## 8. Suggested deployment model
+## 8. Deployment ownership
 
-Best low-cost model for this project:
+Current maintained production story:
 
-- frontend stays on Vercel
-- backend + database move to Hostinger VPS
+- Hostinger VPS
+- Docker Compose
+- Cloudflare or a direct domain in front of the VPS
 
-Why:
-
-- easier frontend deploys
-- backend gets proper RAM
-- scheduler and scraping become more stable
+Legacy `render.yaml` and `backend/railway.toml` are not the active production path and should be treated as old reference files only.
 
 ## 9. Important operational notes
 

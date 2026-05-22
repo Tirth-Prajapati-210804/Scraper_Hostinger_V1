@@ -5,7 +5,7 @@ import { mockBaseRoutes } from "./fixtures";
 test.describe("Dashboard", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
-      window.sessionStorage.setItem("token", "test-token");
+      window.localStorage.setItem("token", "test-token");
     });
     await mockBaseRoutes(page);
   });
@@ -13,8 +13,8 @@ test.describe("Dashboard", () => {
   test("loads dashboard overview and route groups", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByRole("heading", { name: "Flight Collection Overview" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Route Groups" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Flight Scraper Overview" })).toBeVisible();
+    await expect(page.getByText("Route Groups").nth(1)).toBeVisible();
     await expect(page.getByRole("heading", { name: "Canada to Vietnam" })).toBeVisible();
   });
 
@@ -37,6 +37,6 @@ test.describe("Dashboard", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "New Group" }).click();
 
-    await expect(page.getByRole("heading", { name: "New Route Group" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create Route Group" })).toBeVisible();
   });
 });

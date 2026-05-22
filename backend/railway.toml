@@ -1,3 +1,5 @@
+# Legacy deployment reference only. Hostinger VPS Docker Compose is the
+# maintained production path for this repo.
 [build]
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"

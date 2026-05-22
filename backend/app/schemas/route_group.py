@@ -230,6 +230,10 @@ class RouteGroupResponse(BaseModel):
     max_stops: int | None
     same_airline_only: bool
     max_leg_duration_minutes: int | None
+    consecutive_operational_failures: int
+    last_operational_failure_at: datetime | None
+    last_auto_pause_reason: str | None
+    last_auto_pause_note: str | None
     start_date: date | None
     end_date: date | None
     created_at: datetime

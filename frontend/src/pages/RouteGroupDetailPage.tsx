@@ -22,6 +22,7 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Select } from "../components/ui/Select";
 import { Skeleton } from "../components/ui/Skeleton";
+import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import type { DailyPrice } from "../types/price";
 import { formatStopModeLabel } from "../utils/stopModes";
@@ -33,6 +34,7 @@ export function RouteGroupDetailPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { showToast } = useToast();
+  const { user } = useAuth();
 
   const [editOpen, setEditOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -61,6 +63,7 @@ export function RouteGroupDetailPage() {
   });
 
   const group = groupQuery.data;
+  const canDelete = user?.role === "admin";
   const activeOrigin = selectedOrigin || group?.origins[0] || "";
   const originForQuery = activeOrigin;
   const destForQuery = group?.destinations[0] || "";
@@ -193,14 +196,16 @@ export function RouteGroupDetailPage() {
               <Download className="h-4 w-4" />
               Download Excel
             </Button>
-            <button
-              onClick={() => setConfirmDelete(true)}
-              aria-label="Delete route group"
-              title="Delete route group"
-              className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+            {canDelete ? (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                aria-label="Delete route group"
+                title="Delete route group"
+                className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -304,6 +309,37 @@ export function RouteGroupDetailPage() {
             ) : null}
           </div>
         </Card>
+
+        {group.last_auto_pause_reason || group.consecutive_operational_failures > 0 ? (
+          <Card className="w-full min-w-0 max-w-full overflow-hidden border-amber-200 bg-amber-50/60 p-6">
+            <h3 className="text-[15px] font-semibold text-slate-900">Safeguard Status</h3>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Pause Reason</p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">
+                  {group.last_auto_pause_reason ?? "No automatic pause"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Failure Streak</p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">
+                  {group.consecutive_operational_failures}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
+                  Last Operational Failure
+                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">
+                  {group.last_operational_failure_at ?? "-"}
+                </p>
+              </div>
+            </div>
+            {group.last_auto_pause_note ? (
+              <p className="mt-4 text-sm text-slate-700">{group.last_auto_pause_note}</p>
+            ) : null}
+          </Card>
+        ) : null}
 
         <Card className="w-full min-w-0 max-w-full overflow-hidden p-6">
           <h3 className="mb-4 text-[15px] font-semibold text-slate-900">Collection Progress</h3>
@@ -421,7 +457,7 @@ export function RouteGroupDetailPage() {
           </div>
         ) : null}
 
-        {confirmDelete ? (
+        {confirmDelete && canDelete ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
             <div className="mx-4 w-full max-w-sm rounded-[24px] bg-white p-6 shadow-xl">
               <h3 className="text-base font-semibold text-slate-900">Delete Route Group</h3>

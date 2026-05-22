@@ -328,3 +328,61 @@ async def test_update_allows_clearing_max_leg_duration() -> None:
     assert updated is group
     assert group.max_leg_duration_minutes is None
     clear_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_resets_group_safeguard_state_on_manual_resume() -> None:
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+
+    group_id = uuid.uuid4()
+    group = RouteGroup(
+        id=group_id,
+        name="Canada to Vietnam",
+        destination_label="Vietnam",
+        destinations=["SGN", "HAN"],
+        origins=["YVR", "YYZ"],
+        nights=10,
+        days_ahead=90,
+        sheet_name_map={"YVR": "Canada", "YYZ": "Canada"},
+        special_sheets=[],
+        is_active=False,
+        market="us",
+        currency="USD",
+        max_stops=1,
+        same_airline_only=False,
+        max_leg_duration_minutes=720,
+        consecutive_operational_failures=2,
+        last_operational_failure_at=None,
+        last_auto_pause_reason="repeated_operational_failures",
+        last_auto_pause_note="Paused after repeated failures.",
+        deferred_retry_state=[
+            {
+                "origin": "YVR",
+                "destinations": ["SGN"],
+                "trip_type": "round_trip",
+                "depart_date": "2026-05-30",
+                "mode": "operational_retry",
+            }
+        ],
+        start_date=None,
+        end_date=None,
+        trip_type="round_trip",
+        user_id=None,
+    )
+
+    with patch.object(route_group_service, "get_by_id", AsyncMock(return_value=group)):
+        updated = await route_group_service.update(
+            session=session,
+            group_id=group_id,
+            data=RouteGroupUpdate(is_active=True),
+        )
+
+    assert updated is group
+    assert group.is_active is True
+    assert group.consecutive_operational_failures == 0
+    assert group.last_operational_failure_at is None
+    assert group.last_auto_pause_reason is None
+    assert group.last_auto_pause_note is None
+    assert group.deferred_retry_state == []

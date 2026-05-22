@@ -27,6 +27,23 @@ export interface PriceTrend {
   airline: string;
 }
 
+export interface CollectionRunSafeguard {
+  code: string;
+  group_id: string;
+  group_name: string;
+  group_run_outcome: "success" | "operational_failure" | "neutral_no_result";
+  consecutive_operational_failures: number;
+  auto_pause_triggered: boolean;
+  auto_pause_reason: string | null;
+  auto_pause_note: string | null;
+  deferred_duration_dates?: number;
+  deferred_operational_dates?: number;
+  processed_duration_retries?: number;
+  processed_operational_retries?: number;
+  exhausted_duration_dates?: number;
+  exhausted_operational_dates?: number;
+}
+
 export interface CollectionRun {
   id: string;
   started_at: string;
@@ -37,6 +54,12 @@ export interface CollectionRun {
   routes_failed: number;
   dates_scraped: number;
   errors: unknown[] | null;
+  safeguards?: CollectionRunSafeguard[];
+  group_run_outcome?: CollectionRunSafeguard["group_run_outcome"] | null;
+  auto_pause_triggered?: boolean;
+  auto_pause_reason?: string | null;
+  auto_pause_note?: string | null;
+  consecutive_operational_failures?: number;
 }
 
 export interface ScrapeLogEntry {

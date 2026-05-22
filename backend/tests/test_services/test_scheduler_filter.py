@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -32,6 +32,12 @@ def make_scheduler() -> FlightScheduler:
 def make_execute_result(rows: list[tuple]) -> MagicMock:
     result = MagicMock()
     result.fetchall.return_value = rows
+    return result
+
+
+def make_all_result(rows: list[tuple]) -> MagicMock:
+    result = MagicMock()
+    result.all.return_value = rows
     return result
 
 
@@ -172,7 +178,7 @@ async def test_trigger_single_group_forwards_trip_type_and_nights(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [], []])
+    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [], [], []])
 
     await scheduler.trigger_single_group(group.id)
 
@@ -252,6 +258,7 @@ async def test_trigger_single_group_collects_multi_city_special_sheets(
             [D1, D2, D3, D3 + timedelta(days=1), D3 + timedelta(days=2)],
             [],
             [],
+            [],
         ]
     )
 
@@ -322,7 +329,7 @@ async def test_trigger_single_group_updates_live_progress(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1, D2], [], []])
+    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1, D2], [], [], []])
 
     stats = await scheduler.trigger_single_group(group.id)
 
@@ -407,7 +414,7 @@ async def test_trigger_single_group_clears_stale_errors_on_success(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [], []])
+    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [], [], []])
 
     await scheduler.trigger_single_group(group.id)
 
@@ -463,7 +470,6 @@ async def test_apply_group_duration_retry_uses_next_limit_and_pauses_group() -> 
     scheduler._duration_filtered_retry_dates = AsyncMock(return_value=[D1])
 
     result = await scheduler._apply_group_duration_retry(
-        session=AsyncMock(),
         collector=collector,
         group=group,
         planned_segments=[(segment, [D1])],
@@ -472,6 +478,8 @@ async def test_apply_group_duration_retry_uses_next_limit_and_pauses_group() -> 
     assert result["triggered"] is True
     assert result["paused"] is True
     assert group.is_active is False
+    assert group.last_auto_pause_reason == "duration_retry_exhausted"
+    assert "Auto-paused after one duration retry" in group.last_auto_pause_note
     assert collector.collect_route_batch.await_count == 1
     assert collector.collect_route_batch.await_args.kwargs["max_leg_duration_minutes"] == 1440
     assert collector.collect_route_batch.await_args.kwargs["is_retry"] is True
@@ -513,7 +521,6 @@ async def test_apply_group_duration_retry_keeps_group_active_when_retry_recovers
     scheduler._duration_filtered_retry_dates = AsyncMock(return_value=[D1])
 
     result = await scheduler._apply_group_duration_retry(
-        session=AsyncMock(),
         collector=collector,
         group=group,
         planned_segments=[(segment, [D1])],
@@ -523,6 +530,106 @@ async def test_apply_group_duration_retry_keeps_group_active_when_retry_recovers
     assert result["paused"] is False
     assert group.is_active is True
     assert collector.collect_route_batch.await_args.kwargs["max_leg_duration_minutes"] == 2160
+
+
+@pytest.mark.asyncio
+async def test_classify_group_run_outcome_marks_mixed_zero_results_as_neutral() -> None:
+    scheduler = make_scheduler()
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        return_value=make_all_result(
+            [
+                ("provider_error", None),
+                ("no_results", "filtered_out"),
+            ]
+        )
+    )
+
+    group = MagicMock()
+    group.id = uuid4()
+
+    outcome, operational_logs = await scheduler._classify_group_run_outcome(
+        session=session,
+        group=group,
+        started_at=datetime.combine(TODAY, datetime.min.time()),
+        stats={"success": 0, "errors": 1, "skipped": 1},
+    )
+
+    assert outcome == "neutral_no_result"
+    assert operational_logs == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_group_failure_safeguard_pauses_after_third_scheduled_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = make_scheduler()
+    session = AsyncMock()
+    group = MagicMock()
+    group.id = uuid4()
+    group.name = "YVR-DPS"
+    group.is_active = True
+    group.consecutive_operational_failures = 2
+    group.last_operational_failure_at = None
+    group.last_auto_pause_reason = None
+    group.last_auto_pause_note = None
+
+    async def fake_classify(**kwargs):
+        return "operational_failure", 5
+
+    monkeypatch.setattr(scheduler, "_classify_group_run_outcome", fake_classify)
+
+    summary = await scheduler._apply_group_failure_safeguard(
+        session=session,
+        group=group,
+        started_at=datetime.combine(TODAY, datetime.min.time()),
+        stats={"success": 0, "errors": 2, "skipped": 3},
+        route_summary={"routes_success": 0, "routes_failed": 1, "final_missing": 5},
+        counts_toward_failure_streak=True,
+    )
+
+    assert group.is_active is False
+    assert group.consecutive_operational_failures == 3
+    assert group.last_auto_pause_reason == "repeated_operational_failures"
+    assert "3 consecutive scheduled operational-failure runs" in group.last_auto_pause_note
+    assert summary["auto_pause_triggered"] is True
+    assert summary["group_run_outcome"] == "operational_failure"
+
+
+@pytest.mark.asyncio
+async def test_apply_group_failure_safeguard_resets_counter_after_manual_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = make_scheduler()
+    session = AsyncMock()
+    group = MagicMock()
+    group.id = uuid4()
+    group.name = "YYZ-BER"
+    group.is_active = True
+    group.consecutive_operational_failures = 2
+    group.last_operational_failure_at = datetime.combine(TODAY, datetime.min.time())
+    group.last_auto_pause_reason = "repeated_operational_failures"
+    group.last_auto_pause_note = "Paused previously."
+
+    async def fake_classify(**kwargs):
+        return "success", 0
+
+    monkeypatch.setattr(scheduler, "_classify_group_run_outcome", fake_classify)
+
+    summary = await scheduler._apply_group_failure_safeguard(
+        session=session,
+        group=group,
+        started_at=datetime.combine(TODAY, datetime.min.time()),
+        stats={"success": 1, "errors": 0, "skipped": 0},
+        route_summary={"routes_success": 1, "routes_failed": 0, "final_missing": 0},
+        counts_toward_failure_streak=False,
+    )
+
+    assert group.consecutive_operational_failures == 0
+    assert group.last_operational_failure_at is None
+    assert group.last_auto_pause_reason is None
+    assert group.last_auto_pause_note is None
+    assert summary["group_run_outcome"] == "success"
 
 
 @pytest.mark.asyncio

@@ -129,6 +129,16 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
         <MiniStat label="Window" value={`${group.days_ahead}d`} />
       </div>
 
+      {group.last_auto_pause_note ? (
+        <div className="mt-3 rounded-[10px] bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+          {group.last_auto_pause_note}
+        </div>
+      ) : group.consecutive_operational_failures > 0 ? (
+        <div className="mt-3 rounded-[10px] bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+          Operational failure streak: {group.consecutive_operational_failures}
+        </div>
+      ) : null}
+
       <div className="mt-[14px]">
         {progressQuery.isLoading ? (
           <div className="space-y-2">
