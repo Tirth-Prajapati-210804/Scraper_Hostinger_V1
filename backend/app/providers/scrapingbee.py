@@ -1870,55 +1870,59 @@ class ScrapingBeeProvider:
         )
         self._last_multi_city_capture = self._empty_multi_city_capture_state()
 
-        used_deep_pass = True
-        rendered = await self._get_rendered_payload(
+        used_deep_pass = False
+        summary_prices: dict[str, str] = {}
+        card_count = 0
+        captured_count = 0
+        captured_sorts: list[str] = []
+        count_text = ""
+        capture_incomplete = False
+
+        ai_payload = await self._get_payload(
             target_url,
-            js_scenario=self._build_multi_city_results_scenario(deep=True),
+            ai_extract_rules=self._MULTI_CITY_AI_EXTRACT_RULES,
+            js_scenario=_DEEP_RESULTS_JS_SCENARIO,
             country_code=market_country_code,
-            block_resources=False,
-            wait_ms=5000,
         )
-        summary_prices = self._multi_city_summary_prices(rendered)
-        parsed_payload = await self._parse_multi_city_rendered_payload(
-            rendered,
+        results = self._normalize_multi_city_ai_offers(
+            ai_payload,
             currency=currency,
             deep_link=target_url,
             market_country_code=market_country_code,
         )
-        results = list(parsed_payload["results"])
-        card_count = int(parsed_payload["card_count"])
-        captured_count = int(parsed_payload["captured_count"])
-        captured_sorts = list(parsed_payload["captured_sorts"])
-        count_text = str(parsed_payload["count_text"])
-        eligible_results = self._filter_results_by_stops(results, max_stops)
-        capture_incomplete = self._is_multi_city_capture_incomplete(
-            summary_prices=summary_prices,
-            captured_count=captured_count,
-            count_text=count_text,
-            captured_sorts=captured_sorts,
-        )
-        if not results or capture_incomplete:
-            ai_payload = await self._get_payload(
+        if results:
+            captured_sorts = ["ai_extract"]
+            card_count = len(results)
+            captured_count = len(results)
+            eligible_results = self._filter_results_by_stops(results, max_stops)
+        else:
+            used_deep_pass = True
+            rendered = await self._get_rendered_payload(
                 target_url,
-                ai_extract_rules=self._MULTI_CITY_AI_EXTRACT_RULES,
-                js_scenario=_DEEP_RESULTS_JS_SCENARIO,
+                js_scenario=self._build_multi_city_results_scenario(deep=True),
                 country_code=market_country_code,
+                block_resources=False,
+                wait_ms=5000,
             )
-            ai_results = self._normalize_multi_city_ai_offers(
-                ai_payload,
+            summary_prices = self._multi_city_summary_prices(rendered)
+            parsed_payload = await self._parse_multi_city_rendered_payload(
+                rendered,
                 currency=currency,
                 deep_link=target_url,
                 market_country_code=market_country_code,
             )
-            if ai_results:
-                results = ai_results
-                eligible_results = self._filter_results_by_stops(ai_results, max_stops)
-                captured_sorts = ["ai_extract"]
-                card_count = max(card_count, len(ai_results))
-                captured_count = len(ai_results)
-                capture_incomplete = False
-        else:
+            results = list(parsed_payload["results"])
+            card_count = int(parsed_payload["card_count"])
+            captured_count = int(parsed_payload["captured_count"])
+            captured_sorts = list(parsed_payload["captured_sorts"])
+            count_text = str(parsed_payload["count_text"])
             eligible_results = self._filter_results_by_stops(results, max_stops)
+            capture_incomplete = self._is_multi_city_capture_incomplete(
+                summary_prices=summary_prices,
+                captured_count=captured_count,
+                count_text=count_text,
+                captured_sorts=captured_sorts,
+            )
         self._log_multi_city_debug_snapshot(
             outbound_origin=outbound_origin,
             outbound_destination=outbound_destination,
