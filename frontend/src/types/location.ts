@@ -1,5 +1,5 @@
 export interface LocationSuggestion {
   label: string;
   codes: string[];
-  kind: "location" | "airport_code";
+  kind: "country" | "city" | "airport" | "airport_code";
 }
