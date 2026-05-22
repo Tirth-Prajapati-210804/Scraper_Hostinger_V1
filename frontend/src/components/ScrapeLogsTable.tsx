@@ -73,7 +73,7 @@ export function ScrapeLogsTable({
                       ${Math.round(log.cheapest_price).toLocaleString()}
                     </span>
                   ) : (
-                    <span className="text-slate-400">-</span>
+                    <span className="text-slate-400">N-A</span>
                   )}
                 </Td>
                 <Td align="right">

@@ -18,6 +18,11 @@ def make_route_group(
     special_sheets: list | None = None,
     destination_label: str = "SGN",
     nights: int = 7,
+    origins: list[str] | None = None,
+    destinations: list[str] | None = None,
+    days_ahead: int = 1,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> MagicMock:
     rg = MagicMock()
     rg.id = uuid.uuid4()
@@ -27,6 +32,11 @@ def make_route_group(
     rg.sheet_name_map = sheet_name_map or {"YVR": "YVR"}
     rg.special_sheets = special_sheets or []
     rg.trip_type = "one_way"
+    rg.origins = origins or list((sheet_name_map or {"YVR": "YVR"}).keys())
+    rg.destinations = destinations or [destination_label]
+    rg.days_ahead = days_ahead
+    rg.start_date = start_date
+    rg.end_date = end_date
     return rg
 
 
@@ -113,13 +123,45 @@ def test_export_cheapest_per_date() -> None:
     assert ws.cell(2, 5).value == "VN"
 
 
-def test_export_missing_date_shows_none_price() -> None:
+def test_export_missing_date_shows_na_price() -> None:
     rg = make_route_group(sheet_name_map={"YVR": "YVR", "YYZ": "Toronto"})
     today = date.today()
     results = [make_result(origin="YVR", depart_date=today + timedelta(days=1), price=100.0)]
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, results)))
     ws = wb["Toronto"]
-    assert ws.cell(2, 8).value is None
+    assert ws.cell(2, 5).value == "N-A"
+    assert ws.cell(2, 6).value == "N-A"
+    assert ws.cell(2, 7).value == "N-A"
+    assert ws.cell(2, 8).value == "N-A"
+
+
+def test_export_configured_missing_day_is_included_as_na() -> None:
+    today = date.today()
+    rg = make_route_group(
+        start_date=today + timedelta(days=1),
+        end_date=today + timedelta(days=2),
+        days_ahead=2,
+    )
+    results = [make_result(origin="YVR", depart_date=today + timedelta(days=1), price=100.0)]
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, results)))
+    ws = wb["YVR"]
+    assert ws.cell(2, 1).value.date() == today + timedelta(days=1)
+    assert ws.cell(3, 1).value.date() == today + timedelta(days=2)
+    assert ws.cell(3, 8).value == "N-A"
+
+
+def test_export_without_results_uses_configured_dates_as_na_rows() -> None:
+    today = date.today()
+    rg = make_route_group(
+        start_date=today + timedelta(days=1),
+        end_date=today + timedelta(days=1),
+        days_ahead=1,
+    )
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [])))
+    ws = wb["YVR"]
+    assert ws.cell(2, 1).value.date() == today + timedelta(days=1)
+    assert ws.cell(2, 5).value == "N-A"
+    assert ws.cell(2, 8).value == "N-A"
 
 
 def test_export_special_sheet_4_columns() -> None:
@@ -179,6 +221,7 @@ def test_multi_city_export_creates_one_sheet_per_route() -> None:
     rg = make_route_group(sheet_name_map={"YOW": "YOW"})
     rg.trip_type = "multi_city"
     rg.origins = ["YOW"]
+    rg.destinations = ["LHR", "LGW"]
 
     first = make_result(origin="YOW", destination="LHR", price=671.0, airline="Air France")
     first.itinerary_data = {
