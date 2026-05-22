@@ -35,6 +35,7 @@ _HOURS_MINUTES_RE = re.compile(r"(?i)(\d+)\s*(?:hours|hour|hrs|hr|h)\s*(?:(\d+)\
 _MINUTES_ONLY_RE = re.compile(r"(?i)(\d+)\s*(?:minutes|minute|mins|min|m)")
 _STOPS_RE = re.compile(r"(?i)\b(\d+)\s+stop(?:s)?\b")
 _CURRENCY_CODE_RE = re.compile(r"\b([A-Z]{3})\b")
+_FLIGHT_COUNT_RE = re.compile(r"(?i)\b(?:(\d+)\s+of\s+)?(\d+)\s+flights\b")
 _KAYAK_HOST_BY_COUNTRY = {
     "au": "www.kayak.com.au",
     "ca": "www.ca.kayak.com",
@@ -290,6 +291,14 @@ class ScrapingBeeProvider:
         self._min_delay_seconds = max(0.0, min_delay_seconds)
         self._quota_blocked_until = 0.0
         self._quota_cooldown_seconds = quota_cooldown_seconds
+        self._last_multi_city_capture = {
+            "summary_prices": {},
+            "card_count": 0,
+            "captured_count": 0,
+            "captured_sorts": [],
+            "capture_incomplete": False,
+            "count_text": "",
+        }
 
     def is_configured(self) -> bool:
         return bool(self._api_key and self._base_url)
@@ -676,45 +685,30 @@ class ScrapingBeeProvider:
             "fh.clean=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
             "fh.visible=el=>{if(!el)return false;const r=el.getBoundingClientRect();"
             "return r.width>0&&r.height>0&&window.getComputedStyle(el).visibility!=='hidden';};"
-            "fh.clickCheapest=()=>{"
-            "const pick=Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
-            ".filter(el=>fh.visible(el)&&/^cheapest(?:\\s|$)/.test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()));"
-            "if(!pick.length)return false;"
-            "const target=pick[0].closest('button,a,[role=\"button\"]')||pick[0];"
+            "fh.findSort=label=>Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
+            ".filter(el=>fh.visible(el)).find(el=>new RegExp('^'+label+'(?:\\\\s|$)').test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()));"
+            "fh.clickSort=label=>{const pick=fh.findSort(label);"
+            "if(!pick)return false;"
+            "const target=pick.closest('button,a,[role=\"button\"]')||pick;"
             "target.click();"
-            "return true;"
-            "};"
-            "fh.settle=()=>{"
-            "const topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text'))"
-            ".map(node=>fh.clean(node.innerText)).filter(Boolean).slice(0,4).join('|');"
+            "return true;};"
+            "fh.countText=()=>{"
             "const countNode=Array.from(document.querySelectorAll('body *')).find(el=>{"
             "if(!fh.visible(el))return false;"
             "const text=fh.clean(el.innerText);"
             "return /\\b\\d+\\s+of\\s+\\d+\\s+flights\\b/i.test(text)||/\\b\\d+\\s+flights\\b/i.test(text);"
             "});"
-            "const countText=fh.clean(countNode?.innerText);"
-            "const summaryText=Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
-            ".filter(fh.visible)"
-            ".map(el=>fh.clean(el.innerText||el.getAttribute('aria-label')))"
-            ".filter(text=>/^cheapest(?:\\s|$)|^best(?:\\s|$)|^quickest(?:\\s|$)/i.test(text))"
-            ".slice(0,3).join('|');"
-            "const cardCount=document.querySelectorAll('.nrc6-price-section .e2GB-price-text').length;"
-            "const cheapestBadgeSeen=Array.from(document.querySelectorAll('span,div,button'))"
-            ".filter(fh.visible).some(node=>/^cheapest$/i.test(fh.clean(node.innerText)));"
-            "const key=[countText,summaryText,topPrices,cardCount,cheapestBadgeSeen?'1':'0'].join('||');"
-            "const state=window.__fhSettleState||{key:'',hits:0};"
-            "if(key&&key===state.key){state.hits+=1;}else{state.key=key;state.hits=0;}"
-            "window.__fhSettleState=state;"
-            "return !!summaryText&&!!topPrices&&cardCount>0&&state.hits>=2;"
+            "return fh.clean(countNode?.innerText);};"
+            "fh.summary=()=>{"
+            "const tabText=label=>(fh.findSort(label)?.innerText||'').trim();"
+            "return {cheapest:tabText('cheapest'),best:tabText('best'),quickest:tabText('quickest')};"
             "};"
-            f"fh.extract=()=>{{const cardLimit={card_limit};"
+            f"fh.captureCards=()=>{{const cardLimit={card_limit};"
             "const isCard=node=>!!node&&!!node.querySelector('.nrc6-price-section .e2GB-price-text')"
             "&&node.querySelectorAll('ol.hJSA-list > li').length>=2;"
             "const raw=Array.from(document.querySelectorAll('div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]')).filter(isCard);"
             "const roots=raw.filter((card,index)=>!raw.some((other,otherIndex)=>otherIndex!==index&&card.contains(other)&&isCard(other)));"
-            "const tabText=label=>(Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
-            ".find(el=>new RegExp('^'+label+'(?:\\\\s|$)').test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()))?.innerText||'').trim();"
-            "return JSON.stringify({"
+            "return {"
             "card_count:roots.length,"
             "captured_count:roots.slice(0,cardLimit).length,"
             "cards:roots.slice(0,cardLimit).map(card=>({"
@@ -733,64 +727,80 @@ class ScrapingBeeProvider:
             "layover_text:fh.clean(li.querySelector('.JWEO .c_cgF')?.innerText),"
             "duration_text:fh.clean(li.querySelector('.xdW8 .vmXl')?.innerText)"
             "})).filter(leg=>leg.text)"
-            "})),"
-            "summary:{cheapest:tabText('cheapest'),best:tabText('best')}"
-            "});};"
+            "}))};};"
+            "fh.captureCurrent=label=>{fh.views=fh.views||{};fh.views[label]=fh.captureCards();return true;};"
+            "fh.finalize=()=>JSON.stringify({count_text:fh.countText(),summary:fh.summary(),views:fh.views||{}});"
             "return true;"
             "})()"
         )
-        click_cheapest_script = "window.__fhResults?.clickCheapest?.() ?? false"
-        settle_script = "window.__fhResults?.settle?.() ?? false"
-        script = "window.__fhResults?.extract?.() ?? '{}'"
+        click_sort = lambda label: f"window.__fhResults?.clickSort?.('{label}') ?? false"
+        capture_sort = lambda label: f"window.__fhResults?.captureCurrent?.('{label}') ?? false"
+        finalize_script = "window.__fhResults?.finalize?.() ?? '{}'"
         if not deep:
             return {
                 "strict": False,
                 "instructions": [
                     {"evaluate": helper_script},
-                    {"wait": 5_000},
-                    {"evaluate": click_cheapest_script},
-                    {"wait": 1_500},
-                    {"evaluate": click_cheapest_script},
-                    {"evaluate": "window.scrollBy(0, 1200);"},
-                    {"wait": 1_000},
-                    {"evaluate": settle_script},
-                    {"wait": 1_200},
-                    {"evaluate": settle_script},
-                    {"wait": 1_200},
-                    {"evaluate": settle_script},
-                    {"wait": 1_200},
-                    {"evaluate": settle_script},
-                    {"wait": 1_200},
-                    {"evaluate": settle_script},
-                    {"evaluate": script},
+                    {"wait": 4_500},
+                    {"evaluate": click_sort("cheapest")},
+                    {"wait": 900},
+                    {"evaluate": "window.scrollTo(0, 0); true;"},
+                    {"wait": 250},
+                    {"evaluate": "window.scrollBy(0, 1400); true;"},
+                    {"wait": 500},
+                    {"evaluate": "window.scrollBy(0, 2600); true;"},
+                    {"wait": 600},
+                    {"evaluate": capture_sort("cheapest")},
+                    {"evaluate": click_sort("best")},
+                    {"wait": 900},
+                    {"evaluate": "window.scrollTo(0, 0); true;"},
+                    {"wait": 250},
+                    {"evaluate": "window.scrollBy(0, 1600); true;"},
+                    {"wait": 500},
+                    {"evaluate": capture_sort("best")},
+                    {"evaluate": click_sort("quickest")},
+                    {"wait": 900},
+                    {"evaluate": "window.scrollTo(0, 0); true;"},
+                    {"wait": 250},
+                    {"evaluate": "window.scrollBy(0, 1600); true;"},
+                    {"wait": 500},
+                    {"evaluate": capture_sort("quickest")},
+                    {"evaluate": finalize_script},
                 ],
             }
         return {
             "strict": False,
             "instructions": [
                 {"evaluate": helper_script},
-                {"wait": 6_500},
-                {"evaluate": click_cheapest_script},
-                {"wait": 1_500},
-                {"evaluate": "window.scrollBy(0, 1200);"},
-                {"wait": 1_000},
-                {"evaluate": "window.scrollBy(0, 1800);"},
-                {"wait": 1_000},
-                {"evaluate": click_cheapest_script},
-                {"evaluate": "window.scrollBy(0, 2400);"},
-                {"wait": 1_000},
-                {"evaluate": "window.scrollBy(0, 2800);"},
-                {"wait": 1_000},
-                {"evaluate": "window.scrollBy(0, 3200);"},
-                {"wait": 1_000},
-                {"evaluate": settle_script},
-                {"wait": 1_200},
-                {"evaluate": settle_script},
-                {"wait": 1_200},
-                {"evaluate": settle_script},
-                {"wait": 1_200},
-                {"evaluate": settle_script},
-                {"evaluate": script},
+                {"wait": 5_500},
+                {"evaluate": click_sort("cheapest")},
+                {"wait": 1_100},
+                {"evaluate": "window.scrollTo(0, 0); true;"},
+                {"wait": 250},
+                {"evaluate": "window.scrollBy(0, 1600); true;"},
+                {"wait": 600},
+                {"evaluate": "window.scrollBy(0, 3200); true;"},
+                {"wait": 700},
+                {"evaluate": capture_sort("cheapest")},
+                {"evaluate": click_sort("best")},
+                {"wait": 1_100},
+                {"evaluate": "window.scrollTo(0, 0); true;"},
+                {"wait": 250},
+                {"evaluate": "window.scrollBy(0, 1800); true;"},
+                {"wait": 600},
+                {"evaluate": "window.scrollBy(0, 3000); true;"},
+                {"wait": 700},
+                {"evaluate": capture_sort("best")},
+                {"evaluate": click_sort("quickest")},
+                {"wait": 1_100},
+                {"evaluate": "window.scrollTo(0, 0); true;"},
+                {"wait": 250},
+                {"evaluate": "window.scrollBy(0, 1800); true;"},
+                {"wait": 600},
+                {"evaluate": "window.scrollBy(0, 3000); true;"},
+                {"wait": 700},
+                {"evaluate": capture_sort("quickest")},
+                {"evaluate": finalize_script},
             ],
         }
 
@@ -801,28 +811,56 @@ class ScrapingBeeProvider:
         currency: str,
         deep_link: str,
         market_country_code: str,
-    ) -> tuple[list[ProviderResult], int, int]:
+    ) -> dict[str, object]:
         cards_payload = self._extract_rendered_cards_payload(rendered)
         if cards_payload is None:
-            return [], 0, 0
+            return {
+                "results": [],
+                "card_count": 0,
+                "captured_count": 0,
+                "captured_sorts": [],
+                "count_text": "",
+            }
 
-        card_count = 0
-        captured_count = 0
-        raw_count = cards_payload.get("card_count")
-        if isinstance(raw_count, int) and raw_count >= 0:
-            card_count = raw_count
-        raw_captured_count = cards_payload.get("captured_count")
-        if isinstance(raw_captured_count, int) and raw_captured_count >= 0:
-            captured_count = raw_captured_count
+        max_card_count = 0
+        total_captured_count = 0
+        captured_sorts: list[str] = []
+        merged_results: dict[tuple[object, ...], ProviderResult] = {}
 
-        results = await asyncio.to_thread(
-            self._normalize_multi_city_cards,
-            cards_payload,
-            currency=currency,
-            deep_link=deep_link,
-            market_country_code=market_country_code,
-        )
-        return results, card_count, captured_count
+        for captured_sort, payload in self._multi_city_card_views(cards_payload).items():
+            raw_count = payload.get("card_count")
+            if isinstance(raw_count, int) and raw_count >= 0:
+                max_card_count = max(max_card_count, raw_count)
+            raw_captured_count = payload.get("captured_count")
+            if isinstance(raw_captured_count, int) and raw_captured_count >= 0:
+                total_captured_count += raw_captured_count
+                if raw_captured_count > 0:
+                    captured_sorts.append(captured_sort)
+
+            view_results = await asyncio.to_thread(
+                self._normalize_multi_city_cards,
+                payload,
+                currency=currency,
+                deep_link=deep_link,
+                market_country_code=market_country_code,
+                captured_sort=captured_sort,
+            )
+
+            for result in view_results:
+                fingerprint = self._multi_city_result_fingerprint(result)
+                existing = merged_results.get(fingerprint)
+                if existing is None:
+                    merged_results[fingerprint] = result
+                else:
+                    merged_results[fingerprint] = self._merge_multi_city_results(existing, result)
+
+        return {
+            "results": sorted(merged_results.values(), key=lambda item: item.price),
+            "card_count": max_card_count,
+            "captured_count": total_captured_count,
+            "captured_sorts": list(dict.fromkeys(captured_sorts)),
+            "count_text": _clean_text(cards_payload.get("count_text")),
+        }
 
     def _filter_results_by_stops(
         self,
@@ -858,6 +896,10 @@ class ScrapingBeeProvider:
         visible_results_found: bool = False,
         summary_price_found: bool = False,
         used_strong_retry: bool = False,
+        capture_incomplete: bool = False,
+        rendered_card_count: int = 0,
+        rendered_captured_count: int = 0,
+        captured_sorts: list[str] | None = None,
     ) -> ProviderSearchDiagnostics:
         detected_currencies = sorted(
             {
@@ -876,6 +918,10 @@ class ScrapingBeeProvider:
             requested_currency=requested_currency,
             detected_currencies=detected_currencies,
             used_strong_retry=used_strong_retry,
+            capture_incomplete=capture_incomplete,
+            rendered_card_count=rendered_card_count,
+            rendered_captured_count=rendered_captured_count,
+            captured_sorts=list(captured_sorts or []),
         )
 
     def _stop_label_for_count(self, stops: int) -> str:
@@ -914,7 +960,10 @@ class ScrapingBeeProvider:
                 payload = json.loads(item)
             except json.JSONDecodeError:
                 continue
-            if isinstance(payload, dict) and isinstance(payload.get("cards"), list):
+            if isinstance(payload, dict) and (
+                isinstance(payload.get("cards"), list)
+                or isinstance(payload.get("views"), dict)
+            ):
                 return payload
         return None
 
@@ -925,7 +974,7 @@ class ScrapingBeeProvider:
         summary = payload.get("summary")
         if not isinstance(summary, dict):
             return False
-        return any(_clean_text(summary.get(key)) for key in ("cheapest", "best"))
+        return any(_clean_text(summary.get(key)) for key in ("cheapest", "best", "quickest"))
 
     def _multi_city_summary_prices(self, rendered: dict) -> dict[str, str]:
         payload = self._extract_rendered_cards_payload(rendered)
@@ -951,6 +1000,138 @@ class ScrapingBeeProvider:
             if price is not None
         ]
         return min(prices) if prices else None
+
+    def _multi_city_card_views(self, payload: dict[str, object]) -> dict[str, dict[str, object]]:
+        raw_views = payload.get("views")
+        if isinstance(raw_views, dict):
+            views: dict[str, dict[str, object]] = {}
+            for label in ("cheapest", "best", "quickest"):
+                value = raw_views.get(label)
+                if isinstance(value, dict):
+                    views[label] = value
+            if views:
+                return views
+
+        if isinstance(payload.get("cards"), list):
+            return {"cheapest": payload}
+
+        return {}
+
+    def _multi_city_result_fingerprint(self, result: ProviderResult) -> tuple[object, ...]:
+        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+        legs = raw_data.get("legs")
+        normalized_legs = legs if isinstance(legs, list) else []
+        leg_fingerprint: list[tuple[str, str, str, str, str]] = []
+        for leg in normalized_legs[:2]:
+            if not isinstance(leg, dict):
+                continue
+            leg_fingerprint.append(
+                (
+                    _clean_text(leg.get("airline")).lower(),
+                    _clean_text(leg.get("time_text")).lower(),
+                    _clean_text(leg.get("route_text")).lower(),
+                    _clean_text(leg.get("duration_text")).lower(),
+                    _clean_text(leg.get("stops_text")).lower(),
+                )
+            )
+
+        if not leg_fingerprint:
+            leg_fingerprint.append(
+                (
+                    _clean_text(result.airline).lower(),
+                    "",
+                    "",
+                    _clean_text(raw_data.get("duration_text")).lower(),
+                    "",
+                )
+            )
+
+        return (
+            round(result.price, 2),
+            _clean_text(result.currency).upper(),
+            tuple(leg_fingerprint),
+        )
+
+    def _merge_multi_city_results(
+        self,
+        existing: ProviderResult,
+        incoming: ProviderResult,
+    ) -> ProviderResult:
+        existing_raw = existing.raw_data if isinstance(existing.raw_data, dict) else {}
+        incoming_raw = incoming.raw_data if isinstance(incoming.raw_data, dict) else {}
+
+        existing_sorts = [
+            _clean_text(value).lower()
+            for value in (existing_raw.get("captured_sorts") or [])
+            if _clean_text(value)
+        ]
+        incoming_sorts = [
+            _clean_text(value).lower()
+            for value in (incoming_raw.get("captured_sorts") or [])
+            if _clean_text(value)
+        ]
+        merged_sorts = list(dict.fromkeys(existing_sorts + incoming_sorts))
+        if merged_sorts:
+            existing_raw["captured_sorts"] = merged_sorts
+
+        existing_badges = [
+            _clean_text(value)
+            for value in (existing_raw.get("badges") or [])
+            if _clean_text(value)
+        ]
+        incoming_badges = [
+            _clean_text(value)
+            for value in (incoming_raw.get("badges") or [])
+            if _clean_text(value)
+        ]
+        merged_badges = list(dict.fromkeys(existing_badges + incoming_badges))
+        if merged_badges:
+            existing_raw["badges"] = merged_badges
+
+        if (
+            incoming.deep_link
+            and "/book/" in incoming.deep_link
+            and (not existing.deep_link or "/book/" not in existing.deep_link)
+        ):
+            existing.deep_link = incoming.deep_link
+
+        if not _clean_text(existing_raw.get("price_text")) and _clean_text(incoming_raw.get("price_text")):
+            existing_raw["price_text"] = incoming_raw.get("price_text")
+
+        if not _clean_text(existing_raw.get("summary")) and _clean_text(incoming_raw.get("summary")):
+            existing_raw["summary"] = incoming_raw.get("summary")
+
+        existing.raw_data = existing_raw
+        return existing
+
+    def _parse_visible_flight_count(self, count_text: object) -> int | None:
+        text = _clean_text(count_text)
+        if not text:
+            return None
+        match = _FLIGHT_COUNT_RE.search(text.replace(",", ""))
+        if not match:
+            return None
+        return int(match.group(2))
+
+    def _is_multi_city_capture_incomplete(
+        self,
+        *,
+        summary_prices: dict[str, str],
+        captured_count: int,
+        count_text: str,
+        captured_sorts: list[str],
+    ) -> bool:
+        total_flights = self._parse_visible_flight_count(count_text)
+        if captured_count <= 0:
+            return bool(summary_prices or total_flights)
+
+        if total_flights is not None and total_flights >= max(captured_count * 8, 80) and captured_count < 20:
+            return True
+
+        if summary_prices and len(captured_sorts) < 2 and captured_count < 12:
+            return True
+
+        return False
 
     def _results_include_badge(
         self,
@@ -980,6 +1161,7 @@ class ScrapingBeeProvider:
         summary_prices: dict[str, str],
         card_count: int,
         captured_count: int,
+        captured_sorts: list[str],
         raw_results: list[ProviderResult],
         eligible_results: list[ProviderResult],
         max_stops: int | None,
@@ -1025,6 +1207,7 @@ class ScrapingBeeProvider:
             summary_prices=summary_prices,
             card_count=card_count,
             captured_count=captured_count,
+            captured_sorts=captured_sorts,
             raw_results_count=len(raw_results),
             eligible_results_count=len(eligible_results),
             raw_preview=_preview(raw_results),
@@ -1126,6 +1309,7 @@ class ScrapingBeeProvider:
         currency: str,
         deep_link: str,
         market_country_code: str,
+        captured_sort: str | None = None,
     ) -> list[ProviderResult]:
         raw_cards = payload.get("cards")
         if not isinstance(raw_cards, list):
@@ -1243,6 +1427,7 @@ class ScrapingBeeProvider:
                         "stop_result_label": self._stop_label_from_leg_stops(leg_stop_counts),
                         "outbound_airline": normalized_legs[0].get("airline") or "",
                         "return_airline": normalized_legs[1].get("airline") or "",
+                        "captured_sorts": [captured_sort] if captured_sort else [],
                     },
                 )
             )
@@ -1457,59 +1642,32 @@ class ScrapingBeeProvider:
         )
 
         used_deep_pass = True
-        rendered: dict = {}
-        summary_prices: dict[str, str] = {}
-        results: list[ProviderResult] = []
-        card_count = 0
-        captured_count = 0
-
-        for deep_attempt in range(2):
-            rendered = await self._get_rendered_payload(
-                target_url,
-                js_scenario=self._build_multi_city_results_scenario(deep=True),
-                country_code=market_country_code,
-            )
-            summary_prices = self._multi_city_summary_prices(rendered)
-            results, card_count, captured_count = await self._parse_multi_city_rendered_payload(
-                rendered,
-                currency=currency,
-                deep_link=target_url,
-                market_country_code=market_country_code,
-            )
-            if results or card_count > 0 or self._rendered_payload_has_summary_prices(rendered):
-                break
-            if deep_attempt == 0:
-                continue
-
+        rendered = await self._get_rendered_payload(
+            target_url,
+            js_scenario=self._build_multi_city_results_scenario(deep=True),
+            country_code=market_country_code,
+        )
+        summary_prices = self._multi_city_summary_prices(rendered)
+        parsed_payload = await self._parse_multi_city_rendered_payload(
+            rendered,
+            currency=currency,
+            deep_link=target_url,
+            market_country_code=market_country_code,
+        )
+        results = list(parsed_payload["results"])
+        card_count = int(parsed_payload["card_count"])
+        captured_count = int(parsed_payload["captured_count"])
+        captured_sorts = list(parsed_payload["captured_sorts"])
+        count_text = str(parsed_payload["count_text"])
         eligible_results = self._filter_results_by_stops(results, max_stops)
-        summary_lowest = self._summary_lowest_price(summary_prices)
-        eligible_lowest = min((result.price for result in eligible_results), default=None)
-        if (
-            summary_lowest is not None
-            and (eligible_lowest is None or summary_lowest + 1 < eligible_lowest)
-        ):
-            retry_rendered = await self._get_rendered_payload(
-                target_url,
-                js_scenario=self._build_multi_city_results_scenario(deep=True),
-                country_code=market_country_code,
-            )
-            retry_summary_prices = self._multi_city_summary_prices(retry_rendered)
-            retry_results, retry_card_count, retry_captured_count = await self._parse_multi_city_rendered_payload(
-                retry_rendered,
-                currency=currency,
-                deep_link=target_url,
-                market_country_code=market_country_code,
-            )
-            retry_eligible = self._filter_results_by_stops(retry_results, max_stops)
-            if retry_eligible or retry_results:
-                rendered = retry_rendered
-                summary_prices = retry_summary_prices
-                results = retry_results
-                card_count = retry_card_count
-                captured_count = retry_captured_count
-                eligible_results = retry_eligible
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
+        capture_incomplete = self._is_multi_city_capture_incomplete(
+            summary_prices=summary_prices,
+            captured_count=captured_count,
+            count_text=count_text,
+            captured_sorts=captured_sorts,
+        )
         self._log_multi_city_debug_snapshot(
             outbound_origin=outbound_origin,
             outbound_destination=outbound_destination,
@@ -1521,6 +1679,7 @@ class ScrapingBeeProvider:
             summary_prices=summary_prices,
             card_count=card_count,
             captured_count=captured_count,
+            captured_sorts=captured_sorts,
             raw_results=results,
             eligible_results=eligible_results,
             max_stops=max_stops,
@@ -1543,7 +1702,19 @@ class ScrapingBeeProvider:
             count=len(eligible_results),
             currency=currency,
             target_url=target_url,
+            card_count=card_count,
+            captured_count=captured_count,
+            captured_sorts=captured_sorts,
+            capture_incomplete=capture_incomplete,
         )
+        self._last_multi_city_capture = {
+            "summary_prices": summary_prices,
+            "card_count": card_count,
+            "captured_count": captured_count,
+            "captured_sorts": captured_sorts,
+            "capture_incomplete": capture_incomplete,
+            "count_text": count_text,
+        }
         return eligible_results
 
     async def search_one_way_diagnostic(
@@ -1647,13 +1818,24 @@ class ScrapingBeeProvider:
             currency=currency,
             max_stops=max_stops,
         )
+        capture_state = self._last_multi_city_capture if isinstance(self._last_multi_city_capture, dict) else {}
+        summary_prices = capture_state.get("summary_prices")
+        captured_sorts = capture_state.get("captured_sorts")
         diagnostics = self._diagnostics_for_results(
             results=results,
             requested_market=market,
             requested_currency=currency,
-            result_reason="page_empty" if not results else "success",
-            visible_results_found=bool(results),
-            summary_price_found=bool(results),
+            result_reason=(
+                "extract_failed"
+                if not results and bool(capture_state.get("capture_incomplete"))
+                else ("page_empty" if not results else "success")
+            ),
+            visible_results_found=bool(results) or bool(capture_state.get("card_count")),
+            summary_price_found=bool(summary_prices),
+            capture_incomplete=bool(capture_state.get("capture_incomplete")),
+            rendered_card_count=int(capture_state.get("card_count") or 0),
+            rendered_captured_count=int(capture_state.get("captured_count") or 0),
+            captured_sorts=list(captured_sorts) if isinstance(captured_sorts, list) else [],
         )
         return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
 

@@ -27,6 +27,7 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
             depart_date=date(2026, 5, 20),
             airline="Icelandair / Lufthansa",
             price=829.0,
+            stops=1,
             stop_label="1 Stop",
             itinerary_data={
                 "return_date": "2026-05-31",
@@ -42,6 +43,7 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
             depart_date=date(2026, 5, 21),
             airline="Air Canada / LOT",
             price=851.0,
+            stops=2,
             stop_label="2 Stop",
             itinerary_data={
                 "return_date": "2026-06-01",
@@ -60,7 +62,7 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
     assert workbook.sheetnames == ["Toronto Open Jaw"]
 
     sheet = workbook["Toronto Open Jaw"]
-    headers = [sheet.cell(row=1, column=index).value for index in range(1, 9)]
+    headers = [sheet.cell(row=1, column=index).value for index in range(1, 10)]
     assert headers == [
         "Date",
         "Ending Date",
@@ -69,6 +71,7 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
         "Nights",
         "Airline",
         "Stop Result",
+        "Duration",
         "Flight Price",
     ]
     assert sheet["A2"].value == datetime(2026, 5, 20)
@@ -77,4 +80,5 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
     assert sheet["E2"].value == 11
     assert sheet["F2"].value == "Icelandair / Lufthansa"
     assert sheet["G2"].value == "1 Stop"
-    assert sheet["H2"].value == 829
+    assert sheet["H2"].value is None
+    assert sheet["I2"].value == 829

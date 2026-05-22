@@ -421,9 +421,10 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
     assert "card.contains(other)" in scenario
     assert "other.contains(card)" not in scenario
     assert 'a[href*=\\"/book/\\"]' in scenario
-    assert "__fhSettleState" in scenario
+    assert "captureCurrent" in scenario
+    assert "clickSort" in scenario
     assert "badges:Array.from(card.querySelectorAll" in scenario
-    assert "topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text'))" in scenario
+    assert "count_text" in scenario
 
 
 @pytest.mark.asyncio
@@ -542,80 +543,48 @@ async def test_multi_city_filters_out_bus_results(provider: ScrapingBeeProvider)
 
 
 @pytest.mark.asyncio
-async def test_multi_city_retries_deep_capture_when_cards_are_not_extractable(
+async def test_multi_city_diagnostic_marks_low_capture_as_extract_failed(
     provider: ScrapingBeeProvider,
 ) -> None:
     provider._client.get = AsyncMock(
-        side_effect=[
-            mock_response(
-                {
-                    "evaluate_results": [
-                        True,
-                        json.dumps(
-                            {
-                                "card_count": 0,
-                                "captured_count": 0,
-                                "cards": [],
-                            }
-                        ),
-                    ]
-                }
-            ),
-            mock_response(
-                {
-                    "evaluate_results": [
-                        True,
-                        json.dumps(
-                            {
-                                "card_count": 140,
-                                "captured_count": 140,
-                                "cards": [
-                                    {
-                                        "text": (
-                                            "1:25 am - 3:00 pm+1 "
-                                            "YVR Vancouver Intl - DPS Bali Ngurah Rai "
-                                            "1 stop 22h 35m "
-                                            "6:00 pm - 9:50 pm "
-                                            "SIN Changi - YVR Vancouver Intl "
-                                            "1 stop 18h 50m "
-                                            "$991 Economy Light"
-                                        ),
-                                        "price_text": "$991",
-                                        "booking_href": "/book/cheapest-one-stop",
-                                        "cabin": "Economy Light",
-                                        "airline_text": "Cathay Pacific",
-                                        "legs": [
-                                            {
-                                                "text": "YVR Vancouver Intl - DPS Bali Ngurah Rai 1 stop 22h 35m",
-                                                "airline": "Cathay Pacific",
-                                                "time_text": "1:25 am - 3:00 pm+1",
-                                                "route_text": "YVR Vancouver Intl - DPS Bali Ngurah Rai",
-                                                "stops_text": "1 stop",
-                                                "layover_text": "HKG 1h 05m layover, Hong Kong",
-                                                "duration_text": "22h 35m",
-                                            },
-                                            {
-                                                "text": "SIN Changi - YVR Vancouver Intl 1 stop 18h 50m",
-                                                "airline": "Cathay Pacific",
-                                                "time_text": "6:00 pm - 9:50 pm",
-                                                "route_text": "SIN Changi - YVR Vancouver Intl",
-                                                "stops_text": "1 stop",
-                                                "layover_text": "HKG 50m layover, Hong Kong",
-                                                "duration_text": "18h 50m",
-                                            },
-                                        ],
-                                    }
-                                ],
-                            }
-                        )
-                    ]
-                }
-            ),
-        ]
+        return_value=mock_response(
+            {
+                "evaluate_results": [
+                    True,
+                    json.dumps(
+                        {
+                            "count_text": "657 of 1663 flights",
+                            "summary": {
+                                "cheapest": "$991 20h 42m",
+                                "best": "$1040 23h 26m",
+                                "quickest": "$1255 13h 22m",
+                            },
+                            "views": {
+                                "cheapest": {
+                                    "card_count": 0,
+                                    "captured_count": 0,
+                                    "cards": [],
+                                },
+                                "best": {
+                                    "card_count": 0,
+                                    "captured_count": 0,
+                                    "cards": [],
+                                },
+                                "quickest": {
+                                    "card_count": 0,
+                                    "captured_count": 0,
+                                    "cards": [],
+                                },
+                            },
+                        }
+                    ),
+                ]
+            }
+        )
     )
 
-    results = await provider.search_multi_city(
-        [
+    outcome = await provider.search_multi_city_diagnostic(
+        legs=[
             {"departure_id": "YVR", "arrival_id": "DPS", "outbound_date": DEPART},
             {
                 "departure_id": "SIN",
@@ -628,12 +597,121 @@ async def test_multi_city_retries_deep_capture_when_cards_are_not_extractable(
         max_stops=1,
     )
 
-    assert provider._client.get.await_count == 2
+    assert provider._client.get.await_count == 1
+    assert outcome.results == []
+    assert outcome.diagnostics.result_reason == "extract_failed"
+    assert outcome.diagnostics.capture_incomplete is True
+    assert outcome.diagnostics.rendered_card_count == 0
+    assert outcome.diagnostics.rendered_captured_count == 0
+    assert outcome.diagnostics.summary_price_found is True
+
+
+@pytest.mark.asyncio
+async def test_multi_city_merges_results_across_sort_views(provider: ScrapingBeeProvider) -> None:
+    shared_card = {
+        "text": (
+            "8:30 pm - 11:10 am+1 "
+            "YYZ Toronto Pearson - BER Berlin Brandenburg "
+            "1 stop 13h 40m "
+            "9:15 am - 1:34 pm "
+            "BUD Budapest Ferenc Liszt Intl - YYZ Toronto Pearson "
+            "1 stop 10h 19m "
+            "$829 Economy Light Select"
+        ),
+        "price_text": "$829",
+        "booking_href": "/book/open-jaw-123",
+        "cabin": "Economy Light",
+        "airline_text": "Icelandair / Lufthansa",
+        "badges": ["Cheapest"],
+        "legs": [
+            {
+                "text": (
+                    "8:30 pm - 11:10 am+1 "
+                    "YYZ Toronto Pearson - BER Berlin Brandenburg "
+                    "1 stop 13h 40m"
+                ),
+                "airline": "Icelandair",
+                "time_text": "8:30 pm - 11:10 am+1",
+                "route_text": "YYZ Toronto Pearson - BER Berlin Brandenburg",
+                "stops_text": "1 stop",
+                "layover_text": "KEF 1h 15m layover, Reykjavik Keflavik Intl",
+                "duration_text": "13h 40m",
+            },
+            {
+                "text": (
+                    "9:15 am - 1:34 pm "
+                    "BUD Budapest Ferenc Liszt Intl - YYZ Toronto Pearson "
+                    "1 stop 10h 19m"
+                ),
+                "airline": "Lufthansa",
+                "time_text": "9:15 am - 1:34 pm",
+                "route_text": "BUD Budapest Ferenc Liszt Intl - YYZ Toronto Pearson",
+                "stops_text": "1 stop",
+                "layover_text": "MUC 55m layover, Munich",
+                "duration_text": "10h 19m",
+            },
+        ],
+    }
+    provider._client.get = AsyncMock(
+        return_value=mock_response(
+            {
+                "evaluate_results": [
+                    True,
+                    json.dumps(
+                        {
+                            "count_text": "15 of 334 flights",
+                            "summary": {
+                                "cheapest": "$829 13h 40m",
+                                "best": "$845 12h 59m",
+                                "quickest": "$829 13h 40m",
+                            },
+                            "views": {
+                                "cheapest": {
+                                    "card_count": 12,
+                                    "captured_count": 12,
+                                    "cards": [shared_card],
+                                },
+                                "best": {
+                                    "card_count": 12,
+                                    "captured_count": 12,
+                                    "cards": [
+                                        {
+                                            **shared_card,
+                                            "booking_href": "/book/open-jaw-123?best=1",
+                                            "badges": ["Best"],
+                                        }
+                                    ],
+                                },
+                                "quickest": {
+                                    "card_count": 12,
+                                    "captured_count": 12,
+                                    "cards": [],
+                                },
+                            },
+                        }
+                    ),
+                ]
+            }
+        )
+    )
+
+    results = await provider.search_multi_city(
+        [
+            {"departure_id": "YYZ", "arrival_id": "BER", "outbound_date": DEPART},
+            {
+                "departure_id": "BUD",
+                "arrival_id": "YYZ",
+                "outbound_date": DEPART + timedelta(days=11),
+            },
+        ],
+        currency="USD",
+        market="ca",
+    )
+
     assert len(results) == 1
-    assert results[0].price == 991.0
-    assert results[0].stops == 2
-    assert results[0].airline == "Cathay Pacific"
-    assert results[0].deep_link == "https://www.kayak.com/book/cheapest-one-stop"
+    assert results[0].deep_link == "https://www.ca.kayak.com/book/open-jaw-123"
+    assert set(results[0].raw_data["captured_sorts"]) == {"cheapest", "best"}
+    assert set(results[0].raw_data["badges"]) == {"Cheapest", "Best"}
 
 
 @pytest.mark.asyncio
@@ -726,6 +804,7 @@ async def test_multi_city_debug_logs_offer_snapshot() -> None:
     assert len(results) == 1
     assert len(debug_calls) == 1
     debug_kwargs = debug_calls[0].kwargs
+    assert debug_kwargs["captured_sorts"] == ["cheapest"]
     assert debug_kwargs["summary_prices"] == {
         "cheapest": "$991 · 20h 42m",
         "best": "$1040 · 23h 26m",

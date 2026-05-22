@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.providers.base import ProviderResult
+from app.providers.base import ProviderResult, ProviderSearchDiagnostics, ProviderSearchOutcome
 from app.services.price_collector import CollectionResult, PriceCollector
 
 
@@ -201,6 +201,53 @@ async def test_collect_single_date_records_filtered_out_reason_for_direct_mode()
     assert result.cheapest is None
     scrape_logs = [call.args[0] for call in session.add.call_args_list if call.args]
     assert any(getattr(log, "result_reason", None) == "filtered_out" for log in scrape_logs)
+
+
+@pytest.mark.asyncio
+async def test_collect_single_date_records_extract_failed_for_incomplete_capture() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "scrapingbee"
+    provider.search_one_way = AsyncMock(return_value=[])
+    provider.search_one_way_diagnostic = AsyncMock(
+        return_value=ProviderSearchOutcome(
+            results=[make_result(900, airline="WestJet / Ryanair")],
+            diagnostics=ProviderSearchDiagnostics(
+                result_reason="success",
+                raw_offers_found=1,
+                eligible_offers_found=1,
+                requested_currency="CAD",
+                capture_incomplete=True,
+                rendered_card_count=120,
+                rendered_captured_count=8,
+                captured_sorts=["cheapest"],
+            ),
+        )
+    )
+    provider.search_round_trip_diagnostic = None
+    provider.search_multi_city_diagnostic = None
+
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+
+    result = await collector.collect_single_date(
+        "YYZ",
+        "NRT",
+        DEPART,
+        ROUTE_ID,
+        currency="CAD",
+        same_airline_only=True,
+    )
+
+    assert result.cheapest is None
+    scrape_logs = [call.args[0] for call in session.add.call_args_list if call.args]
+    assert any(getattr(log, "result_reason", None) == "extract_failed" for log in scrape_logs)
 
 
 @pytest.mark.asyncio

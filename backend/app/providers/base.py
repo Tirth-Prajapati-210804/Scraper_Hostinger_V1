@@ -44,6 +44,10 @@ class ProviderSearchDiagnostics:
     requested_currency: str | None = None
     detected_currencies: list[str] = field(default_factory=list)
     used_strong_retry: bool = False
+    capture_incomplete: bool = False
+    rendered_card_count: int = 0
+    rendered_captured_count: int = 0
+    captured_sorts: list[str] = field(default_factory=list)
 
 
 @dataclass

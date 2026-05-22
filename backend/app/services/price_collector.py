@@ -577,6 +577,8 @@ class PriceCollector:
                             and requested_currency not in detected_currencies
                         ):
                             result_reason = "market_mismatch"
+                        elif diagnostics.capture_incomplete:
+                            result_reason = "extract_failed"
                         else:
                             result_reason = "filtered_out"
                     else:

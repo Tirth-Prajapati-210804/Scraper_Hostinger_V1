@@ -168,7 +168,7 @@ Legacy `render.yaml` and `backend/railway.toml` are not the active production pa
 
 ## 10. Recommended first live settings on VPS
 
-- `PROVIDER_TIMEOUT_SECONDS=60`
+- `PROVIDER_TIMEOUT_SECONDS=90`
 - `PROVIDER_MAX_RETRIES=1`
 - `JWT_ACCESS_TOKEN_EXPIRE_MINUTES=525600`
 - `PROVIDER_CONCURRENCY_LIMIT=3`
