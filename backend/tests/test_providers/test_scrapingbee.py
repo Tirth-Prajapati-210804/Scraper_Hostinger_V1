@@ -554,40 +554,43 @@ async def test_multi_city_diagnostic_marks_low_capture_as_extract_failed(
     provider: ScrapingBeeProvider,
 ) -> None:
     provider._client.get = AsyncMock(
-        return_value=mock_response(
-            {
-                "evaluate_results": [
-                    True,
-                    json.dumps(
-                        {
-                            "count_text": "657 of 1663 flights",
-                            "summary": {
-                                "cheapest": "$991 20h 42m",
-                                "best": "$1040 23h 26m",
-                                "quickest": "$1255 13h 22m",
-                            },
-                            "views": {
-                                "cheapest": {
-                                    "card_count": 0,
-                                    "captured_count": 0,
-                                    "cards": [],
+        side_effect=[
+            mock_response(
+                {
+                    "evaluate_results": [
+                        True,
+                        json.dumps(
+                            {
+                                "count_text": "657 of 1663 flights",
+                                "summary": {
+                                    "cheapest": "$991 20h 42m",
+                                    "best": "$1040 23h 26m",
+                                    "quickest": "$1255 13h 22m",
                                 },
-                                "best": {
-                                    "card_count": 0,
-                                    "captured_count": 0,
-                                    "cards": [],
+                                "views": {
+                                    "cheapest": {
+                                        "card_count": 0,
+                                        "captured_count": 0,
+                                        "cards": [],
+                                    },
+                                    "best": {
+                                        "card_count": 0,
+                                        "captured_count": 0,
+                                        "cards": [],
+                                    },
+                                    "quickest": {
+                                        "card_count": 0,
+                                        "captured_count": 0,
+                                        "cards": [],
+                                    },
                                 },
-                                "quickest": {
-                                    "card_count": 0,
-                                    "captured_count": 0,
-                                    "cards": [],
-                                },
-                            },
-                        }
-                    ),
-                ]
-            }
-        )
+                            }
+                        ),
+                    ]
+                }
+            ),
+            mock_response({"offers": []}),
+        ]
     )
 
     outcome = await provider.search_multi_city_diagnostic(
@@ -604,7 +607,7 @@ async def test_multi_city_diagnostic_marks_low_capture_as_extract_failed(
         max_stops=1,
     )
 
-    assert provider._client.get.await_count == 1
+    assert provider._client.get.await_count == 2
     assert outcome.results == []
     assert outcome.diagnostics.result_reason == "extract_failed"
     assert outcome.diagnostics.capture_incomplete is True
@@ -618,15 +621,18 @@ async def test_multi_city_blank_rendered_payload_is_page_empty(
     provider: ScrapingBeeProvider,
 ) -> None:
     provider._client.get = AsyncMock(
-        return_value=mock_response(
-            {
-                "evaluate_results": [
-                    True,
-                    True,
-                    "{}",
-                ]
-            }
-        )
+        side_effect=[
+            mock_response(
+                {
+                    "evaluate_results": [
+                        True,
+                        True,
+                        "{}",
+                    ]
+                }
+            ),
+            mock_response({"offers": []}),
+        ]
     )
 
     outcome = await provider.search_multi_city_diagnostic(
@@ -643,11 +649,97 @@ async def test_multi_city_blank_rendered_payload_is_page_empty(
         max_stops=1,
     )
 
-    assert provider._client.get.await_count == 1
+    assert provider._client.get.await_count == 2
     assert outcome.results == []
     assert outcome.diagnostics.result_reason == "page_empty"
     assert outcome.diagnostics.capture_incomplete is False
     assert outcome.diagnostics.summary_price_found is False
+
+
+@pytest.mark.asyncio
+async def test_multi_city_diagnostic_returns_raw_results_before_stop_filter(
+    provider: ScrapingBeeProvider,
+) -> None:
+    provider._client.get = AsyncMock(
+        side_effect=[
+            mock_response(
+                {
+                    "evaluate_results": [
+                        True,
+                        json.dumps(
+                            {
+                                "count_text": "18 flights",
+                                "summary": {},
+                                "views": {
+                                    "cheapest": {
+                                        "card_count": 1,
+                                        "captured_count": 1,
+                                        "cards": [
+                                            {
+                                                "text": (
+                                                    "4:25 pm - 5:40 pm+1 "
+                                                    "YEG Edmonton - TIA Rinas "
+                                                    "2 stops 17h 15m "
+                                                    "11:15 am - 9:24 pm "
+                                                    "SPU Split - YEG Edmonton "
+                                                    "2 stops 18h 09m "
+                                                    "C$ 2,043 Economy Basic Select"
+                                                ),
+                                                "price_text": "C$ 2,043",
+                                                "booking_href": "/book/raw-stop-case",
+                                                "cabin": "Economy Basic",
+                                                "airline_text": "Lufthansa",
+                                                "badges": ["Cheapest"],
+                                                "legs": [
+                                                    {
+                                                        "text": "4:25 pm - 5:40 pm+1 YEG Edmonton - TIA Rinas 2 stops 17h 15m",
+                                                        "airline": "Lufthansa",
+                                                        "time_text": "4:25 pm - 5:40 pm+1",
+                                                        "route_text": "YEG Edmonton - TIA Rinas",
+                                                        "stops_text": "2 stops",
+                                                        "layover_text": "YVR, MUC",
+                                                        "duration_text": "17h 15m",
+                                                    },
+                                                    {
+                                                        "text": "11:15 am - 9:24 pm SPU Split - YEG Edmonton 2 stops 18h 09m",
+                                                        "airline": "Lufthansa",
+                                                        "time_text": "11:15 am - 9:24 pm",
+                                                        "route_text": "SPU Split - YEG Edmonton",
+                                                        "stops_text": "2 stops",
+                                                        "layover_text": "MUC, YYC",
+                                                        "duration_text": "18h 09m",
+                                                    },
+                                                ],
+                                            }
+                                        ],
+                                    }
+                                },
+                            }
+                        ),
+                    ]
+                }
+            )
+        ]
+    )
+
+    outcome = await provider.search_multi_city_diagnostic(
+        legs=[
+            {"departure_id": "YEG", "arrival_id": "TIA", "outbound_date": DEPART},
+            {
+                "departure_id": "SPU",
+                "arrival_id": "YEG",
+                "outbound_date": DEPART + timedelta(days=13),
+            },
+        ],
+        currency="CAD",
+        market="ca",
+        max_stops=1,
+    )
+
+    assert provider._client.get.await_count == 1
+    assert len(outcome.results) == 1
+    assert outcome.results[0].raw_data["leg_stops"] == [2, 2]
+    assert outcome.diagnostics.result_reason == "success"
 
 
 @pytest.mark.asyncio
@@ -756,6 +848,85 @@ async def test_multi_city_merges_results_across_sort_views(provider: ScrapingBee
     assert results[0].deep_link == "https://www.ca.kayak.com/book/open-jaw-123"
     assert set(results[0].raw_data["captured_sorts"]) == {"cheapest", "best"}
     assert set(results[0].raw_data["badges"]) == {"Cheapest", "Best"}
+
+
+@pytest.mark.asyncio
+async def test_multi_city_falls_back_to_ai_extract_when_rendered_capture_is_empty(
+    provider: ScrapingBeeProvider,
+) -> None:
+    provider._client.get = AsyncMock(
+        side_effect=[
+            mock_response(
+                {
+                    "evaluate_results": [
+                        True,
+                        json.dumps(
+                            {
+                                "count_text": "657 of 1663 flights",
+                                "summary": {
+                                    "cheapest": "$991 20h 42m",
+                                    "best": "$1040 23h 26m",
+                                    "quickest": "$1255 13h 22m",
+                                },
+                                "views": {
+                                    "cheapest": {"card_count": 0, "captured_count": 0, "cards": []},
+                                    "best": {"card_count": 0, "captured_count": 0, "cards": []},
+                                    "quickest": {"card_count": 0, "captured_count": 0, "cards": []},
+                                },
+                            }
+                        ),
+                    ]
+                }
+            ),
+            mock_response(
+                {
+                    "offers": [
+                        {
+                            "price": 1487,
+                            "price_text": "C$ 1,487",
+                            "airline": "Multiple airlines",
+                            "outbound_airline": "WestJet",
+                            "return_airline": "easyJet",
+                            "outbound_duration_text": "20h 00m",
+                            "return_duration_text": "16h 45m",
+                            "outbound_stops": 2,
+                            "return_stops": 2,
+                            "outbound_stops_text": "2 stops",
+                            "return_stops_text": "2 stops",
+                            "outbound_time_text": "3:00 pm - 7:00 pm+1",
+                            "return_time_text": "9:45 am - 6:30 pm",
+                            "outbound_route_text": "YEG Edmonton - TIA Rinas",
+                            "return_route_text": "SPU Split - YEG Edmonton",
+                            "cabin": "UltraBasic + Basic + Light",
+                            "link": "/book/ai-fallback-123",
+                            "summary": "Visible multi-city itinerary",
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
+
+    results = await provider.search_multi_city(
+        [
+            {"departure_id": "YEG", "arrival_id": "TIA", "outbound_date": DEPART},
+            {
+                "departure_id": "SPU",
+                "arrival_id": "YEG",
+                "outbound_date": DEPART + timedelta(days=13),
+            },
+        ],
+        currency="CAD",
+        market="ca",
+        max_stops=2,
+    )
+
+    assert provider._client.get.await_count == 2
+    assert len(results) == 1
+    assert results[0].price == 1487.0
+    assert results[0].raw_data["captured_sorts"] == ["ai_extract"]
+    assert results[0].raw_data["leg_durations"] == [1200, 1005]
+    assert results[0].raw_data["leg_stops"] == [2, 2]
 
 
 @pytest.mark.asyncio

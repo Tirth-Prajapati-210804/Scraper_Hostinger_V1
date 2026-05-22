@@ -713,3 +713,77 @@ async def test_collect_single_date_stop_mode_does_not_hide_cheapest_valid_result
     assert result.cheapest is not None
     assert result.cheapest.price == 900
     assert result.cheapest.stops == 0
+
+
+@pytest.mark.asyncio
+async def test_collect_single_date_multi_city_stop_filter_marks_filtered_out_not_page_empty() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = make_provider("scrapingbee", [])
+    provider.search_multi_city_diagnostic = AsyncMock(
+        return_value=ProviderSearchOutcome(
+            results=[
+                make_result(
+                    2043,
+                    airline="Lufthansa",
+                    provider="scrapingbee",
+                    duration_minutes=2114,
+                    stops=4,
+                    raw_data={
+                        "trip_type": "multi_city",
+                        "legs": [
+                            {
+                                "airline": "Lufthansa",
+                                "duration_text": "17h 15m",
+                                "duration_minutes": 1035,
+                                "stops_text": "2 stops",
+                            },
+                            {
+                                "airline": "Lufthansa",
+                                "duration_text": "18h 09m",
+                                "duration_minutes": 1089,
+                                "stops_text": "2 stops",
+                            },
+                        ],
+                        "leg_stops": [2, 2],
+                        "leg_durations": [1035, 1089],
+                    },
+                )
+            ],
+            diagnostics=ProviderSearchDiagnostics(
+                result_reason="success",
+                raw_offers_found=1,
+                eligible_offers_found=1,
+            ),
+        )
+    )
+
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+    collector._save_all_results = AsyncMock()
+
+    result = await collector.collect_single_date(
+        origin="YEG",
+        destination="TIA",
+        depart_date=DEPART,
+        route_group_id=ROUTE_ID,
+        trip_type="multi_city",
+        return_origin="SPU",
+        nights=13,
+        currency="CAD",
+        max_stops=1,
+    )
+
+    assert result.cheapest is None
+    scrape_logs = [
+        args[0]
+        for args, _ in session.add.call_args_list
+        if args and args[0].__class__.__name__ == "ScrapeLog"
+    ]
+    assert any(getattr(log, "result_reason", None) == "filtered_out" for log in scrape_logs)
+    assert any(getattr(log, "raw_offers_found", None) == 1 for log in scrape_logs)

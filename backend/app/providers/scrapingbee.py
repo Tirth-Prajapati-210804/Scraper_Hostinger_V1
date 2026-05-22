@@ -244,6 +244,86 @@ class ScrapingBeeProvider:
             },
         }
     }
+    _MULTI_CITY_AI_EXTRACT_RULES = {
+        "offers": {
+            "description": "visible KAYAK multi-city flight offers on the page",
+            "type": "list",
+            "output": {
+                "price": {
+                    "description": "total itinerary price as a number without currency symbols",
+                    "type": "number",
+                },
+                "price_text": {
+                    "description": "exact displayed itinerary price text including currency symbol or code",
+                    "type": "string",
+                },
+                "airline": {
+                    "description": "overall airline label shown for the itinerary",
+                    "type": "string",
+                },
+                "outbound_airline": {
+                    "description": "airline shown for the outbound leg",
+                    "type": "string",
+                },
+                "return_airline": {
+                    "description": "airline shown for the return leg",
+                    "type": "string",
+                },
+                "outbound_duration_text": {
+                    "description": "displayed outbound leg duration such as 13h 40m",
+                    "type": "string",
+                },
+                "return_duration_text": {
+                    "description": "displayed return leg duration such as 10h 19m",
+                    "type": "string",
+                },
+                "outbound_stops": {
+                    "description": "number of stops for the outbound leg as an integer where direct is 0",
+                    "type": "number",
+                },
+                "return_stops": {
+                    "description": "number of stops for the return leg as an integer where direct is 0",
+                    "type": "number",
+                },
+                "outbound_stops_text": {
+                    "description": "displayed outbound stops text such as 1 stop or 2 stops",
+                    "type": "string",
+                },
+                "return_stops_text": {
+                    "description": "displayed return stops text such as 1 stop or 2 stops",
+                    "type": "string",
+                },
+                "outbound_time_text": {
+                    "description": "displayed outbound time range text",
+                    "type": "string",
+                },
+                "return_time_text": {
+                    "description": "displayed return time range text",
+                    "type": "string",
+                },
+                "outbound_route_text": {
+                    "description": "displayed outbound route text with airports or cities",
+                    "type": "string",
+                },
+                "return_route_text": {
+                    "description": "displayed return route text with airports or cities",
+                    "type": "string",
+                },
+                "cabin": {
+                    "description": "displayed cabin or fare family text",
+                    "type": "string",
+                },
+                "link": {
+                    "description": "deal or booking link for the itinerary if visible",
+                    "type": "string",
+                },
+                "summary": {
+                    "description": "short itinerary summary including both legs and visible details",
+                    "type": "string",
+                },
+            },
+        }
+    }
 
     _JS_SCENARIO = {
         "instructions": [
@@ -1454,6 +1534,134 @@ class ScrapingBeeProvider:
 
         return sorted(results, key=lambda item: item.price)
 
+    def _normalize_multi_city_ai_offers(
+        self,
+        payload: dict,
+        *,
+        currency: str,
+        deep_link: str,
+        market_country_code: str,
+    ) -> list[ProviderResult]:
+        offers = payload.get("offers")
+        if not isinstance(offers, list):
+            return []
+
+        results: list[ProviderResult] = []
+        for offer in offers:
+            if not isinstance(offer, dict):
+                continue
+
+            price = self._parse_price(offer.get("price")) or self._parse_price(offer.get("price_text"))
+            if price is None:
+                continue
+
+            outbound_airline = _clean_text(offer.get("outbound_airline"))
+            return_airline = _clean_text(offer.get("return_airline"))
+            airline = _clean_text(offer.get("airline"))
+            if not outbound_airline and airline:
+                outbound_airline = airline
+            if not return_airline and airline:
+                return_airline = airline
+
+            outbound_duration_text = _clean_text(offer.get("outbound_duration_text"))
+            return_duration_text = _clean_text(offer.get("return_duration_text"))
+            outbound_duration = self._parse_duration_minutes("", outbound_duration_text)
+            return_duration = self._parse_duration_minutes("", return_duration_text)
+            if outbound_duration <= 0 or return_duration <= 0:
+                continue
+
+            outbound_stops_text = _clean_text(offer.get("outbound_stops_text"))
+            return_stops_text = _clean_text(offer.get("return_stops_text"))
+            outbound_stops = self._parse_stops(outbound_stops_text, offer.get("outbound_stops"))
+            return_stops = self._parse_stops(return_stops_text, offer.get("return_stops"))
+
+            booking_href = _clean_text(offer.get("link"))
+            normalized_link = urljoin(deep_link, booking_href) if booking_href else deep_link
+            summary = _clean_text(offer.get("summary"))
+            price_text = _clean_text(offer.get("price_text"))
+            actual_currency = self._detect_display_currency(
+                price_text or summary,
+                requested_currency=currency,
+                market_country_code=market_country_code,
+            )
+
+            legs = [
+                {
+                    "airline": outbound_airline,
+                    "time_text": _clean_text(offer.get("outbound_time_text")),
+                    "route_text": _clean_text(offer.get("outbound_route_text")),
+                    "stops_text": outbound_stops_text or self._stop_label_for_count(outbound_stops),
+                    "layover_text": "",
+                    "duration_text": outbound_duration_text,
+                    "duration_minutes": outbound_duration,
+                    "text": " ".join(
+                        part
+                        for part in [
+                            _clean_text(offer.get("outbound_time_text")),
+                            _clean_text(offer.get("outbound_route_text")),
+                            outbound_stops_text or self._stop_label_for_count(outbound_stops),
+                            outbound_duration_text,
+                        ]
+                        if part
+                    ),
+                },
+                {
+                    "airline": return_airline,
+                    "time_text": _clean_text(offer.get("return_time_text")),
+                    "route_text": _clean_text(offer.get("return_route_text")),
+                    "stops_text": return_stops_text or self._stop_label_for_count(return_stops),
+                    "layover_text": "",
+                    "duration_text": return_duration_text,
+                    "duration_minutes": return_duration,
+                    "text": " ".join(
+                        part
+                        for part in [
+                            _clean_text(offer.get("return_time_text")),
+                            _clean_text(offer.get("return_route_text")),
+                            return_stops_text or self._stop_label_for_count(return_stops),
+                            return_duration_text,
+                        ]
+                        if part
+                    ),
+                },
+            ]
+
+            airline_names = [
+                name
+                for name in [outbound_airline, return_airline]
+                if name
+            ]
+            display_airline = airline or " / ".join(dict.fromkeys(airline_names)) or "Unknown airline"
+
+            results.append(
+                ProviderResult(
+                    price=price,
+                    currency=actual_currency,
+                    airline=display_airline,
+                    deep_link=normalized_link,
+                    provider=self.name,
+                    duration_minutes=outbound_duration + return_duration,
+                    stops=outbound_stops + return_stops,
+                    raw_data={
+                        "trip_type": "multi_city",
+                        "price_text": price_text,
+                        "summary": summary,
+                        "cabin": _clean_text(offer.get("cabin")),
+                        "badges": ["AI Extract"],
+                        "legs": legs,
+                        "airline_names": airline_names,
+                        "leg_stops": [outbound_stops, return_stops],
+                        "leg_durations": [outbound_duration, return_duration],
+                        "stop_result_label": self._stop_label_from_leg_stops([outbound_stops, return_stops]),
+                        "outbound_airline": outbound_airline,
+                        "return_airline": return_airline,
+                        "captured_sorts": ["ai_extract"],
+                    },
+                )
+            )
+
+        return sorted(results, key=lambda item: item.price)
+
     def _normalize_flights(
         self,
         payload: dict,
@@ -1689,6 +1897,28 @@ class ScrapingBeeProvider:
             count_text=count_text,
             captured_sorts=captured_sorts,
         )
+        if not results or capture_incomplete:
+            ai_payload = await self._get_payload(
+                target_url,
+                ai_extract_rules=self._MULTI_CITY_AI_EXTRACT_RULES,
+                js_scenario=_DEEP_RESULTS_JS_SCENARIO,
+                country_code=market_country_code,
+            )
+            ai_results = self._normalize_multi_city_ai_offers(
+                ai_payload,
+                currency=currency,
+                deep_link=target_url,
+                market_country_code=market_country_code,
+            )
+            if ai_results:
+                results = ai_results
+                eligible_results = self._filter_results_by_stops(ai_results, max_stops)
+                captured_sorts = ["ai_extract"]
+                card_count = max(card_count, len(ai_results))
+                captured_count = len(ai_results)
+                capture_incomplete = False
+        else:
+            eligible_results = self._filter_results_by_stops(results, max_stops)
         self._log_multi_city_debug_snapshot(
             outbound_origin=outbound_origin,
             outbound_destination=outbound_destination,
@@ -1720,7 +1950,8 @@ class ScrapingBeeProvider:
             trip_type="multi_city",
             outbound=f"{outbound_origin}->{outbound_destination}",
             inbound=f"{inbound_origin}->{inbound_destination}",
-            count=len(eligible_results),
+            count=len(results),
+            eligible_count=len(eligible_results),
             currency=currency,
             target_url=target_url,
             card_count=card_count,
@@ -1736,7 +1967,7 @@ class ScrapingBeeProvider:
             "capture_incomplete": capture_incomplete,
             "count_text": count_text,
         }
-        return eligible_results
+        return results
 
     async def search_one_way_diagnostic(
         self,
