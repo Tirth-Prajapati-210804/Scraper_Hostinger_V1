@@ -46,7 +46,6 @@ interface ManualState {
   endDate: string;
   stops: StopModeId;
   sameAirlineOnly: boolean;
-  maxLegDurationHours: string;
   isActive: boolean;
 }
 
@@ -85,14 +84,6 @@ const TRIP_TYPES: Array<{
   { id: "roundtrip", label: "Round Trip", description: "Outbound + auto-return" },
   { id: "oneway", label: "One Way", description: "Single outbound search" },
   { id: "multicity", label: "Multi-city", description: "Open-jaw itinerary" },
-];
-const MAX_LEG_DURATION_OPTIONS = [
-  { label: "Any", value: "" },
-  { label: "8h", value: "8" },
-  { label: "12h", value: "12" },
-  { label: "16h", value: "16" },
-  { label: "24h", value: "24" },
-  { label: "36h", value: "36" },
 ];
 
 function tripTypeToUi(type?: TripType | null): UiTripType {
@@ -174,9 +165,6 @@ function buildInitialManualState(initial?: RouteGroup | null): ManualState {
     endDate: initial?.end_date ?? "",
     stops: stopModeToUi(initial?.max_stops),
     sameAirlineOnly: initial?.same_airline_only ?? false,
-    maxLegDurationHours: initial?.max_leg_duration_minutes
-      ? String(Math.round(initial.max_leg_duration_minutes / 60))
-      : "",
     isActive: initial?.is_active ?? true,
   };
 }
@@ -416,49 +404,6 @@ function SameAirlineSelector({
   );
 }
 
-function MaxLegDurationSelector({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <FieldLabel hint="Filters each flight leg independently. Round trips are not added together.">
-        Max Leg Duration
-      </FieldLabel>
-      <div className="flex flex-wrap items-center gap-2">
-        {MAX_LEG_DURATION_OPTIONS.map((option) => {
-          const active = value === option.value;
-          return (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => onChange(option.value)}
-              className={`h-10 rounded-2xl border px-4 text-[14px] font-medium transition ${
-                active
-                  ? "border-brand-500 bg-[#edf2ff] text-brand-700"
-                  : "border-[#dfe6f0] bg-white text-[#52637f] hover:border-[#cad5e7]"
-              }`}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-        <input
-          type="text"
-          inputMode="numeric"
-          value={value}
-          onChange={(event) => onChange(event.target.value.replace(/\D/g, ""))}
-          placeholder="Custom hours"
-          className="h-10 w-36 rounded-2xl border border-[#dfe6f0] bg-white px-4 text-[14px] text-[#0f172a] outline-none placeholder:text-[#9ba8bf] focus:border-brand-500"
-        />
-      </div>
-    </div>
-  );
-}
-
 export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) {
   const qc = useQueryClient();
   const { showToast } = useToast();
@@ -514,11 +459,6 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
       const resolvedStartDate = state.startDate || todayIso();
       const resolvedEndDate = state.endDate || addDaysIso(resolvedStartDate, resolvedDays - 1);
       const resolvedDayCount = inclusiveDayCount(resolvedStartDate, resolvedEndDate) ?? resolvedDays;
-      const maxLegDurationHours = Number.parseInt(state.maxLegDurationHours, 10);
-      const maxLegDurationMinutes =
-        Number.isFinite(maxLegDurationHours) && maxLegDurationHours > 0
-          ? Math.min(maxLegDurationHours, 48) * 60
-          : null;
 
       if (state.tripType === "multicity") {
         const returnOrigins = normalizeCodes(state.returnLeg.from);
@@ -548,7 +488,6 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         currency: state.currency,
         max_stops: stopModeToApi(state.stops),
         same_airline_only: state.sameAirlineOnly,
-        max_leg_duration_minutes: maxLegDurationMinutes,
         start_date: resolvedStartDate,
         end_date: resolvedEndDate,
         trip_type: tripTypeToApi(state.tripType),
@@ -838,11 +777,6 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         <SameAirlineSelector
           checked={state.sameAirlineOnly}
           onChange={(sameAirlineOnly) => setState((current) => ({ ...current, sameAirlineOnly }))}
-        />
-
-        <MaxLegDurationSelector
-          value={state.maxLegDurationHours}
-          onChange={(maxLegDurationHours) => setState((current) => ({ ...current, maxLegDurationHours }))}
         />
 
         {isEditing ? (

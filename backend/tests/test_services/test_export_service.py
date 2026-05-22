@@ -18,11 +18,6 @@ def make_route_group(
     special_sheets: list | None = None,
     destination_label: str = "SGN",
     nights: int = 7,
-    origins: list[str] | None = None,
-    destinations: list[str] | None = None,
-    days_ahead: int = 1,
-    start_date: date | None = None,
-    end_date: date | None = None,
 ) -> MagicMock:
     rg = MagicMock()
     rg.id = uuid.uuid4()
@@ -31,12 +26,6 @@ def make_route_group(
     rg.nights = nights
     rg.sheet_name_map = sheet_name_map or {"YVR": "YVR"}
     rg.special_sheets = special_sheets or []
-    rg.trip_type = "one_way"
-    rg.origins = origins or list((sheet_name_map or {"YVR": "YVR"}).keys())
-    rg.destinations = destinations or [destination_label]
-    rg.days_ahead = days_ahead
-    rg.start_date = start_date
-    rg.end_date = end_date
     return rg
 
 
@@ -56,7 +45,6 @@ def make_result(
     r.stop_label = ""
     r.stops = 1
     r.duration_minutes = 120
-    r.itinerary_data = None
     return r
 
 
@@ -80,8 +68,7 @@ def test_export_has_correct_headers() -> None:
     assert ws.cell(1, 4).value == "Nights"
     assert ws.cell(1, 5).value == "Airline"
     assert ws.cell(1, 6).value == "Stop Result"
-    assert ws.cell(1, 7).value == "Duration"
-    assert ws.cell(1, 8).value == "Flight Price"
+    assert ws.cell(1, 7).value == "Flight Price"
     assert ws.cell(2, 1).number_format == "DD-MM-YYYY"
 
 
@@ -105,8 +92,7 @@ def test_export_prices_are_integers() -> None:
     rg = make_route_group()
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [make_result(price=199.75)])))
     ws = wb["YVR"]
-    assert ws.cell(2, 7).value == "2h 0m"
-    assert ws.cell(2, 8).value == 200
+    assert ws.cell(2, 7).value == 200
 
 
 def test_export_cheapest_per_date() -> None:
@@ -119,49 +105,17 @@ def test_export_cheapest_per_date() -> None:
     ]
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, results)))
     ws = wb["YVR"]
-    assert ws.cell(2, 8).value == 300
+    assert ws.cell(2, 7).value == 300
     assert ws.cell(2, 5).value == "VN"
 
 
-def test_export_missing_date_shows_na_price() -> None:
+def test_export_missing_date_shows_none_price() -> None:
     rg = make_route_group(sheet_name_map={"YVR": "YVR", "YYZ": "Toronto"})
     today = date.today()
     results = [make_result(origin="YVR", depart_date=today + timedelta(days=1), price=100.0)]
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, results)))
     ws = wb["Toronto"]
-    assert ws.cell(2, 5).value == "N-A"
-    assert ws.cell(2, 6).value == "N-A"
-    assert ws.cell(2, 7).value == "N-A"
-    assert ws.cell(2, 8).value == "N-A"
-
-
-def test_export_configured_missing_day_is_included_as_na() -> None:
-    today = date.today()
-    rg = make_route_group(
-        start_date=today + timedelta(days=1),
-        end_date=today + timedelta(days=2),
-        days_ahead=2,
-    )
-    results = [make_result(origin="YVR", depart_date=today + timedelta(days=1), price=100.0)]
-    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, results)))
-    ws = wb["YVR"]
-    assert ws.cell(2, 1).value.date() == today + timedelta(days=1)
-    assert ws.cell(3, 1).value.date() == today + timedelta(days=2)
-    assert ws.cell(3, 8).value == "N-A"
-
-
-def test_export_without_results_uses_configured_dates_as_na_rows() -> None:
-    today = date.today()
-    rg = make_route_group(
-        start_date=today + timedelta(days=1),
-        end_date=today + timedelta(days=1),
-        days_ahead=1,
-    )
-    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [])))
-    ws = wb["YVR"]
-    assert ws.cell(2, 1).value.date() == today + timedelta(days=1)
-    assert ws.cell(2, 5).value == "N-A"
-    assert ws.cell(2, 8).value == "N-A"
+    assert ws.cell(2, 7).value is None
 
 
 def test_export_special_sheet_4_columns() -> None:
@@ -198,30 +152,16 @@ def test_export_special_sheet_6_columns() -> None:
     assert ws.cell(1, 4).value == "Nights"
     assert ws.cell(1, 5).value == "Airline"
     assert ws.cell(1, 6).value == "Stop Result"
-    assert ws.cell(1, 7).value == "Duration"
-    assert ws.cell(1, 8).value == "Flight Price"
+    assert ws.cell(1, 7).value == "Flight Price"
     assert ws.cell(2, 4).value == 7
     assert ws.cell(2, 5).value == "VN"
-    assert ws.cell(2, 8).value == 400
-
-
-def test_export_uses_per_leg_duration_label_when_available() -> None:
-    rg = make_route_group()
-    result = make_result()
-    result.duration_minutes = 2175
-    result.itinerary_data = {"leg_durations": [1450, 725]}
-
-    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
-    ws = wb["YVR"]
-
-    assert ws.cell(2, 7).value == "24h 10m / 12h 5m"
+    assert ws.cell(2, 7).value == 400
 
 
 def test_multi_city_export_creates_one_sheet_per_route() -> None:
     rg = make_route_group(sheet_name_map={"YOW": "YOW"})
     rg.trip_type = "multi_city"
     rg.origins = ["YOW"]
-    rg.destinations = ["LHR", "LGW"]
 
     first = make_result(origin="YOW", destination="LHR", price=671.0, airline="Air France")
     first.itinerary_data = {
@@ -239,8 +179,7 @@ def test_multi_city_export_creates_one_sheet_per_route() -> None:
 
     assert wb.sheetnames == ["YOW-LGW", "YOW-LHR"]
     assert wb["YOW-LHR"].cell(1, 7).value == "Stop Result"
-    assert wb["YOW-LHR"].cell(1, 8).value == "Duration"
-    assert wb["YOW-LHR"].cell(1, 9).value == "Flight Price"
+    assert wb["YOW-LHR"].cell(1, 8).value == "Flight Price"
     assert wb["YOW-LHR"].cell(2, 4).value == "LHR"
     assert wb["YOW-LGW"].cell(2, 4).value == "LGW"
     assert wb["YOW-LHR"].cell(2, 1).number_format == "DD-MM-YYYY"

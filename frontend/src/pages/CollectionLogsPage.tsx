@@ -96,7 +96,7 @@ export function CollectionLogsPage() {
     }
 
     if (filterStatus) {
-      logs = logs.filter((log) => log.status === filterStatus || log.result_reason === filterStatus);
+      logs = logs.filter((log) => log.status === filterStatus);
     }
 
     return logs;
@@ -271,10 +271,7 @@ export function CollectionLogsPage() {
                 >
                   <option value="">All statuses</option>
                   <option value="success">Success</option>
-                  <option value="page_empty">No fare on page</option>
-                  <option value="extract_failed">Extract failed</option>
-                  <option value="filtered_out">Filtered out</option>
-                  <option value="market_mismatch">Market mismatch</option>
+                  <option value="no_results">No valid fare</option>
                   <option value="rate_limited">Rate limited</option>
                   <option value="quota_exhausted">Quota exhausted</option>
                   <option value="auth_error">Auth error</option>

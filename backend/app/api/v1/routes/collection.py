@@ -21,7 +21,6 @@ router = APIRouter(prefix="/collection", tags=["collection"])
 
 _scrape_rate_limiter = SlidingWindowRateLimiter()
 _IATA_QUERY_PATTERN = r"^[A-Za-z0-9]{2,4}$"
-_GROUP_SAFEGUARD_SUMMARY_CODE = "group_safeguard_summary"
 
 
 def _enforce_scrape_rate_limit(request: Request, user: User, scope: str) -> None:
@@ -73,16 +72,6 @@ async def _get_accessible_group(
     if not group:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Route group not found")
     return group
-
-
-def _serialize_safeguards(run: CollectionRun) -> tuple[list[dict], dict | None]:
-    safeguards = [
-        entry
-        for entry in (run.safeguards or [])
-        if isinstance(entry, dict) and entry.get("code") == _GROUP_SAFEGUARD_SUMMARY_CODE
-    ]
-    primary = safeguards[0] if len(safeguards) == 1 else None
-    return safeguards, primary
 
 
 @router.get("/status")
@@ -194,17 +183,8 @@ async def list_runs(
             "routes_failed": r.routes_failed,
             "dates_scraped": r.dates_scraped,
             "errors": r.errors,
-            "safeguards": safeguards,
-            "group_run_outcome": primary.get("group_run_outcome") if primary else None,
-            "auto_pause_triggered": bool(primary.get("auto_pause_triggered")) if primary else False,
-            "auto_pause_reason": primary.get("auto_pause_reason") if primary else None,
-            "auto_pause_note": primary.get("auto_pause_note") if primary else None,
-            "consecutive_operational_failures": (
-                int(primary.get("consecutive_operational_failures") or 0) if primary else 0
-            ),
         }
         for r in runs
-        for safeguards, primary in [_serialize_safeguards(r)]
     ]
 
 
@@ -237,15 +217,6 @@ async def list_logs(
             "provider": lg.provider,
             "status": lg.status,
             "offers_found": lg.offers_found,
-            "result_reason": lg.result_reason,
-            "raw_offers_found": lg.raw_offers_found,
-            "eligible_offers_found": lg.eligible_offers_found,
-            "filtered_by_stop_count": lg.filtered_by_stop_count,
-            "filtered_by_same_airline": lg.filtered_by_same_airline,
-            "filtered_by_duration": lg.filtered_by_duration,
-            "requested_market": lg.requested_market,
-            "requested_currency": lg.requested_currency,
-            "detected_currency": lg.detected_currency,
             "cheapest_price": float(lg.cheapest_price) if lg.cheapest_price else None,
             "error_message": lg.error_message,
             "duration_ms": lg.duration_ms,

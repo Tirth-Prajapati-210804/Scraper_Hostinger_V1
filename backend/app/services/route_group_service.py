@@ -37,6 +37,8 @@ _ROUTE_IDENTITY_FIELDS = (
     "special_sheets",
     "market",
     "currency",
+    "max_stops",
+    "same_airline_only",
     "start_date",
     "end_date",
 )
@@ -58,14 +60,6 @@ def _normalize_identity_value(field: str, value):
             normalized.append((origin, destinations))
         return tuple(normalized)
     return value
-
-
-def _reset_group_safeguard_state(group: RouteGroup) -> None:
-    group.consecutive_operational_failures = 0
-    group.last_operational_failure_at = None
-    group.last_auto_pause_reason = None
-    group.last_auto_pause_note = None
-    group.deferred_retry_state = []
 
 
 async def _clear_group_collection_data(session: AsyncSession, group_id: uuid.UUID) -> None:
@@ -131,7 +125,6 @@ async def create(
         currency=data.currency,
         max_stops=data.max_stops,
         same_airline_only=data.same_airline_only,
-        max_leg_duration_minutes=data.max_leg_duration_minutes,
         start_date=data.start_date,
         end_date=data.end_date,
         user_id=owner_id,
@@ -153,9 +146,8 @@ async def update(
     if not group:
         return None
 
-    payload = data.model_dump(exclude_unset=True)
+    payload = data.model_dump(exclude_none=True)
     route_identity_changed = False
-    resume_requested = payload.get("is_active") is True and not bool(group.is_active)
 
     for field, value in payload.items():
         if field == "special_sheets" and value is not None:
@@ -169,10 +161,6 @@ async def update(
 
     if route_identity_changed:
         await _clear_group_collection_data(session, group_id)
-        _reset_group_safeguard_state(group)
-
-    if resume_requested:
-        _reset_group_safeguard_state(group)
 
     await session.commit()
     await session.refresh(group)

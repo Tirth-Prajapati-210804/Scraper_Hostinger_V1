@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.providers.base import ProviderResult, ProviderSearchDiagnostics, ProviderSearchOutcome
+from app.providers.base import ProviderResult
 from app.services.price_collector import CollectionResult, PriceCollector
 
 
@@ -36,9 +36,6 @@ def make_provider(name: str, results: list[ProviderResult]) -> MagicMock:
     provider = MagicMock()
     provider.name = name
     provider.search_one_way = AsyncMock(return_value=results)
-    provider.search_one_way_diagnostic = None
-    provider.search_round_trip_diagnostic = None
-    provider.search_multi_city_diagnostic = None
     return provider
 
 
@@ -109,7 +106,6 @@ async def test_collect_single_date_one_provider_fails() -> None:
     p_bad = MagicMock()
     p_bad.name = "serpapi_b"
     p_bad.search_one_way = AsyncMock(side_effect=RuntimeError("API down"))
-    p_bad.search_one_way_diagnostic = None
 
     collector = PriceCollector(
         session_factory=make_session_factory(session),
@@ -136,7 +132,6 @@ async def test_collect_single_date_reports_provider_health_callbacks() -> None:
     p_bad = MagicMock()
     p_bad.name = "searchapi_b"
     p_bad.search_one_way = AsyncMock(side_effect=RuntimeError("API down"))
-    p_bad.search_one_way_diagnostic = None
 
     success_cb = MagicMock()
     failure_cb = MagicMock()
@@ -177,113 +172,6 @@ async def test_collect_single_date_no_results() -> None:
 
 
 @pytest.mark.asyncio
-async def test_collect_single_date_records_filtered_out_reason_for_direct_mode() -> None:
-    session = AsyncMock()
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-
-    provider = make_provider("kiwi", [make_result(900, stops=1)])
-    collector = PriceCollector(
-        session_factory=make_session_factory(session),
-        providers=[provider],
-    )
-    collector._upsert_cheapest = AsyncMock()
-
-    result = await collector.collect_single_date(
-        "YYZ",
-        "NRT",
-        DEPART,
-        ROUTE_ID,
-        currency="CAD",
-        max_stops=0,
-    )
-
-    assert result.cheapest is None
-    scrape_logs = [call.args[0] for call in session.add.call_args_list if call.args]
-    assert any(getattr(log, "result_reason", None) == "filtered_out" for log in scrape_logs)
-
-
-@pytest.mark.asyncio
-async def test_collect_single_date_records_extract_failed_for_incomplete_capture() -> None:
-    session = AsyncMock()
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-
-    provider = MagicMock()
-    provider.name = "scrapingbee"
-    provider.search_one_way = AsyncMock(return_value=[])
-    provider.search_one_way_diagnostic = AsyncMock(
-        return_value=ProviderSearchOutcome(
-            results=[make_result(900, airline="WestJet / Ryanair")],
-            diagnostics=ProviderSearchDiagnostics(
-                result_reason="success",
-                raw_offers_found=1,
-                eligible_offers_found=1,
-                requested_currency="CAD",
-                capture_incomplete=True,
-                rendered_card_count=120,
-                rendered_captured_count=8,
-                captured_sorts=["cheapest"],
-            ),
-        )
-    )
-    provider.search_round_trip_diagnostic = None
-    provider.search_multi_city_diagnostic = None
-
-    collector = PriceCollector(
-        session_factory=make_session_factory(session),
-        providers=[provider],
-    )
-    collector._upsert_cheapest = AsyncMock()
-
-    result = await collector.collect_single_date(
-        "YYZ",
-        "NRT",
-        DEPART,
-        ROUTE_ID,
-        currency="CAD",
-        same_airline_only=True,
-    )
-
-    assert result.cheapest is None
-    scrape_logs = [call.args[0] for call in session.add.call_args_list if call.args]
-    assert any(getattr(log, "result_reason", None) == "extract_failed" for log in scrape_logs)
-
-
-@pytest.mark.asyncio
-async def test_collect_single_date_direct_mode_chooses_direct_offer_only() -> None:
-    session = AsyncMock()
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-
-    provider = make_provider(
-        "kiwi",
-        [
-            make_result(700, stops=1, duration_minutes=400),
-            make_result(725, stops=0, duration_minutes=410),
-        ],
-    )
-    collector = PriceCollector(
-        session_factory=make_session_factory(session),
-        providers=[provider],
-    )
-    collector._upsert_cheapest = AsyncMock()
-    collector._save_all_results = AsyncMock()
-
-    result = await collector.collect_single_date(
-        "YYZ",
-        "NRT",
-        DEPART,
-        ROUTE_ID,
-        max_stops=0,
-    )
-
-    assert result.cheapest is not None
-    assert result.cheapest.stops == 0
-    assert result.cheapest.price == 725
-
-
-@pytest.mark.asyncio
 async def test_collect_single_date_records_parse_error_status() -> None:
     session = AsyncMock()
     session.add = MagicMock()
@@ -292,7 +180,6 @@ async def test_collect_single_date_records_parse_error_status() -> None:
     provider = MagicMock()
     provider.name = "searchapi"
     provider.search_one_way = AsyncMock(side_effect=RuntimeError("invalid json from provider"))
-    provider.search_one_way_diagnostic = None
 
     collector = PriceCollector(
         session_factory=make_session_factory(session),
@@ -317,7 +204,6 @@ async def test_collect_single_date_records_provider_error_status() -> None:
     provider = MagicMock()
     provider.name = "searchapi"
     provider.search_one_way = AsyncMock(side_effect=RuntimeError("provider blew up"))
-    provider.search_one_way_diagnostic = None
 
     collector = PriceCollector(
         session_factory=make_session_factory(session),
@@ -367,16 +253,16 @@ async def test_collect_route_batch_reports_started_before_result() -> None:
     session.commit = AsyncMock()
 
     provider = make_provider("serpapi", [make_result(1500)])
-    started_calls: list[tuple[str, str, date, bool]] = []
-    progress_calls: list[tuple[str, str, str, date, bool]] = []
+    started_calls: list[tuple[str, str, date]] = []
+    progress_calls: list[tuple[str, str, str, date]] = []
     collector = PriceCollector(
         session_factory=make_session_factory(session),
         providers=[provider],
-        on_item_started=lambda origin, destination, depart_date, is_retry: started_calls.append(
-            (origin, destination, depart_date, is_retry)
+        on_item_started=lambda origin, destination, depart_date: started_calls.append(
+            (origin, destination, depart_date)
         ),
-        on_item_progress=lambda status, origin, destination, depart_date, is_retry: progress_calls.append(
-            (status, origin, destination, depart_date, is_retry)
+        on_item_progress=lambda status, origin, destination, depart_date: progress_calls.append(
+            (status, origin, destination, depart_date)
         ),
     )
     collector._upsert_cheapest = AsyncMock()
@@ -392,8 +278,8 @@ async def test_collect_route_batch_reports_started_before_result() -> None:
     )
 
     assert stats == {"success": 1, "errors": 0, "skipped": 0}
-    assert started_calls == [("YYZ", "NRT", DEPART, False)]
-    assert progress_calls == [("success", "YYZ", "NRT", DEPART, False)]
+    assert started_calls == [("YYZ", "NRT", DEPART)]
+    assert progress_calls == [("success", "YYZ", "NRT", DEPART)]
 
 
 @pytest.mark.asyncio
@@ -403,12 +289,12 @@ async def test_collect_route_batch_cooled_route_reports_skipped_progress() -> No
     session.commit = AsyncMock()
 
     provider = make_provider("serpapi", [make_result(1500)])
-    progress_calls: list[tuple[str, str, str, date, bool]] = []
+    progress_calls: list[tuple[str, str, str, date]] = []
     collector = PriceCollector(
         session_factory=make_session_factory(session),
         providers=[provider],
-        on_item_progress=lambda status, origin, destination, depart_date, is_retry: progress_calls.append(
-            (status, origin, destination, depart_date, is_retry)
+        on_item_progress=lambda status, origin, destination, depart_date: progress_calls.append(
+            (status, origin, destination, depart_date)
         ),
     )
     collector._upsert_cheapest = AsyncMock()
@@ -424,40 +310,8 @@ async def test_collect_route_batch_cooled_route_reports_skipped_progress() -> No
     )
 
     assert stats == {"success": 0, "errors": 0, "skipped": 1}
-    assert progress_calls == [("skipped", "YYZ", "NRT", DEPART, False)]
+    assert progress_calls == [("skipped", "YYZ", "NRT", DEPART)]
     provider.search_one_way.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_collect_route_batch_no_results_do_not_cool_later_dates() -> None:
-    session = AsyncMock()
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-
-    provider = make_provider("serpapi", [])
-    progress_calls: list[tuple[str, str, str, date, bool]] = []
-    collector = PriceCollector(
-        session_factory=make_session_factory(session),
-        providers=[provider],
-        on_item_progress=lambda status, origin, destination, depart_date, is_retry: progress_calls.append(
-            (status, origin, destination, depart_date, is_retry)
-        ),
-    )
-    collector._upsert_cheapest = AsyncMock()
-
-    dates = [DEPART + timedelta(days=i) for i in range(5)]
-    stats = await collector.collect_route_batch(
-        origin="YYZ",
-        destinations=["NRT"],
-        dates=dates,
-        route_group_id=ROUTE_ID,
-        batch_size=1,
-        delay_seconds=0,
-    )
-
-    assert stats == {"success": 0, "errors": 0, "skipped": 5}
-    assert provider.search_one_way.await_count == 5
-    assert [call[0] for call in progress_calls] == ["skipped"] * 5
 
 
 @pytest.mark.asyncio
@@ -552,7 +406,6 @@ async def test_round_trip_calls_search_round_trip_with_return_date() -> None:
     provider.search_round_trip = AsyncMock(
         return_value=[make_result(2400, provider="searchapi")]
     )
-    provider.search_round_trip_diagnostic = None
 
     collector = PriceCollector(
         session_factory=make_session_factory(session),
@@ -631,7 +484,6 @@ async def test_collect_single_date_same_airline_only_filters_before_choosing_che
             ),
         ]
     )
-    provider.search_round_trip_diagnostic = None
 
     collector = PriceCollector(
         session_factory=make_session_factory(session),
@@ -713,77 +565,3 @@ async def test_collect_single_date_stop_mode_does_not_hide_cheapest_valid_result
     assert result.cheapest is not None
     assert result.cheapest.price == 900
     assert result.cheapest.stops == 0
-
-
-@pytest.mark.asyncio
-async def test_collect_single_date_multi_city_stop_filter_marks_filtered_out_not_page_empty() -> None:
-    session = AsyncMock()
-    session.add = MagicMock()
-    session.commit = AsyncMock()
-
-    provider = make_provider("scrapingbee", [])
-    provider.search_multi_city_diagnostic = AsyncMock(
-        return_value=ProviderSearchOutcome(
-            results=[
-                make_result(
-                    2043,
-                    airline="Lufthansa",
-                    provider="scrapingbee",
-                    duration_minutes=2114,
-                    stops=4,
-                    raw_data={
-                        "trip_type": "multi_city",
-                        "legs": [
-                            {
-                                "airline": "Lufthansa",
-                                "duration_text": "17h 15m",
-                                "duration_minutes": 1035,
-                                "stops_text": "2 stops",
-                            },
-                            {
-                                "airline": "Lufthansa",
-                                "duration_text": "18h 09m",
-                                "duration_minutes": 1089,
-                                "stops_text": "2 stops",
-                            },
-                        ],
-                        "leg_stops": [2, 2],
-                        "leg_durations": [1035, 1089],
-                    },
-                )
-            ],
-            diagnostics=ProviderSearchDiagnostics(
-                result_reason="success",
-                raw_offers_found=1,
-                eligible_offers_found=1,
-            ),
-        )
-    )
-
-    collector = PriceCollector(
-        session_factory=make_session_factory(session),
-        providers=[provider],
-    )
-    collector._upsert_cheapest = AsyncMock()
-    collector._save_all_results = AsyncMock()
-
-    result = await collector.collect_single_date(
-        origin="YEG",
-        destination="TIA",
-        depart_date=DEPART,
-        route_group_id=ROUTE_ID,
-        trip_type="multi_city",
-        return_origin="SPU",
-        nights=13,
-        currency="CAD",
-        max_stops=1,
-    )
-
-    assert result.cheapest is None
-    scrape_logs = [
-        args[0]
-        for args, _ in session.add.call_args_list
-        if args and args[0].__class__.__name__ == "ScrapeLog"
-    ]
-    assert any(getattr(log, "result_reason", None) == "filtered_out" for log in scrape_logs)
-    assert any(getattr(log, "raw_offers_found", None) == 1 for log in scrape_logs)

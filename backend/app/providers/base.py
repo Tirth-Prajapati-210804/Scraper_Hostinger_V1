@@ -31,33 +31,6 @@ class ProviderResult:
     raw_data: dict = field(default_factory=dict)
 
 
-@dataclass
-class ProviderSearchDiagnostics:
-    """Diagnostic metadata for one provider search attempt."""
-
-    result_reason: str | None = None
-    raw_offers_found: int = 0
-    eligible_offers_found: int = 0
-    visible_results_found: bool = False
-    summary_price_found: bool = False
-    requested_market: str | None = None
-    requested_currency: str | None = None
-    detected_currencies: list[str] = field(default_factory=list)
-    used_strong_retry: bool = False
-    capture_incomplete: bool = False
-    rendered_card_count: int = 0
-    rendered_captured_count: int = 0
-    captured_sorts: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ProviderSearchOutcome:
-    """Provider results plus diagnostics used by the collector/logs."""
-
-    results: list[ProviderResult]
-    diagnostics: ProviderSearchDiagnostics = field(default_factory=ProviderSearchDiagnostics)
-
-
 class FlightProvider(Protocol):
     """Protocol that all providers must implement."""
 

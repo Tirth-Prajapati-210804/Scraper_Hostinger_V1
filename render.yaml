@@ -1,5 +1,3 @@
-# Legacy deployment reference only. Hostinger VPS Docker Compose is the
-# maintained production path for this repo.
 services:
   - type: web
     name: flight-harvester-backend

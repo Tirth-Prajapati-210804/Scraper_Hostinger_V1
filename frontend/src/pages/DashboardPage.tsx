@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
@@ -42,7 +42,7 @@ import { Button } from "../components/ui/Button";
 import { Skeleton } from "../components/ui/Skeleton";
 import { useToast } from "../context/ToastContext";
 import type { RouteGroup } from "../types/route-group";
-import { formatDisplayDateTime, formatNumber } from "../utils/format";
+import { formatNumber, formatRelativeTime } from "../utils/format";
 import { usePageTitle } from "../utils/usePageTitle";
 
 export function DashboardPage() {
@@ -54,7 +54,7 @@ export function DashboardPage() {
   const [triggering, setTriggering] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "needs_collection" | "collected" | "paused">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "paused">("all");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [startProbeUntil, setStartProbeUntil] = useState<number | null>(null);
 
@@ -100,25 +100,11 @@ export function DashboardPage() {
   const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data]);
   const health = healthQuery.data;
   const providerStatuses = Object.values(health?.provider_status ?? {});
-  const noProviderConfigured =
+  const noProvider =
     !healthQuery.isLoading &&
-    providerStatuses.length > 0 &&
-    providerStatuses.every((status) => status === "disabled");
-  const providerUnavailable =
-    !healthQuery.isLoading &&
-    providerStatuses.some((status) => status !== "configured" && status !== "active" && status !== "disabled");
+    !providerStatuses.some((status) => status === "configured");
   const activeGroups = groups.filter((group) => group.is_active).length;
   const pausedGroups = groups.length - activeGroups;
-  const lastRunDisplay = useMemo(() => {
-    if (!stats?.last_collection_at) {
-      return { date: "Never", time: "" };
-    }
-    const [runDate, ...timeParts] = formatDisplayDateTime(stats.last_collection_at).split(" ");
-    return {
-      date: runDate || "Never",
-      time: timeParts.join(" "),
-    };
-  }, [stats?.last_collection_at]);
   useEffect(() => {
     if (wasCollecting.current && !isCollecting) {
       fetchCollectionRuns(1)
@@ -144,7 +130,7 @@ export function DashboardPage() {
           } else if (last.status === "stopped") {
             showToast("Collection was stopped.", "info");
           } else if (last.status === "partial") {
-            showToast("Collection finished with missing fare dates. Scheduler will retry the gaps automatically.", "error");
+            showToast("Collection finished with missing dates. Run it again to retry the gaps.", "error");
           } else if (last.status === "failed") {
             showToast("Collection failed. Check Collection Logs for details.", "error");
           }
@@ -184,64 +170,27 @@ export function DashboardPage() {
   }, [
     isCollecting,
     qc,
-    statusQuery.data?.progress?.checks_done,
+    statusQuery.data?.progress?.prices_done,
     statusQuery.data?.progress?.dates_scraped,
     statusQuery.data?.progress?.current_origin,
   ]);
 
-  const progressQueries = useQueries({
-    queries: groups.map((group) => ({
-      queryKey: ["route-group-progress", group.id],
-      queryFn: () => getRouteGroupProgress(group.id),
-      refetchInterval: 10_000,
-    })),
-  });
+  const filteredGroups = useMemo(() => {
+    return groups.filter((group) => {
+      const matchesSearch =
+        search.trim() === "" ||
+        group.name.toLowerCase().includes(search.toLowerCase()) ||
+        group.destination_label.toLowerCase().includes(search.toLowerCase()) ||
+        group.origins.join(" ").toLowerCase().includes(search.toLowerCase()) ||
+        group.destinations.join(" ").toLowerCase().includes(search.toLowerCase());
 
-  const progressByGroupId = useMemo(
-    () => Object.fromEntries(groups.map((group, index) => [group.id, progressQueries[index]?.data])),
-    [groups, progressQueries],
-  );
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "active" ? group.is_active : !group.is_active);
 
-  const matchedGroups = useMemo(() => {
-    return groups.filter((group) => (
-      search.trim() === "" ||
-      group.name.toLowerCase().includes(search.toLowerCase()) ||
-      group.destination_label.toLowerCase().includes(search.toLowerCase()) ||
-      group.origins.join(" ").toLowerCase().includes(search.toLowerCase()) ||
-      group.destinations.join(" ").toLowerCase().includes(search.toLowerCase())
-    ));
-  }, [groups, search]);
-
-  const groupedGroups = useMemo(() => {
-    const needsCollection: RouteGroup[] = [];
-    const collected: RouteGroup[] = [];
-    const paused: RouteGroup[] = [];
-
-    for (const group of matchedGroups) {
-      if (!group.is_active) {
-        paused.push(group);
-        continue;
-      }
-      const progress = progressByGroupId[group.id];
-      const isCollected = progress != null && progress.total_dates > 0 && progress.coverage_percent >= 100;
-      if (isCollected) {
-        collected.push(group);
-      } else {
-        needsCollection.push(group);
-      }
-    }
-
-    if (statusFilter === "needs_collection") {
-      return { needsCollection, collected: [], paused: [] };
-    }
-    if (statusFilter === "collected") {
-      return { needsCollection: [], collected, paused: [] };
-    }
-    if (statusFilter === "paused") {
-      return { needsCollection: [], collected: [], paused };
-    }
-    return { needsCollection, collected, paused };
-  }, [matchedGroups, progressByGroupId, statusFilter]);
+      return matchesSearch && matchesStatus;
+    });
+  }, [groups, search, statusFilter]);
 
   async function handleTriggerAll() {
     setTriggering(true);
@@ -311,21 +260,12 @@ export function DashboardPage() {
           }
         />
 
-        {noProviderConfigured ? (
+        {noProvider ? (
           <Banner
             tone="amber"
             icon={<AlertTriangle className="h-[15px] w-[15px]" />}
             title="No API key configured"
             text="Add SCRAPINGBEE_API_KEY or SCRAPINGBEE_API_KEYS."
-          />
-        ) : null}
-
-        {providerUnavailable ? (
-          <Banner
-            tone="amber"
-            icon={<AlertTriangle className="h-[15px] w-[15px]" />}
-            title="Provider temporarily unavailable"
-            text={`Current provider status: ${providerStatuses.filter((status) => status !== "configured" && status !== "active").join(", ")}. Check Collection Logs and backend logs.`}
           />
         ) : null}
 
@@ -377,7 +317,7 @@ export function DashboardPage() {
                 <StatCard
                   label="Route Groups"
                   value={groups.length}
-                  subtitle={`${activeGroups} active | ${pausedGroups} paused`}
+                  subtitle={`${activeGroups} active · ${pausedGroups} paused`}
                   icon={Globe}
                 />
                 <StatCard
@@ -392,9 +332,8 @@ export function DashboardPage() {
                 />
                 <StatCard
                   label="Last Run"
-                  value={lastRunDisplay.date}
-                  subtitle={lastRunDisplay.time ? `Completed at ${lastRunDisplay.time}` : undefined}
-                  valueClassName="text-[24px] tracking-[-0.02em]"
+                  value={stats?.last_collection_at ? formatRelativeTime(stats.last_collection_at) : "Never"}
+                  valueClassName="text-[24px]"
                   icon={Activity}
                 />
               </>
@@ -407,7 +346,7 @@ export function DashboardPage() {
             <div className="flex-1">
               <div className="text-[15px] font-semibold text-[#1a1d23]">Route Groups</div>
               <div className="text-[12px] text-[#9CA3AF]">
-                {groups.length} configured | {matchedGroups.length} shown
+                {groups.length} configured · {filteredGroups.length} shown
               </div>
             </div>
 
@@ -424,14 +363,13 @@ export function DashboardPage() {
             <div className="flex gap-1 rounded-[8px] bg-[#F4F6FA] p-[3px]">
               {[
                 { id: "all", label: "All" },
-                { id: "needs_collection", label: "Needs Collection" },
-                { id: "collected", label: "Collected" },
+                { id: "active", label: "Active" },
                 { id: "paused", label: "Paused" },
               ].map((item) => (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setStatusFilter(item.id as "all" | "needs_collection" | "collected" | "paused")}
+                  onClick={() => setStatusFilter(item.id as "all" | "active" | "paused")}
                   className={`rounded-[6px] px-3 py-[5px] text-[12px] transition ${
                     statusFilter === item.id
                       ? "bg-white font-semibold text-[#1a1d23] shadow-[0_1px_3px_rgba(0,0,0,0.07)]"
@@ -484,7 +422,7 @@ export function DashboardPage() {
                 <Skeleton key={index} className="h-64 rounded-[12px]" />
               ))}
             </div>
-          ) : matchedGroups.length === 0 ? (
+          ) : filteredGroups.length === 0 ? (
             <div className="py-16 text-center">
               <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-[12px] bg-[#F4F6FA]">
                 <FolderOpen className="h-5 w-5 text-[#C4CAD4]" />
@@ -493,16 +431,32 @@ export function DashboardPage() {
               <div className="text-[12px] text-[#9CA3AF]">Try a different keyword or filter.</div>
             </div>
           ) : viewMode === "grid" ? (
-            <div className="space-y-6">
-              <RouteGroupSection title="Needs Collection" groups={groupedGroups.needsCollection} />
-              <RouteGroupSection title="Collected" groups={groupedGroups.collected} />
-              <RouteGroupSection title="Paused" groups={groupedGroups.paused} />
+            <div className="grid gap-[14px]" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+              {filteredGroups.map((group) => (
+                <RouteGroupCard key={group.id} group={group} />
+              ))}
             </div>
           ) : (
-            <div className="space-y-6">
-              <RouteGroupTableSection title="Needs Collection" groups={groupedGroups.needsCollection} />
-              <RouteGroupTableSection title="Collected" groups={groupedGroups.collected} />
-              <RouteGroupTableSection title="Paused" groups={groupedGroups.paused} />
+            <div className="overflow-hidden rounded-[12px] border border-[#E8ECF4] bg-white">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b border-[#E8ECF4] bg-[#FAFBFF]">
+                    {["Group", "Route", "Type", "Coverage", "Window", "Currency", "Status", ""].map((heading) => (
+                      <th
+                        key={heading}
+                        className="whitespace-nowrap px-4 py-[10px] text-left text-[11px] font-semibold tracking-[0.05em] text-[#9CA3AF]"
+                      >
+                        {heading}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredGroups.map((group) => (
+                    <DashboardGroupRow key={group.id} group={group} />
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>
@@ -650,68 +604,6 @@ function DashboardGroupRow({ group }: { group: RouteGroup }) {
         </div>
       </td>
     </tr>
-  );
-}
-
-function RouteGroupSection({
-  title,
-  groups,
-}: {
-  title: string;
-  groups: RouteGroup[];
-}) {
-  if (groups.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="text-[13px] font-semibold text-[#6B7280]">{title}</div>
-      <div className="grid gap-[14px]" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-        {groups.map((group) => (
-          <RouteGroupCard key={group.id} group={group} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RouteGroupTableSection({
-  title,
-  groups,
-}: {
-  title: string;
-  groups: RouteGroup[];
-}) {
-  if (groups.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="text-[13px] font-semibold text-[#6B7280]">{title}</div>
-      <div className="overflow-hidden rounded-[12px] border border-[#E8ECF4] bg-white">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-[#E8ECF4] bg-[#FAFBFF]">
-              {["Group", "Route", "Type", "Coverage", "Window", "Currency", "Status", ""].map((heading) => (
-                <th
-                  key={heading}
-                  className="whitespace-nowrap px-4 py-[10px] text-left text-[11px] font-semibold tracking-[0.05em] text-[#9CA3AF]"
-                >
-                  {heading}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((group) => (
-              <DashboardGroupRow key={group.id} group={group} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
   );
 }
 

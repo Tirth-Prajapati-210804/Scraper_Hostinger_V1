@@ -119,7 +119,7 @@ async def test_ensure_default_admin_creates_missing_admin() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ensure_default_admin_syncs_existing_admin_to_settings() -> None:
+async def test_ensure_default_admin_does_not_overwrite_existing_admin() -> None:
     existing = make_user(
         email="admin@example.com",
         password="OldPassword123!",
@@ -136,31 +136,10 @@ async def test_ensure_default_admin_syncs_existing_admin_to_settings() -> None:
     settings = make_settings()
     await ensure_default_admin(session, settings)
 
-    assert existing.full_name == settings.admin_full_name
-    assert existing.role == "admin"
-    assert existing.is_active is True
-    assert verify_password(settings.admin_password, existing.hashed_password)
-    session.commit.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_ensure_default_admin_does_not_commit_when_existing_admin_already_matches() -> None:
-    settings = make_settings()
-    existing = make_user(
-        email=settings.admin_email,
-        password=settings.admin_password,
-        role="admin",
-        is_active=True,
-    )
-    existing.full_name = settings.admin_full_name
-    session = AsyncMock()
-    result_mock = MagicMock()
-    result_mock.scalar_one_or_none.return_value = existing
-    session.execute = AsyncMock(return_value=result_mock)
-    session.commit = AsyncMock()
-
-    await ensure_default_admin(session, settings)
-
+    assert existing.full_name == "Old Name"
+    assert existing.role == "user"
+    assert existing.is_active is False
+    assert verify_password("OldPassword123!", existing.hashed_password)
     session.commit.assert_not_awaited()
 
 

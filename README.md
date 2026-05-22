@@ -9,7 +9,7 @@ The production provider is ScrapingBee scraping live KAYAK result pages.
 Backend: FastAPI, SQLAlchemy 2.x async, Alembic, APScheduler.
 Frontend: React, TypeScript, Vite, Tailwind, React Query.
 Storage: PostgreSQL.
-Deployment: Hostinger VPS Docker Compose is the canonical production path. Legacy Render and Railway files remain in the repo for reference only and are not the active deployment story.
+Deployment: Docker Compose for VPS, or Render backend + Vercel frontend + managed Postgres.
 
 ## VPS / Hostinger readiness
 
@@ -24,10 +24,10 @@ Files prepared for that path:
 - `.env.hostinger.example`
 - `docs/HOSTINGER_VPS.md`
 
-Canonical production deployment:
+Recommended practical production move:
 
-- full stack on the Hostinger VPS with Docker Compose
-- Cloudflare in front once you have a stable domain
+- keep frontend on Vercel
+- move backend + database to a VPS with at least `8 GB RAM`
 
 For step-by-step VPS deployment, see:
 
@@ -107,7 +107,7 @@ The frontend expects `VITE_API_BASE_URL` to point at the backend in local develo
 
 `SCHEDULER_ENABLED`, `SCHEDULER_INTERVAL_MINUTES` - collection cadence.
 
-`SCRAPE_BATCH_SIZE`, `SCRAPE_ROUTE_PARALLELISM`, `SCRAPE_DELAY_SECONDS`, `PROVIDER_TIMEOUT_SECONDS`, `PROVIDER_MAX_RETRIES`, `PROVIDER_CONCURRENCY_LIMIT`, `PROVIDER_MIN_DELAY_SECONDS` - collection tuning.
+`SCRAPE_BATCH_SIZE`, `SCRAPE_DELAY_SECONDS`, `PROVIDER_TIMEOUT_SECONDS`, `PROVIDER_MAX_RETRIES`, `PROVIDER_CONCURRENCY_LIMIT`, `PROVIDER_MIN_DELAY_SECONDS` - collection tuning.
 
 `LOGIN_RATE_LIMIT_ATTEMPTS`, `LOGIN_RATE_LIMIT_WINDOW_SECONDS`, `SCRAPE_RATE_LIMIT_ATTEMPTS`, `SCRAPE_RATE_LIMIT_WINDOW_SECONDS` - rate limits.
 
@@ -115,29 +115,61 @@ The frontend expects `VITE_API_BASE_URL` to point at the backend in local develo
 
 ### Frontend
 
-`VITE_API_BASE_URL` - backend base URL for local development or for the deployed frontend.
+`VITE_API_BASE_URL` - backend base URL for local development or for the Vercel frontend, for example `https://flight-harvester-backend.onrender.com`.
 
 ## Production deployment
 
-### Hostinger VPS Docker Compose
+### Render backend
 
-Deploy the full stack with:
+Deploy the backend as a Docker service using `render.yaml`.
 
-```bash
-docker compose --env-file .env.hostinger -f docker-compose.yml -f docker-compose.hostinger.yml up -d --build
+Set these required Render environment variables:
+
+- `DATABASE_URL` = your Supabase Postgres URL using the `postgresql+asyncpg://` scheme and `sslmode=require`
+- `JWT_SECRET_KEY`
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
+- `SCRAPINGBEE_API_KEY` or `SCRAPINGBEE_API_KEYS`
+- `CORS_ORIGINS` = your Vercel production URL plus any preview URLs you want to allow
+
+Recommended backend values:
+
+- `SCHEDULER_ENABLED=true`
+- `ALLOWED_HOSTS` = your exact backend hostnames, for example `flight-harvester-backend.onrender.com`
+- `SCRAPINGBEE_COUNTRY_CODE=us`
+
+Provider notes:
+
+- ScrapingBee uses JavaScript-rendered KAYAK result pages, so keep `PROVIDER_CONCURRENCY_LIMIT` conservative and validate the live scraper after major KAYAK UI changes.
+- ScrapingBee documents `401` as "No more credit available" and `429` as "Too many concurrent requests", so keep `PROVIDER_CONCURRENCY_LIMIT` conservative and monitor remaining credits.
+- Route groups can now choose both `currency` and `market`, so set the client's preferred market per group rather than relying only on currency.
+
+### Vercel frontend
+
+Deploy the `frontend` directory to Vercel.
+
+Set this required Vercel environment variable:
+
+- `VITE_API_BASE_URL` = your public Render backend URL, for example `https://flight-harvester-backend.onrender.com`
+
+Make sure Vercel uses:
+
+- Framework preset: `Vite`
+- Root directory: `frontend`
+- Build command: `npm run build`
+- Output directory: `dist`
+
+### Supabase database
+
+Create a Supabase Postgres project and copy the connection string into Render as `DATABASE_URL`.
+
+Use this shape:
+
+```text
+postgresql+asyncpg://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres?sslmode=require
 ```
 
-Use `docs/HOSTINGER_VPS.md` as the source of truth for:
-
-- required env vars
-- Docker Compose commands
-- migration commands
-- Cloudflare/domain guidance
-- first-run verification
-
-### Legacy configs
-
-`render.yaml` and `backend/railway.toml` are legacy references only. They are not the maintained production path and should not be treated as current deployment documentation.
+After the backend is deployed, run Alembic migrations against the same database before first client use.
 
 ## Health checks
 
@@ -149,7 +181,7 @@ Use `docs/HOSTINGER_VPS.md` as the source of truth for:
 
 ## Client handoff notes
 
-The API is protected with JWT bearer tokens, login and scrape trigger rate limiting, and redacted structured logging. All authenticated users share the same tracker data and can view, create, edit, and trigger collections. Only user management is admin-only, and route-group delete is admin-only. The scheduler uses a PostgreSQL advisory lock to prevent duplicate collection runs, fully scraped groups are skipped automatically, and multi-city special legs are collected end to end.
+The API is protected with JWT bearer tokens, login and scrape trigger rate limiting, and redacted structured logging. Admins and users have the same tracker authority; only the user-management section is admin-only. The scheduler uses a PostgreSQL advisory lock to prevent duplicate collection runs, fully scraped groups are skipped automatically, and multi-city special legs are collected end to end.
 
 ## Testing
 
@@ -184,16 +216,6 @@ cd ../frontend
 npm run lint
 npm run test:run
 npm run build
-```
-
-Live deploy smoke test:
-
-```bash
-cd frontend
-PLAYWRIGHT_LIVE_BASE_URL=https://your-live-url \
-PLAYWRIGHT_LIVE_EMAIL=admin@example.com \
-PLAYWRIGHT_LIVE_PASSWORD=your-password \
-npm run e2e:live
 ```
 
 ## Troubleshooting

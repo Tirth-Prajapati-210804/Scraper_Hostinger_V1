@@ -17,11 +17,6 @@ export interface RouteGroup {
   currency: string;
   max_stops: number | null;
   same_airline_only: boolean;
-  max_leg_duration_minutes: number | null;
-  consecutive_operational_failures: number;
-  last_operational_failure_at: string | null;
-  last_auto_pause_reason: string | null;
-  last_auto_pause_note: string | null;
   start_date: string | null;
   end_date: string | null;
   created_at: string;

@@ -20,8 +20,6 @@ class RouteGroup(Base):
     # Uniqueness is enforced per-owner via UniqueConstraint(user_id, name) in
     # __table_args__. A column-level unique=True would block User B from reusing
     # a name User A already chose — clearly wrong for a multi-tenant tool.
-    # Name uniqueness still uses the legacy owner metadata, but authenticated
-    # users operate in one shared workspace.
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     destination_label: Mapped[str] = mapped_column(String(100), nullable=False)
     destinations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
@@ -35,24 +33,10 @@ class RouteGroup(Base):
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
     max_stops: Mapped[int | None] = mapped_column(Integer, nullable=True)
     same_airline_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    max_leg_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    consecutive_operational_failures: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-    )
-    last_operational_failure_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-    last_auto_pause_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    last_auto_pause_note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    deferred_retry_state: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     trip_type: Mapped[str] = mapped_column(String(20), nullable=False, default="one_way")
     # Owner of this route group — NULL for legacy records created before multi-user support.
-    # Owner metadata is retained only for compatibility and auditability.
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

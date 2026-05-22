@@ -41,55 +41,8 @@ const EMPTY_FILTERS: Filters = {
 
 const PAGE_SIZE = 100;
 
-function formatDurationMinutes(minutes: number): string {
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-function formatDurationLabel(row: DailyPrice): string {
-  const legDurations = row.itinerary_data?.leg_durations?.filter((value) => Number.isFinite(value) && value > 0);
-  if (legDurations?.length) {
-    return legDurations.map(formatDurationMinutes).join(" / ");
-  }
-
-  const legLabels = row.itinerary_data?.legs
-    ?.map((leg) => {
-      if (leg.duration_minutes && leg.duration_minutes > 0) {
-        return formatDurationMinutes(leg.duration_minutes);
-      }
-      return leg.duration_text?.trim() || "";
-    })
-    .filter(Boolean);
-  if (legLabels?.length) {
-    return legLabels.join(" / ");
-  }
-
-  const explicit = row.itinerary_data?.duration_text?.trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  return row.duration_minutes != null ? formatDurationMinutes(row.duration_minutes) : "";
-}
-
-function formatStopLabel(row: DailyPrice): string {
-  const explicit = row.stop_label?.trim();
-  if (explicit) {
-    return explicit;
-  }
-  if (row.stops == null) {
-    return "";
-  }
-  if (row.stops <= 0) {
-    return "Direct";
-  }
-  if (row.stops === 1) {
-    return "1 Stop";
-  }
-  return `${row.stops} Stops`;
-}
-
 function exportCsv(rows: DailyPrice[]) {
-  const header = "Date,Origin,Destination,Airline,Price,Currency,Stop Result,Duration,Provider\n";
+  const header = "Date,Origin,Destination,Airline,Price,Currency,Stops,Duration(min),Provider\n";
   const lines = rows.map((row) =>
     [
       formatDisplayDate(row.depart_date),
@@ -98,8 +51,8 @@ function exportCsv(rows: DailyPrice[]) {
       row.airline,
       row.price,
       row.currency ?? "",
-      formatStopLabel(row),
-      formatDurationLabel(row),
+      row.stops ?? "",
+      row.duration_minutes ?? "",
       row.provider,
     ].join(","),
   );

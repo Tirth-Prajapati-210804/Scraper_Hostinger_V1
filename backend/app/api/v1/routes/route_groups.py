@@ -30,12 +30,6 @@ _Auth = Annotated[User, Depends(get_current_user)]
 _DB = Annotated[AsyncSession, Depends(get_db_session)]
 
 
-def _require_admin(current_user: _Auth) -> User:
-    if current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    return current_user
-
-
 @router.get("/location-suggestions", response_model=list[LocationSuggestion])
 async def location_suggestions(
     q: str,
@@ -79,7 +73,6 @@ async def update_group(
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(group_id: uuid.UUID, session: _DB, current_user: _Auth) -> None:
-    _require_admin(current_user)
     deleted = await route_group_service.delete(session, group_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Route group not found")

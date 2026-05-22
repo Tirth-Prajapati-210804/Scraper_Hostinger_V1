@@ -24,7 +24,6 @@ class CollectionRun(Base):
     routes_failed: Mapped[int] = mapped_column(Integer, default=0)
     dates_scraped: Mapped[int] = mapped_column(Integer, default=0)
     errors: Mapped[list] = mapped_column(JSONB, default=list)
-    safeguards: Mapped[list] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

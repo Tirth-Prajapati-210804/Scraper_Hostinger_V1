@@ -31,19 +31,6 @@ function formatRunError(error: unknown): string {
   return String(error ?? "Unknown error");
 }
 
-function formatPauseReason(reason: string | null | undefined): string {
-  switch (reason) {
-    case "duration_retry_exhausted":
-      return "Duration fallback exhausted";
-    case "operational_retry_exhausted":
-      return "Deferred operational retry exhausted";
-    case "repeated_operational_failures":
-      return "Repeated operational failures";
-    default:
-      return reason ?? "Automatic safeguard";
-  }
-}
-
 interface CollectionRunsTableProps {
   runs: CollectionRun[];
   isLoading: boolean;
@@ -91,19 +78,11 @@ export function CollectionRunsTable({
             </tr>
           </thead>
           <tbody>
-            {runs.map((run, index) => {
-              const primarySafeguard = run.safeguards?.[0];
-              const hasDetails =
-                (run.errors && run.errors.length > 0) ||
-                primarySafeguard?.auto_pause_triggered ||
-                (primarySafeguard?.deferred_duration_dates ?? 0) > 0 ||
-                (primarySafeguard?.deferred_operational_dates ?? 0) > 0;
-
-              return (
-                <tr
-                  key={run.id}
-                  className={`border-b border-slate-100 ${index % 2 !== 0 ? "bg-slate-50/50" : ""}`}
-                >
+            {runs.map((run, index) => (
+              <tr
+                key={run.id}
+                className={`border-b border-slate-100 ${index % 2 !== 0 ? "bg-slate-50/50" : ""}`}
+              >
                 <td className="px-5 py-3 text-slate-600">
                   {formatRelativeTime(run.started_at)}
                 </td>
@@ -140,7 +119,7 @@ export function CollectionRunsTable({
                   {run.dates_scraped.toLocaleString()}
                 </td>
                 <td className="px-5 py-3">
-                  {hasDetails ? (
+                  {run.errors && run.errors.length > 0 ? (
                     <div>
                       <button
                         onClick={() => setExpandedId(expandedId === run.id ? null : run.id)}
@@ -152,43 +131,13 @@ export function CollectionRunsTable({
                         }`}
                       >
                         <AlertTriangle className="h-3.5 w-3.5" />
-                        {primarySafeguard?.auto_pause_triggered
-                          ? formatPauseReason(primarySafeguard.auto_pause_reason)
-                          : run.status === "partial"
-                            ? "missing fare dates"
-                            : `${run.errors?.length ?? 0} route${(run.errors?.length ?? 0) > 1 ? "s" : ""}`}
+                        {run.status === "partial"
+                          ? "missing fare dates"
+                          : `${run.errors.length} route${run.errors.length > 1 ? "s" : ""}`}
                       </button>
                       {expandedId === run.id ? (
                         <ul className="mt-1 space-y-0.5">
-                          {primarySafeguard ? (
-                            <>
-                              <li className="text-xs text-slate-700">
-                                Outcome: <span className="font-medium">{primarySafeguard.group_run_outcome}</span>
-                              </li>
-                              <li className="text-xs text-slate-700">
-                                Failure streak:{" "}
-                                <span className="font-medium">
-                                  {primarySafeguard.consecutive_operational_failures}
-                                </span>
-                              </li>
-                              {primarySafeguard.deferred_duration_dates ? (
-                                <li className="text-xs text-slate-700">
-                                  Deferred to next duration fallback run:{" "}
-                                  <span className="font-medium">{primarySafeguard.deferred_duration_dates}</span>
-                                </li>
-                              ) : null}
-                              {primarySafeguard.deferred_operational_dates ? (
-                                <li className="text-xs text-slate-700">
-                                  Deferred to next retry run:{" "}
-                                  <span className="font-medium">{primarySafeguard.deferred_operational_dates}</span>
-                                </li>
-                              ) : null}
-                              {primarySafeguard.auto_pause_note ? (
-                                <li className="text-xs text-slate-700">{primarySafeguard.auto_pause_note}</li>
-                              ) : null}
-                            </>
-                          ) : null}
-                          {(run.errors ?? []).map((error, errorIndex) => (
+                          {run.errors.map((error, errorIndex) => (
                             <li
                               key={errorIndex}
                               className={`font-mono text-xs ${
@@ -219,9 +168,8 @@ export function CollectionRunsTable({
                     ) : null}
                   </td>
                 ) : null}
-                </tr>
-              );
-            })}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

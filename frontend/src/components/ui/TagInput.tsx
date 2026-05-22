@@ -199,18 +199,12 @@ export function TagInput({
                 index === highlightedIndex ? "bg-indigo-50" : "hover:bg-slate-50"
               }`}
             >
-                <div>
-                  <div className="text-sm font-medium text-slate-900">{suggestion.label}</div>
-                  <div className="mt-0.5 text-xs text-slate-400">
-                    {suggestion.kind === "airport_code"
-                      ? "Add code"
-                      : suggestion.kind === "airport"
-                        ? "Add airport code"
-                        : suggestion.kind === "country"
-                          ? "Add country airports"
-                          : "Add city airports"}
-                  </div>
+              <div>
+                <div className="text-sm font-medium text-slate-900">{suggestion.label}</div>
+                <div className="mt-0.5 text-xs text-slate-400">
+                  {suggestion.kind === "airport_code" ? "Add code" : "Add resolved airport codes"}
                 </div>
+              </div>
               <div className="text-xs font-medium text-slate-500">
                 {suggestion.codes.slice(0, 3).join(", ")}
                 {suggestion.codes.length > 3 ? ` +${suggestion.codes.length - 3}` : ""}

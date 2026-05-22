@@ -89,7 +89,7 @@ function jsonRoute(data: unknown) {
 
 export async function loginViaUI(page: Page) {
   await page.addInitScript(() => {
-    window.localStorage.setItem("token", "test-token");
+    window.sessionStorage.setItem("token", "test-token");
   });
 }
 

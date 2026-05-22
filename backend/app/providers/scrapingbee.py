@@ -21,8 +21,6 @@ from app.providers.base import (
     ProviderAuthError,
     ProviderQuotaExhaustedError,
     ProviderRateLimitedError,
-    ProviderSearchDiagnostics,
-    ProviderSearchOutcome,
     ProviderResult,
 )
 
@@ -35,7 +33,6 @@ _HOURS_MINUTES_RE = re.compile(r"(?i)(\d+)\s*(?:hours|hour|hrs|hr|h)\s*(?:(\d+)\
 _MINUTES_ONLY_RE = re.compile(r"(?i)(\d+)\s*(?:minutes|minute|mins|min|m)")
 _STOPS_RE = re.compile(r"(?i)\b(\d+)\s+stop(?:s)?\b")
 _CURRENCY_CODE_RE = re.compile(r"\b([A-Z]{3})\b")
-_FLIGHT_COUNT_RE = re.compile(r"(?i)\b(?:(\d+)\s+of\s+)?(\d+)\s+flights\b")
 _KAYAK_HOST_BY_COUNTRY = {
     "au": "www.kayak.com.au",
     "ca": "www.ca.kayak.com",
@@ -126,17 +123,6 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 }
 _FAST_MULTI_CITY_CARD_LIMIT = 30
 _DEEP_MULTI_CITY_CARD_LIMIT = 180
-_DEEP_RESULTS_JS_SCENARIO = {
-    "instructions": [
-        {"wait": 5000},
-        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.35);"},
-        {"wait": 2500},
-        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.7);"},
-        {"wait": 2500},
-        {"evaluate": "window.scrollTo(0, document.body.scrollHeight);"},
-        {"wait": 3000},
-    ]
-}
 
 
 def _clean_text(value: object) -> str:
@@ -244,86 +230,6 @@ class ScrapingBeeProvider:
             },
         }
     }
-    _MULTI_CITY_AI_EXTRACT_RULES = {
-        "offers": {
-            "description": "visible KAYAK multi-city flight offers on the page",
-            "type": "list",
-            "output": {
-                "price": {
-                    "description": "total itinerary price as a number without currency symbols",
-                    "type": "number",
-                },
-                "price_text": {
-                    "description": "exact displayed itinerary price text including currency symbol or code",
-                    "type": "string",
-                },
-                "airline": {
-                    "description": "overall airline label shown for the itinerary",
-                    "type": "string",
-                },
-                "outbound_airline": {
-                    "description": "airline shown for the outbound leg",
-                    "type": "string",
-                },
-                "return_airline": {
-                    "description": "airline shown for the return leg",
-                    "type": "string",
-                },
-                "outbound_duration_text": {
-                    "description": "displayed outbound leg duration such as 13h 40m",
-                    "type": "string",
-                },
-                "return_duration_text": {
-                    "description": "displayed return leg duration such as 10h 19m",
-                    "type": "string",
-                },
-                "outbound_stops": {
-                    "description": "number of stops for the outbound leg as an integer where direct is 0",
-                    "type": "number",
-                },
-                "return_stops": {
-                    "description": "number of stops for the return leg as an integer where direct is 0",
-                    "type": "number",
-                },
-                "outbound_stops_text": {
-                    "description": "displayed outbound stops text such as 1 stop or 2 stops",
-                    "type": "string",
-                },
-                "return_stops_text": {
-                    "description": "displayed return stops text such as 1 stop or 2 stops",
-                    "type": "string",
-                },
-                "outbound_time_text": {
-                    "description": "displayed outbound time range text",
-                    "type": "string",
-                },
-                "return_time_text": {
-                    "description": "displayed return time range text",
-                    "type": "string",
-                },
-                "outbound_route_text": {
-                    "description": "displayed outbound route text with airports or cities",
-                    "type": "string",
-                },
-                "return_route_text": {
-                    "description": "displayed return route text with airports or cities",
-                    "type": "string",
-                },
-                "cabin": {
-                    "description": "displayed cabin or fare family text",
-                    "type": "string",
-                },
-                "link": {
-                    "description": "deal or booking link for the itinerary if visible",
-                    "type": "string",
-                },
-                "summary": {
-                    "description": "short itinerary summary including both legs and visible details",
-                    "type": "string",
-                },
-            },
-        }
-    }
 
     _JS_SCENARIO = {
         "instructions": [
@@ -371,18 +277,6 @@ class ScrapingBeeProvider:
         self._min_delay_seconds = max(0.0, min_delay_seconds)
         self._quota_blocked_until = 0.0
         self._quota_cooldown_seconds = quota_cooldown_seconds
-        self._last_multi_city_capture = self._empty_multi_city_capture_state()
-
-    @staticmethod
-    def _empty_multi_city_capture_state() -> dict[str, object]:
-        return {
-            "summary_prices": {},
-            "card_count": 0,
-            "captured_count": 0,
-            "captured_sorts": [],
-            "capture_incomplete": False,
-            "count_text": "",
-        }
 
     def is_configured(self) -> bool:
         return bool(self._api_key and self._base_url)
@@ -615,15 +509,12 @@ class ScrapingBeeProvider:
         *,
         js_scenario: dict[str, object],
         country_code: str | None = None,
-        block_resources: bool = True,
-        wait_ms: int = 2500,
     ) -> dict:
         params = self._base_request_params(target_url, country_code=country_code)
         params["json_response"] = "True"
         params["js_scenario"] = json.dumps(js_scenario, separators=(",", ":"))
-        if block_resources:
-            params["block_resources"] = "True"
-        params["wait"] = wait_ms
+        params["block_resources"] = "True"
+        params["wait"] = 2500
 
         async with self._semaphore:
             await self._wait_for_slot()
@@ -772,52 +663,55 @@ class ScrapingBeeProvider:
             "fh.clean=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
             "fh.visible=el=>{if(!el)return false;const r=el.getBoundingClientRect();"
             "return r.width>0&&r.height>0&&window.getComputedStyle(el).visibility!=='hidden';};"
-            "fh.findSort=label=>Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
-            ".filter(el=>fh.visible(el)).find(el=>new RegExp('^'+label+'(?:\\\\s|$)').test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()));"
-            "fh.clickSort=label=>{const pick=fh.findSort(label);"
-            "if(!pick)return false;"
-            "const target=pick.closest('button,a,[role=\"button\"]')||pick;"
+            "fh.clickCheapest=()=>{"
+            "const pick=Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
+            ".filter(el=>fh.visible(el)&&/^cheapest(?:\\s|$)/.test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()));"
+            "if(!pick.length)return false;"
+            "const target=pick[0].closest('button,a,[role=\"button\"]')||pick[0];"
             "target.click();"
-            "return true;};"
-            "fh.countText=()=>{"
+            "return true;"
+            "};"
+            "fh.settle=()=>{"
+            "const topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text'))"
+            ".map(node=>fh.clean(node.innerText)).filter(Boolean).slice(0,4).join('|');"
             "const countNode=Array.from(document.querySelectorAll('body *')).find(el=>{"
             "if(!fh.visible(el))return false;"
             "const text=fh.clean(el.innerText);"
             "return /\\b\\d+\\s+of\\s+\\d+\\s+flights\\b/i.test(text)||/\\b\\d+\\s+flights\\b/i.test(text);"
             "});"
-            "return fh.clean(countNode?.innerText);};"
-            "fh.summary=()=>{"
-            "const tabText=label=>(fh.findSort(label)?.innerText||'').trim();"
-            "return {cheapest:tabText('cheapest'),best:tabText('best'),quickest:tabText('quickest')};"
+            "const countText=fh.clean(countNode?.innerText);"
+            "const summaryText=Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
+            ".filter(fh.visible)"
+            ".map(el=>fh.clean(el.innerText||el.getAttribute('aria-label')))"
+            ".filter(text=>/^cheapest(?:\\s|$)|^best(?:\\s|$)|^quickest(?:\\s|$)/i.test(text))"
+            ".slice(0,3).join('|');"
+            "const cardCount=document.querySelectorAll('.nrc6-price-section .e2GB-price-text').length;"
+            "const cheapestBadgeSeen=Array.from(document.querySelectorAll('span,div,button'))"
+            ".filter(fh.visible).some(node=>/^cheapest$/i.test(fh.clean(node.innerText)));"
+            "const key=[countText,summaryText,topPrices,cardCount,cheapestBadgeSeen?'1':'0'].join('||');"
+            "const state=window.__fhSettleState||{key:'',hits:0};"
+            "if(key&&key===state.key){state.hits+=1;}else{state.key=key;state.hits=0;}"
+            "window.__fhSettleState=state;"
+            "return !!summaryText&&!!topPrices&&cardCount>0&&state.hits>=2;"
             "};"
-            "fh.priceRe=/(?:CA?\\$|US\\$|A\\$|NZ\\$|S\\$|HK\\$|€|£|¥|₹|CHF|\\$)\\s?\\d[\\d,]*/i;"
-            "fh.timeHits=text=>(fh.clean(text).match(/\\b\\d{1,2}:\\d{2}\\s*[ap]m\\b/gi)||[]).length;"
-            "fh.legNodes=card=>Array.from(card.querySelectorAll('ol.hJSA-list>li,ol li,[role=\"listitem\"],li')).filter(li=>fh.visible(li)&&fh.clean(li.innerText)&&fh.timeHits(li.innerText)>=2).slice(0,2);"
-            "fh.priceText=card=>fh.clean(card.querySelector('.nrc6-price-section .e2GB-price-text,[class*=\"price-text\"],[data-testid*=\"price\"]')?.innerText)||fh.clean((fh.clean(card.innerText).match(fh.priceRe)||[])[0]);"
-            "fh.findCardRoot=node=>{"
-            "for(let depth=0;node&&depth<8;depth+=1,node=node.parentElement){"
-            "const text=fh.clean(node.innerText);"
-            "if(!text)continue;"
-            "if(fh.priceText(node)&&(node.querySelectorAll('ol.hJSA-list > li').length>=2||fh.legNodes(node).length>=2||fh.timeHits(text)>=4))return node;"
-            "}"
-            "return null;};"
-            f"fh.captureCards=()=>{{const cardLimit={card_limit};"
-            "const isCard=node=>!!node&&fh.visible(node)&&!!fh.priceText(node)&&(node.querySelectorAll('ol.hJSA-list > li').length>=2||fh.legNodes(node).length>=2||fh.timeHits(node.innerText)>=4);"
-            "const selectorMatches=Array.from(document.querySelectorAll('div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"],article,section')).filter(isCard);"
-            "const buttonMatches=Array.from(document.querySelectorAll('button,a')).filter(el=>fh.visible(el)&&/\\bselect\\b/i.test(fh.clean(el.innerText||el.getAttribute('aria-label')))).map(fh.findCardRoot).filter(isCard);"
-            "const raw=Array.from(new Set(selectorMatches.concat(buttonMatches)));"
+            f"fh.extract=()=>{{const cardLimit={card_limit};"
+            "const isCard=node=>!!node&&!!node.querySelector('.nrc6-price-section .e2GB-price-text')"
+            "&&node.querySelectorAll('ol.hJSA-list > li').length>=2;"
+            "const raw=Array.from(document.querySelectorAll('div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]')).filter(isCard);"
             "const roots=raw.filter((card,index)=>!raw.some((other,otherIndex)=>otherIndex!==index&&card.contains(other)&&isCard(other)));"
-            "return {"
+            "const tabText=label=>(Array.from(document.querySelectorAll('button,a,[role=\"button\"],div,span'))"
+            ".find(el=>new RegExp('^'+label+'(?:\\\\s|$)').test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()))?.innerText||'').trim();"
+            "return JSON.stringify({"
             "card_count:roots.length,"
             "captured_count:roots.slice(0,cardLimit).length,"
             "cards:roots.slice(0,cardLimit).map(card=>({"
             "text:fh.clean(card.innerText),"
-            "price_text:fh.priceText(card),"
+            "price_text:fh.clean(card.querySelector('.nrc6-price-section .e2GB-price-text')?.innerText),"
             "booking_href:fh.clean(card.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),"
             "cabin:fh.clean(card.querySelector('.nrc6-price-section .Hy6H')?.innerText),"
             "airline_text:fh.clean(card.querySelector('.J0g6-operator-text')?.innerText),"
             "badges:Array.from(card.querySelectorAll('span,div,button')).map(node=>fh.clean(node.innerText)).filter(text=>/^(best|cheapest|quickest)$/i.test(text)).slice(0,3),"
-            "legs:fh.legNodes(card).map(li=>({"
+            "legs:Array.from(card.querySelectorAll('ol.hJSA-list > li')).map(li=>({"
             "text:fh.clean(li.innerText),"
             "airline:fh.clean(li.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),"
             "time_text:fh.clean(li.querySelector('.VY2U .vmXl')?.innerText),"
@@ -826,80 +720,64 @@ class ScrapingBeeProvider:
             "layover_text:fh.clean(li.querySelector('.JWEO .c_cgF')?.innerText),"
             "duration_text:fh.clean(li.querySelector('.xdW8 .vmXl')?.innerText)"
             "})).filter(leg=>leg.text)"
-            "}))};};"
-            "fh.captureCurrent=label=>{fh.views=fh.views||{};fh.views[label]=fh.captureCards();return true;};"
-            "fh.finalize=()=>JSON.stringify({count_text:fh.countText(),summary:fh.summary(),views:fh.views||{}});"
+            "})),"
+            "summary:{cheapest:tabText('cheapest'),best:tabText('best')}"
+            "});};"
             "return true;"
             "})()"
         )
-        click_sort = lambda label: f"window.__fhResults?.clickSort?.('{label}') ?? false"
-        capture_sort = lambda label: f"window.__fhResults?.captureCurrent?.('{label}') ?? false"
-        finalize_script = "window.__fhResults?.finalize?.() ?? '{}'"
+        click_cheapest_script = "window.__fhResults?.clickCheapest?.() ?? false"
+        settle_script = "window.__fhResults?.settle?.() ?? false"
+        script = "window.__fhResults?.extract?.() ?? '{}'"
         if not deep:
             return {
                 "strict": False,
                 "instructions": [
                     {"evaluate": helper_script},
-                    {"wait": 4_500},
-                    {"evaluate": click_sort("cheapest")},
-                    {"wait": 900},
-                    {"evaluate": "window.scrollTo(0, 0); true;"},
-                    {"wait": 250},
-                    {"evaluate": "window.scrollBy(0, 1400); true;"},
-                    {"wait": 500},
-                    {"evaluate": "window.scrollBy(0, 2600); true;"},
-                    {"wait": 600},
-                    {"evaluate": capture_sort("cheapest")},
-                    {"evaluate": click_sort("best")},
-                    {"wait": 900},
-                    {"evaluate": "window.scrollTo(0, 0); true;"},
-                    {"wait": 250},
-                    {"evaluate": "window.scrollBy(0, 1600); true;"},
-                    {"wait": 500},
-                    {"evaluate": capture_sort("best")},
-                    {"evaluate": click_sort("quickest")},
-                    {"wait": 900},
-                    {"evaluate": "window.scrollTo(0, 0); true;"},
-                    {"wait": 250},
-                    {"evaluate": "window.scrollBy(0, 1600); true;"},
-                    {"wait": 500},
-                    {"evaluate": capture_sort("quickest")},
-                    {"evaluate": finalize_script},
+                    {"wait": 5_000},
+                    {"evaluate": click_cheapest_script},
+                    {"wait": 1_500},
+                    {"evaluate": click_cheapest_script},
+                    {"evaluate": "window.scrollBy(0, 1200);"},
+                    {"wait": 1_000},
+                    {"evaluate": settle_script},
+                    {"wait": 1_200},
+                    {"evaluate": settle_script},
+                    {"wait": 1_200},
+                    {"evaluate": settle_script},
+                    {"wait": 1_200},
+                    {"evaluate": settle_script},
+                    {"wait": 1_200},
+                    {"evaluate": settle_script},
+                    {"evaluate": script},
                 ],
             }
         return {
             "strict": False,
             "instructions": [
                 {"evaluate": helper_script},
-                {"wait": 5_500},
-                {"evaluate": click_sort("cheapest")},
-                {"wait": 1_100},
-                {"evaluate": "window.scrollTo(0, 0); true;"},
-                {"wait": 250},
-                {"evaluate": "window.scrollBy(0, 1600); true;"},
-                {"wait": 600},
-                {"evaluate": "window.scrollBy(0, 3200); true;"},
-                {"wait": 700},
-                {"evaluate": capture_sort("cheapest")},
-                {"evaluate": click_sort("best")},
-                {"wait": 1_100},
-                {"evaluate": "window.scrollTo(0, 0); true;"},
-                {"wait": 250},
-                {"evaluate": "window.scrollBy(0, 1800); true;"},
-                {"wait": 600},
-                {"evaluate": "window.scrollBy(0, 3000); true;"},
-                {"wait": 700},
-                {"evaluate": capture_sort("best")},
-                {"evaluate": click_sort("quickest")},
-                {"wait": 1_100},
-                {"evaluate": "window.scrollTo(0, 0); true;"},
-                {"wait": 250},
-                {"evaluate": "window.scrollBy(0, 1800); true;"},
-                {"wait": 600},
-                {"evaluate": "window.scrollBy(0, 3000); true;"},
-                {"wait": 700},
-                {"evaluate": capture_sort("quickest")},
-                {"evaluate": finalize_script},
+                {"wait": 6_500},
+                {"evaluate": click_cheapest_script},
+                {"wait": 1_500},
+                {"evaluate": "window.scrollBy(0, 1200);"},
+                {"wait": 1_000},
+                {"evaluate": "window.scrollBy(0, 1800);"},
+                {"wait": 1_000},
+                {"evaluate": click_cheapest_script},
+                {"evaluate": "window.scrollBy(0, 2400);"},
+                {"wait": 1_000},
+                {"evaluate": "window.scrollBy(0, 2800);"},
+                {"wait": 1_000},
+                {"evaluate": "window.scrollBy(0, 3200);"},
+                {"wait": 1_000},
+                {"evaluate": settle_script},
+                {"wait": 1_200},
+                {"evaluate": settle_script},
+                {"wait": 1_200},
+                {"evaluate": settle_script},
+                {"wait": 1_200},
+                {"evaluate": settle_script},
+                {"evaluate": script},
             ],
         }
 
@@ -910,144 +788,39 @@ class ScrapingBeeProvider:
         currency: str,
         deep_link: str,
         market_country_code: str,
-    ) -> dict[str, object]:
+    ) -> tuple[list[ProviderResult], int, int]:
         cards_payload = self._extract_rendered_cards_payload(rendered)
         if cards_payload is None:
-            return {
-                "results": [],
-                "card_count": 0,
-                "captured_count": 0,
-                "captured_sorts": [],
-                "count_text": "",
-            }
+            return [], 0, 0
 
-        max_card_count = 0
-        total_captured_count = 0
-        captured_sorts: list[str] = []
-        merged_results: dict[tuple[object, ...], ProviderResult] = {}
+        card_count = 0
+        captured_count = 0
+        raw_count = cards_payload.get("card_count")
+        if isinstance(raw_count, int) and raw_count >= 0:
+            card_count = raw_count
+        raw_captured_count = cards_payload.get("captured_count")
+        if isinstance(raw_captured_count, int) and raw_captured_count >= 0:
+            captured_count = raw_captured_count
 
-        for captured_sort, payload in self._multi_city_card_views(cards_payload).items():
-            raw_count = payload.get("card_count")
-            if isinstance(raw_count, int) and raw_count >= 0:
-                max_card_count = max(max_card_count, raw_count)
-            raw_captured_count = payload.get("captured_count")
-            if isinstance(raw_captured_count, int) and raw_captured_count >= 0:
-                total_captured_count += raw_captured_count
-                if raw_captured_count > 0:
-                    captured_sorts.append(captured_sort)
-
-            view_results = await asyncio.to_thread(
-                self._normalize_multi_city_cards,
-                payload,
-                currency=currency,
-                deep_link=deep_link,
-                market_country_code=market_country_code,
-                captured_sort=captured_sort,
-            )
-
-            for result in view_results:
-                fingerprint = self._multi_city_result_fingerprint(result)
-                existing = merged_results.get(fingerprint)
-                if existing is None:
-                    merged_results[fingerprint] = result
-                else:
-                    merged_results[fingerprint] = self._merge_multi_city_results(existing, result)
-
-        return {
-            "results": sorted(merged_results.values(), key=lambda item: item.price),
-            "card_count": max_card_count,
-            "captured_count": total_captured_count,
-            "captured_sorts": list(dict.fromkeys(captured_sorts)),
-            "count_text": _clean_text(cards_payload.get("count_text")),
-        }
-
+        results = await asyncio.to_thread(
+            self._normalize_multi_city_cards,
+            cards_payload,
+            currency=currency,
+            deep_link=deep_link,
+            market_country_code=market_country_code,
+        )
+        return results, card_count, captured_count
 
     def _filter_results_by_stops(
         self,
         results: list[ProviderResult],
         max_stops: int | None,
     ) -> list[ProviderResult]:
-        limit = self._allowed_leg_stop_limit(max_stops)
-        if limit is None:
-            return results
-
-        return [
-            result
-            for result in results
-            if all(stops <= limit for stops in self._result_leg_stops(result))
-        ]
-
-    def _allowed_leg_stop_limit(self, max_stops: int | None) -> int | None:
-        if max_stops is None:
-            return None
-        if max_stops <= 0:
-            return 0
-        if max_stops == 1:
-            return 1
-        return 2
-
-    def _diagnostics_for_results(
-        self,
-        *,
-        results: list[ProviderResult],
-        requested_market: str | None,
-        requested_currency: str,
-        result_reason: str | None = None,
-        visible_results_found: bool = False,
-        summary_price_found: bool = False,
-        used_strong_retry: bool = False,
-        capture_incomplete: bool = False,
-        rendered_card_count: int = 0,
-        rendered_captured_count: int = 0,
-        captured_sorts: list[str] | None = None,
-    ) -> ProviderSearchDiagnostics:
-        detected_currencies = sorted(
-            {
-                _clean_text(result.currency).upper()
-                for result in results
-                if _clean_text(result.currency)
-            }
-        )
-        return ProviderSearchDiagnostics(
-            result_reason=result_reason,
-            raw_offers_found=len(results),
-            eligible_offers_found=len(results),
-            visible_results_found=visible_results_found,
-            summary_price_found=summary_price_found,
-            requested_market=requested_market,
-            requested_currency=requested_currency,
-            detected_currencies=detected_currencies,
-            used_strong_retry=used_strong_retry,
-            capture_incomplete=capture_incomplete,
-            rendered_card_count=rendered_card_count,
-            rendered_captured_count=rendered_captured_count,
-            captured_sorts=list(captured_sorts or []),
-        )
-
-    def _stop_label_for_count(self, stops: int) -> str:
-        if stops <= 0:
-            return "Direct"
-        if stops == 1:
-            return "1 Stop"
-        return f"{stops} Stops"
-
-    def _stop_label_from_leg_stops(self, leg_stops: list[int]) -> str:
-        if not leg_stops:
-            return ""
-        return " / ".join(self._stop_label_for_count(stops) for stops in leg_stops)
-
-    def _result_leg_stops(self, result: ProviderResult) -> list[int]:
-        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
-        leg_stops = raw_data.get("leg_stops")
-        if isinstance(leg_stops, list):
-            normalized = [
-                int(value)
-                for value in leg_stops
-                if isinstance(value, (int, float))
-            ]
-            if normalized:
-                return normalized
-        return [result.stops]
+        # Temporary client requirement: stop mode should not exclude the cheapest
+        # valid flight. Keep the argument for API compatibility, but let the
+        # collector apply only airline/transport validity filters.
+        del max_stops
+        return results
 
     def _extract_rendered_cards_payload(self, rendered: dict) -> dict[str, object] | None:
         evaluate_results = rendered.get("evaluate_results")
@@ -1060,10 +833,7 @@ class ScrapingBeeProvider:
                 payload = json.loads(item)
             except json.JSONDecodeError:
                 continue
-            if isinstance(payload, dict) and (
-                isinstance(payload.get("cards"), list)
-                or isinstance(payload.get("views"), dict)
-            ):
+            if isinstance(payload, dict) and isinstance(payload.get("cards"), list):
                 return payload
         return None
 
@@ -1074,7 +844,7 @@ class ScrapingBeeProvider:
         summary = payload.get("summary")
         if not isinstance(summary, dict):
             return False
-        return any(_clean_text(summary.get(key)) for key in ("cheapest", "best", "quickest"))
+        return any(_clean_text(summary.get(key)) for key in ("cheapest", "best"))
 
     def _multi_city_summary_prices(self, rendered: dict) -> dict[str, str]:
         payload = self._extract_rendered_cards_payload(rendered)
@@ -1089,149 +859,6 @@ class ScrapingBeeProvider:
             if value:
                 prices[key] = value
         return prices
-
-    def _summary_lowest_price(self, summary_prices: dict[str, str]) -> float | None:
-        prices = [
-            price
-            for price in (
-                self._parse_price(value)
-                for value in summary_prices.values()
-            )
-            if price is not None
-        ]
-        return min(prices) if prices else None
-
-    def _multi_city_card_views(self, payload: dict[str, object]) -> dict[str, dict[str, object]]:
-        raw_views = payload.get("views")
-        if isinstance(raw_views, dict):
-            views: dict[str, dict[str, object]] = {}
-            for label in ("cheapest", "best", "quickest"):
-                value = raw_views.get(label)
-                if isinstance(value, dict):
-                    views[label] = value
-            if views:
-                return views
-
-        if isinstance(payload.get("cards"), list):
-            return {"cheapest": payload}
-
-        return {}
-
-    def _multi_city_result_fingerprint(self, result: ProviderResult) -> tuple[object, ...]:
-        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
-        legs = raw_data.get("legs")
-        normalized_legs = legs if isinstance(legs, list) else []
-        leg_fingerprint: list[tuple[str, str, str, str, str]] = []
-        for leg in normalized_legs[:2]:
-            if not isinstance(leg, dict):
-                continue
-            leg_fingerprint.append(
-                (
-                    _clean_text(leg.get("airline")).lower(),
-                    _clean_text(leg.get("time_text")).lower(),
-                    _clean_text(leg.get("route_text")).lower(),
-                    _clean_text(leg.get("duration_text")).lower(),
-                    _clean_text(leg.get("stops_text")).lower(),
-                )
-            )
-
-        if not leg_fingerprint:
-            leg_fingerprint.append(
-                (
-                    _clean_text(result.airline).lower(),
-                    "",
-                    "",
-                    _clean_text(raw_data.get("duration_text")).lower(),
-                    "",
-                )
-            )
-
-        return (
-            round(result.price, 2),
-            _clean_text(result.currency).upper(),
-            tuple(leg_fingerprint),
-        )
-
-    def _merge_multi_city_results(
-        self,
-        existing: ProviderResult,
-        incoming: ProviderResult,
-    ) -> ProviderResult:
-        existing_raw = existing.raw_data if isinstance(existing.raw_data, dict) else {}
-        incoming_raw = incoming.raw_data if isinstance(incoming.raw_data, dict) else {}
-
-        existing_sorts = [
-            _clean_text(value).lower()
-            for value in (existing_raw.get("captured_sorts") or [])
-            if _clean_text(value)
-        ]
-        incoming_sorts = [
-            _clean_text(value).lower()
-            for value in (incoming_raw.get("captured_sorts") or [])
-            if _clean_text(value)
-        ]
-        merged_sorts = list(dict.fromkeys(existing_sorts + incoming_sorts))
-        if merged_sorts:
-            existing_raw["captured_sorts"] = merged_sorts
-
-        existing_badges = [
-            _clean_text(value)
-            for value in (existing_raw.get("badges") or [])
-            if _clean_text(value)
-        ]
-        incoming_badges = [
-            _clean_text(value)
-            for value in (incoming_raw.get("badges") or [])
-            if _clean_text(value)
-        ]
-        merged_badges = list(dict.fromkeys(existing_badges + incoming_badges))
-        if merged_badges:
-            existing_raw["badges"] = merged_badges
-
-        if (
-            incoming.deep_link
-            and "/book/" in incoming.deep_link
-            and (not existing.deep_link or "/book/" not in existing.deep_link)
-        ):
-            existing.deep_link = incoming.deep_link
-
-        if not _clean_text(existing_raw.get("price_text")) and _clean_text(incoming_raw.get("price_text")):
-            existing_raw["price_text"] = incoming_raw.get("price_text")
-
-        if not _clean_text(existing_raw.get("summary")) and _clean_text(incoming_raw.get("summary")):
-            existing_raw["summary"] = incoming_raw.get("summary")
-
-        existing.raw_data = existing_raw
-        return existing
-
-    def _parse_visible_flight_count(self, count_text: object) -> int | None:
-        text = _clean_text(count_text)
-        if not text:
-            return None
-        match = _FLIGHT_COUNT_RE.search(text.replace(",", ""))
-        if not match:
-            return None
-        return int(match.group(2))
-
-    def _is_multi_city_capture_incomplete(
-        self,
-        *,
-        summary_prices: dict[str, str],
-        captured_count: int,
-        count_text: str,
-        captured_sorts: list[str],
-    ) -> bool:
-        total_flights = self._parse_visible_flight_count(count_text)
-        if captured_count <= 0:
-            return bool(summary_prices or total_flights)
-
-        if total_flights is not None and total_flights >= max(captured_count * 8, 80) and captured_count < 20:
-            return True
-
-        if summary_prices and len(captured_sorts) < 2 and captured_count < 12:
-            return True
-
-        return False
 
     def _results_include_badge(
         self,
@@ -1261,7 +888,6 @@ class ScrapingBeeProvider:
         summary_prices: dict[str, str],
         card_count: int,
         captured_count: int,
-        captured_sorts: list[str],
         raw_results: list[ProviderResult],
         eligible_results: list[ProviderResult],
         max_stops: int | None,
@@ -1307,7 +933,6 @@ class ScrapingBeeProvider:
             summary_prices=summary_prices,
             card_count=card_count,
             captured_count=captured_count,
-            captured_sorts=captured_sorts,
             raw_results_count=len(raw_results),
             eligible_results_count=len(eligible_results),
             raw_preview=_preview(raw_results),
@@ -1409,7 +1034,6 @@ class ScrapingBeeProvider:
         currency: str,
         deep_link: str,
         market_country_code: str,
-        captured_sort: str | None = None,
     ) -> list[ProviderResult]:
         raw_cards = payload.get("cards")
         if not isinstance(raw_cards, list):
@@ -1430,9 +1054,8 @@ class ScrapingBeeProvider:
 
             normalized_legs: list[dict[str, object]] = []
             unique_airlines: list[str] = []
-            leg_stop_counts: list[int] = []
-            leg_durations: list[int] = []
             total_duration = 0
+            total_stops = 0
             for leg in legs[:2]:
                 if not isinstance(leg, dict):
                     continue
@@ -1443,14 +1066,11 @@ class ScrapingBeeProvider:
                 layover_text = _clean_text(leg.get("layover_text"))
                 stops_text = _clean_text(leg.get("stops_text"))
                 route_text = _clean_text(leg.get("route_text"))
-                leg_duration = self._parse_duration_minutes(
+                total_duration += self._parse_duration_minutes(
                     "",
                     duration_text,
                 )
-                leg_durations.append(leg_duration)
-                total_duration += leg_duration
-                leg_stops = self._parse_stops(f"{stops_text} {layover_text}".strip())
-                leg_stop_counts.append(leg_stops)
+                total_stops += self._parse_stops(f"{stops_text} {layover_text}".strip())
                 normalized_legs.append(
                     {
                         "airline": airline,
@@ -1459,15 +1079,12 @@ class ScrapingBeeProvider:
                         "stops_text": stops_text,
                         "layover_text": layover_text,
                         "duration_text": duration_text,
-                        "duration_minutes": leg_duration,
                         "text": _clean_text(leg.get("text")),
                     }
                 )
 
             if len(normalized_legs) < 2:
                 continue
-
-            total_stops = sum(leg_stop_counts)
 
             airline_text = _clean_text(card.get("airline_text"))
             display_airline = airline_text or " / ".join(unique_airlines) or "Unknown airline"
@@ -1522,140 +1139,12 @@ class ScrapingBeeProvider:
                         "badges": badges,
                         "legs": normalized_legs,
                         "airline_names": unique_airlines,
-                        "leg_stops": leg_stop_counts,
-                        "leg_durations": leg_durations,
-                        "stop_result_label": self._stop_label_from_leg_stops(leg_stop_counts),
+                        "leg_stops": [
+                            self._parse_stops(f"{leg.get('stops_text', '')} {leg.get('layover_text', '')}".strip())
+                            for leg in normalized_legs
+                        ],
                         "outbound_airline": normalized_legs[0].get("airline") or "",
                         "return_airline": normalized_legs[1].get("airline") or "",
-                        "captured_sorts": [captured_sort] if captured_sort else [],
-                    },
-                )
-            )
-
-        return sorted(results, key=lambda item: item.price)
-
-    def _normalize_multi_city_ai_offers(
-        self,
-        payload: dict,
-        *,
-        currency: str,
-        deep_link: str,
-        market_country_code: str,
-    ) -> list[ProviderResult]:
-        offers = payload.get("offers")
-        if not isinstance(offers, list):
-            return []
-
-        results: list[ProviderResult] = []
-        for offer in offers:
-            if not isinstance(offer, dict):
-                continue
-
-            price = self._parse_price(offer.get("price")) or self._parse_price(offer.get("price_text"))
-            if price is None:
-                continue
-
-            outbound_airline = _clean_text(offer.get("outbound_airline"))
-            return_airline = _clean_text(offer.get("return_airline"))
-            airline = _clean_text(offer.get("airline"))
-            if not outbound_airline and airline:
-                outbound_airline = airline
-            if not return_airline and airline:
-                return_airline = airline
-
-            outbound_duration_text = _clean_text(offer.get("outbound_duration_text"))
-            return_duration_text = _clean_text(offer.get("return_duration_text"))
-            outbound_duration = self._parse_duration_minutes("", outbound_duration_text)
-            return_duration = self._parse_duration_minutes("", return_duration_text)
-            if outbound_duration <= 0 or return_duration <= 0:
-                continue
-
-            outbound_stops_text = _clean_text(offer.get("outbound_stops_text"))
-            return_stops_text = _clean_text(offer.get("return_stops_text"))
-            outbound_stops = self._parse_stops(outbound_stops_text, offer.get("outbound_stops"))
-            return_stops = self._parse_stops(return_stops_text, offer.get("return_stops"))
-
-            booking_href = _clean_text(offer.get("link"))
-            normalized_link = urljoin(deep_link, booking_href) if booking_href else deep_link
-            summary = _clean_text(offer.get("summary"))
-            price_text = _clean_text(offer.get("price_text"))
-            actual_currency = self._detect_display_currency(
-                price_text or summary,
-                requested_currency=currency,
-                market_country_code=market_country_code,
-            )
-
-            legs = [
-                {
-                    "airline": outbound_airline,
-                    "time_text": _clean_text(offer.get("outbound_time_text")),
-                    "route_text": _clean_text(offer.get("outbound_route_text")),
-                    "stops_text": outbound_stops_text or self._stop_label_for_count(outbound_stops),
-                    "layover_text": "",
-                    "duration_text": outbound_duration_text,
-                    "duration_minutes": outbound_duration,
-                    "text": " ".join(
-                        part
-                        for part in [
-                            _clean_text(offer.get("outbound_time_text")),
-                            _clean_text(offer.get("outbound_route_text")),
-                            outbound_stops_text or self._stop_label_for_count(outbound_stops),
-                            outbound_duration_text,
-                        ]
-                        if part
-                    ),
-                },
-                {
-                    "airline": return_airline,
-                    "time_text": _clean_text(offer.get("return_time_text")),
-                    "route_text": _clean_text(offer.get("return_route_text")),
-                    "stops_text": return_stops_text or self._stop_label_for_count(return_stops),
-                    "layover_text": "",
-                    "duration_text": return_duration_text,
-                    "duration_minutes": return_duration,
-                    "text": " ".join(
-                        part
-                        for part in [
-                            _clean_text(offer.get("return_time_text")),
-                            _clean_text(offer.get("return_route_text")),
-                            return_stops_text or self._stop_label_for_count(return_stops),
-                            return_duration_text,
-                        ]
-                        if part
-                    ),
-                },
-            ]
-
-            airline_names = [
-                name
-                for name in [outbound_airline, return_airline]
-                if name
-            ]
-            display_airline = airline or " / ".join(dict.fromkeys(airline_names)) or "Unknown airline"
-
-            results.append(
-                ProviderResult(
-                    price=price,
-                    currency=actual_currency,
-                    airline=display_airline,
-                    deep_link=normalized_link,
-                    provider=self.name,
-                    duration_minutes=outbound_duration + return_duration,
-                    stops=outbound_stops + return_stops,
-                    raw_data={
-                        "trip_type": "multi_city",
-                        "price_text": price_text,
-                        "summary": summary,
-                        "cabin": _clean_text(offer.get("cabin")),
-                        "badges": ["AI Extract"],
-                        "legs": legs,
-                        "airline_names": airline_names,
-                        "leg_stops": [outbound_stops, return_stops],
-                        "leg_durations": [outbound_duration, return_duration],
-                        "stop_result_label": self._stop_label_from_leg_stops([outbound_stops, return_stops]),
-                        "outbound_airline": outbound_airline,
-                        "return_airline": return_airline,
-                        "captured_sorts": ["ai_extract"],
                     },
                 )
             )
@@ -1704,21 +1193,13 @@ class ScrapingBeeProvider:
                 continue
 
             airline_parts = [part.strip() for part in airline.split("/") if part.strip()]
-            stop_count = self._parse_stops(summary, offer.get("stops"))
-            duration_minutes = self._parse_duration_minutes(
-                summary,
-                duration_text,
-                offer.get("duration"),
-            )
             raw_data = {
                 "trip_type": trip_type,
                 "price_text": _clean_text(offer.get("price_text")),
                 "duration_text": duration_text,
                 "summary": summary,
                 "airline_names": airline_parts or ([airline] if airline else []),
-                "leg_stops": [stop_count],
-                "leg_durations": [duration_minutes],
-                "stop_result_label": self._stop_label_for_count(stop_count),
+                "leg_stops": [self._parse_stops(summary, offer.get("stops"))],
             }
             if trip_type != "one_way":
                 outbound_airline = airline_parts[0] if airline_parts else airline
@@ -1733,8 +1214,12 @@ class ScrapingBeeProvider:
                     airline=airline,
                     deep_link=normalized_link,
                     provider=self.name,
-                    duration_minutes=duration_minutes,
-                    stops=stop_count,
+                    duration_minutes=self._parse_duration_minutes(
+                        summary,
+                        duration_text,
+                        offer.get("duration"),
+                    ),
+                    stops=self._parse_stops(summary, offer.get("stops")),
                     raw_data=raw_data,
                 )
             )
@@ -1749,7 +1234,6 @@ class ScrapingBeeProvider:
         *,
         market: str | None = None,
         currency: str = "USD",
-        js_scenario: dict[str, object] | None = None,
     ) -> list[ProviderResult]:
         if self._quota_blocked():
             raise ProviderQuotaExhaustedError("ScrapingBee quota cooldown active.")
@@ -1762,11 +1246,7 @@ class ScrapingBeeProvider:
             market=market,
             currency=currency,
         )
-        payload = await self._get_payload(
-            target_url,
-            country_code=market_country_code,
-            js_scenario=js_scenario,
-        )
+        payload = await self._get_payload(target_url, country_code=market_country_code)
         results = self._normalize_flights(
             payload,
             currency=currency,
@@ -1794,7 +1274,6 @@ class ScrapingBeeProvider:
         *,
         market: str | None = None,
         currency: str = "USD",
-        js_scenario: dict[str, object] | None = None,
     ) -> list[ProviderResult]:
         if self._quota_blocked():
             raise ProviderQuotaExhaustedError("ScrapingBee quota cooldown active.")
@@ -1808,11 +1287,7 @@ class ScrapingBeeProvider:
             market=market,
             currency=currency,
         )
-        payload = await self._get_payload(
-            target_url,
-            country_code=market_country_code,
-            js_scenario=js_scenario,
-        )
+        payload = await self._get_payload(target_url, country_code=market_country_code)
         results = self._normalize_flights(
             payload,
             currency=currency,
@@ -1868,61 +1343,35 @@ class ScrapingBeeProvider:
             market=market,
             currency=currency,
         )
-        self._last_multi_city_capture = self._empty_multi_city_capture_state()
 
-        used_deep_pass = False
-        summary_prices: dict[str, str] = {}
+        used_deep_pass = True
+        rendered: dict = {}
+        summary_prices: list[float] = []
+        results: list[ProviderResult] = []
         card_count = 0
         captured_count = 0
-        captured_sorts: list[str] = []
-        count_text = ""
-        capture_incomplete = False
 
-        ai_payload = await self._get_payload(
-            target_url,
-            ai_extract_rules=self._MULTI_CITY_AI_EXTRACT_RULES,
-            js_scenario=_DEEP_RESULTS_JS_SCENARIO,
-            country_code=market_country_code,
-        )
-        results = self._normalize_multi_city_ai_offers(
-            ai_payload,
-            currency=currency,
-            deep_link=target_url,
-            market_country_code=market_country_code,
-        )
-        if results:
-            captured_sorts = ["ai_extract"]
-            card_count = len(results)
-            captured_count = len(results)
-            eligible_results = self._filter_results_by_stops(results, max_stops)
-        else:
-            used_deep_pass = True
+        for deep_attempt in range(2):
             rendered = await self._get_rendered_payload(
                 target_url,
                 js_scenario=self._build_multi_city_results_scenario(deep=True),
                 country_code=market_country_code,
-                block_resources=False,
-                wait_ms=5000,
             )
             summary_prices = self._multi_city_summary_prices(rendered)
-            parsed_payload = await self._parse_multi_city_rendered_payload(
+            results, card_count, captured_count = await self._parse_multi_city_rendered_payload(
                 rendered,
                 currency=currency,
                 deep_link=target_url,
                 market_country_code=market_country_code,
             )
-            results = list(parsed_payload["results"])
-            card_count = int(parsed_payload["card_count"])
-            captured_count = int(parsed_payload["captured_count"])
-            captured_sorts = list(parsed_payload["captured_sorts"])
-            count_text = str(parsed_payload["count_text"])
-            eligible_results = self._filter_results_by_stops(results, max_stops)
-            capture_incomplete = self._is_multi_city_capture_incomplete(
-                summary_prices=summary_prices,
-                captured_count=captured_count,
-                count_text=count_text,
-                captured_sorts=captured_sorts,
-            )
+            if results or card_count > 0 or self._rendered_payload_has_summary_prices(rendered):
+                break
+            if deep_attempt == 0:
+                continue
+
+        eligible_results = self._filter_results_by_stops(results, max_stops)
+        if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            raise ValueError("KAYAK rendered page did not expose extractable result cards.")
         self._log_multi_city_debug_snapshot(
             outbound_origin=outbound_origin,
             outbound_destination=outbound_destination,
@@ -1934,14 +1383,13 @@ class ScrapingBeeProvider:
             summary_prices=summary_prices,
             card_count=card_count,
             captured_count=captured_count,
-            captured_sorts=captured_sorts,
             raw_results=results,
             eligible_results=eligible_results,
             max_stops=max_stops,
             used_deep_pass=used_deep_pass,
         )
-        eligible_results = self._annotate_multi_city_results(
-            eligible_results,
+        results = self._annotate_multi_city_results(
+            results,
             outbound_origin=outbound_origin,
             outbound_destination=outbound_destination,
             outbound_date=outbound_date,
@@ -1955,145 +1403,10 @@ class ScrapingBeeProvider:
             outbound=f"{outbound_origin}->{outbound_destination}",
             inbound=f"{inbound_origin}->{inbound_destination}",
             count=len(results),
-            eligible_count=len(eligible_results),
             currency=currency,
             target_url=target_url,
-            card_count=card_count,
-            captured_count=captured_count,
-            captured_sorts=captured_sorts,
-            capture_incomplete=capture_incomplete,
         )
-        self._last_multi_city_capture = {
-            "summary_prices": summary_prices,
-            "card_count": card_count,
-            "captured_count": captured_count,
-            "captured_sorts": captured_sorts,
-            "capture_incomplete": capture_incomplete,
-            "count_text": count_text,
-        }
         return results
-
-    async def search_one_way_diagnostic(
-        self,
-        *,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        market: str | None = None,
-        currency: str = "USD",
-        max_stops: int | None = None,
-    ) -> ProviderSearchOutcome:
-        del max_stops
-
-        results = await self._search_one_way_once(
-            origin=origin,
-            destination=destination,
-            depart_date=depart_date,
-            market=market,
-            currency=currency,
-        )
-        used_strong_retry = False
-        if not results:
-            retry_results = await self._search_one_way_once(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                market=market,
-                currency=currency,
-                js_scenario=_DEEP_RESULTS_JS_SCENARIO,
-            )
-            if retry_results:
-                results = retry_results
-                used_strong_retry = True
-
-        diagnostics = self._diagnostics_for_results(
-            results=results,
-            requested_market=market,
-            requested_currency=currency,
-            result_reason="page_empty" if not results else "success",
-            used_strong_retry=used_strong_retry,
-        )
-        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
-
-    async def search_round_trip_diagnostic(
-        self,
-        *,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        return_date: date,
-        market: str | None = None,
-        currency: str = "USD",
-        max_stops: int | None = None,
-    ) -> ProviderSearchOutcome:
-        del max_stops
-
-        results = await self._search_round_trip_once(
-            origin=origin,
-            destination=destination,
-            depart_date=depart_date,
-            return_date=return_date,
-            market=market,
-            currency=currency,
-        )
-        used_strong_retry = False
-        if not results:
-            retry_results = await self._search_round_trip_once(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                return_date=return_date,
-                market=market,
-                currency=currency,
-                js_scenario=_DEEP_RESULTS_JS_SCENARIO,
-            )
-            if retry_results:
-                results = retry_results
-                used_strong_retry = True
-
-        diagnostics = self._diagnostics_for_results(
-            results=results,
-            requested_market=market,
-            requested_currency=currency,
-            result_reason="page_empty" if not results else "success",
-            used_strong_retry=used_strong_retry,
-        )
-        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
-
-    async def search_multi_city_diagnostic(
-        self,
-        *,
-        legs: list[dict[str, object]],
-        market: str | None = None,
-        currency: str = "USD",
-        max_stops: int | None = None,
-    ) -> ProviderSearchOutcome:
-        results = await self._search_multi_city_once(
-            legs=legs,
-            market=market,
-            currency=currency,
-            max_stops=max_stops,
-        )
-        capture_state = self._last_multi_city_capture if isinstance(self._last_multi_city_capture, dict) else {}
-        summary_prices = capture_state.get("summary_prices")
-        captured_sorts = capture_state.get("captured_sorts")
-        diagnostics = self._diagnostics_for_results(
-            results=results,
-            requested_market=market,
-            requested_currency=currency,
-            result_reason=(
-                "extract_failed"
-                if not results and bool(capture_state.get("capture_incomplete"))
-                else ("page_empty" if not results else "success")
-            ),
-            visible_results_found=bool(results) or bool(capture_state.get("card_count")),
-            summary_price_found=bool(summary_prices),
-            capture_incomplete=bool(capture_state.get("capture_incomplete")),
-            rendered_card_count=int(capture_state.get("card_count") or 0),
-            rendered_captured_count=int(capture_state.get("captured_count") or 0),
-            captured_sorts=list(captured_sorts) if isinstance(captured_sorts, list) else [],
-        )
-        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
 
     def _should_retry(self, exc: BaseException) -> bool:
         return isinstance(exc, RuntimeError) and not isinstance(
@@ -2125,15 +1438,14 @@ class ScrapingBeeProvider:
             reraise=True,
         ):
             with attempt:
-                outcome = await self.search_one_way_diagnostic(
+                results = await self._search_one_way_once(
                     origin=origin,
                     destination=destination,
                     depart_date=depart_date,
                     market=market,
                     currency=currency,
-                    max_stops=max_stops,
                 )
-                return self._filter_results_by_stops(outcome.results, max_stops)
+                return self._filter_results_by_stops(results, max_stops)
 
         return []
 
@@ -2159,16 +1471,15 @@ class ScrapingBeeProvider:
             reraise=True,
         ):
             with attempt:
-                outcome = await self.search_round_trip_diagnostic(
+                results = await self._search_round_trip_once(
                     origin=origin,
                     destination=destination,
                     depart_date=depart_date,
                     return_date=return_date,
                     market=market,
                     currency=currency,
-                    max_stops=max_stops,
                 )
-                return self._filter_results_by_stops(outcome.results, max_stops)
+                return self._filter_results_by_stops(results, max_stops)
 
         return []
 
@@ -2191,13 +1502,12 @@ class ScrapingBeeProvider:
             reraise=True,
         ):
             with attempt:
-                outcome = await self.search_multi_city_diagnostic(
+                results = await self._search_multi_city_once(
                     legs=legs,
                     market=market,
                     currency=currency,
                     max_stops=max_stops,
                 )
-                results = outcome.results
                 if max_stops is None:
                     return results
                 return self._filter_results_by_stops(results, max_stops)

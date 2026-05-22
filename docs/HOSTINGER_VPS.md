@@ -1,8 +1,11 @@
 # Hostinger VPS Deployment
 
-This project is VPS-ready with Docker Compose, and this document is the canonical production deployment path for the repo.
+This project is VPS-ready with Docker Compose. The simplest path is:
 
-For this repo, full-stack Docker Compose on the Hostinger VPS is the maintained production setup. Production collection is ScrapingBee-only and ScrapingBee scrapes live KAYAK result pages.
+- keep the frontend on Vercel and move only the backend + database to the VPS, or
+- run the full stack with Docker Compose on the VPS
+
+For this repo, Docker Compose is the safest path. Production collection is ScrapingBee-only and ScrapingBee scrapes live KAYAK result pages.
 
 ## Recommended VPS size
 
@@ -83,12 +86,10 @@ Important:
 
 - ScrapingBee is the only production provider.
 - The scraper collects from KAYAK pages through ScrapingBee.
-- The user matching `ADMIN_EMAIL` is synced to `ADMIN_PASSWORD` and `ADMIN_FULL_NAME` on backend startup.
 - Use only one ScrapingBee key source if possible.
 - Prefer `SCRAPINGBEE_API_KEY` for a single key.
 - Leave `SCRAPINGBEE_API_KEYS` empty unless you intentionally want a key pool.
-- Leave `SCRAPINGBEE_COUNTRY_CODE` blank in production so each route group's market selects the KAYAK locale and proxy country.
-- Start with `PROVIDER_CONCURRENCY_LIMIT=3`, `SCRAPE_ROUTE_PARALLELISM=3`, and `SCRAPE_BATCH_SIZE=1`; this runs one search per active group across up to three groups.
+- Start with `PROVIDER_CONCURRENCY_LIMIT=3`; reduce to `2` if ScrapingBee starts returning rate-limit errors.
 
 ## 4. Start the stack
 
@@ -143,15 +144,18 @@ Best practical setup:
 
 If you want HTTPS directly on the VPS, the clean next step is to add Caddy or Nginx Proxy Manager in front of the frontend/backend containers.
 
-## 8. Deployment ownership
+## 8. Suggested deployment model
 
-Current maintained production story:
+Best low-cost model for this project:
 
-- Hostinger VPS
-- Docker Compose
-- Cloudflare or a direct domain in front of the VPS
+- frontend stays on Vercel
+- backend + database move to Hostinger VPS
 
-Legacy `render.yaml` and `backend/railway.toml` are not the active production path and should be treated as old reference files only.
+Why:
+
+- easier frontend deploys
+- backend gets proper RAM
+- scheduler and scraping become more stable
 
 ## 9. Important operational notes
 
@@ -168,14 +172,11 @@ Legacy `render.yaml` and `backend/railway.toml` are not the active production pa
 
 ## 10. Recommended first live settings on VPS
 
-- `PROVIDER_TIMEOUT_SECONDS=90`
+- `PROVIDER_TIMEOUT_SECONDS=60`
 - `PROVIDER_MAX_RETRIES=1`
 - `JWT_ACCESS_TOKEN_EXPIRE_MINUTES=525600`
 - `PROVIDER_CONCURRENCY_LIMIT=3`
 - `PROVIDER_MIN_DELAY_SECONDS=1.0`
-- `SCRAPE_BATCH_SIZE=1`
-- `SCRAPE_ROUTE_PARALLELISM=3`
-- `SCRAPE_DELAY_SECONDS=1.0`
+- `SCRAPE_BATCH_SIZE=3`
 - `SCRAPINGBEE_PREMIUM_PROXY=false`
 - `SCRAPINGBEE_STEALTH_PROXY=false`
-- `SCRAPINGBEE_COUNTRY_CODE=`
