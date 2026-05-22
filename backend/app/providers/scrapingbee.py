@@ -535,12 +535,15 @@ class ScrapingBeeProvider:
         *,
         js_scenario: dict[str, object],
         country_code: str | None = None,
+        block_resources: bool = True,
+        wait_ms: int = 2500,
     ) -> dict:
         params = self._base_request_params(target_url, country_code=country_code)
         params["json_response"] = "True"
         params["js_scenario"] = json.dumps(js_scenario, separators=(",", ":"))
-        params["block_resources"] = "True"
-        params["wait"] = 2500
+        if block_resources:
+            params["block_resources"] = "True"
+        params["wait"] = wait_ms
 
         async with self._semaphore:
             await self._wait_for_slot()
@@ -1664,6 +1667,8 @@ class ScrapingBeeProvider:
             target_url,
             js_scenario=self._build_multi_city_results_scenario(deep=True),
             country_code=market_country_code,
+            block_resources=False,
+            wait_ms=5000,
         )
         summary_prices = self._multi_city_summary_prices(rendered)
         parsed_payload = await self._parse_multi_city_rendered_payload(

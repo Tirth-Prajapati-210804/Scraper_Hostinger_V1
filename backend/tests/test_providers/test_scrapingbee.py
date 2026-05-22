@@ -396,6 +396,8 @@ async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider
     )
     assert params["country_code"] == "ca"
     assert params["json_response"] == "True"
+    assert params["block_resources"] == "False"
+    assert params["wait"] == 5000
     assert "Result item" in params["js_scenario"]
     assert "nrc6-price-section" in params["js_scenario"]
     assert "cheapest" in params["js_scenario"].lower()
