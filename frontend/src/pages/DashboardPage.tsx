@@ -100,9 +100,13 @@ export function DashboardPage() {
   const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data]);
   const health = healthQuery.data;
   const providerStatuses = Object.values(health?.provider_status ?? {});
-  const noProvider =
+  const noProviderConfigured =
     !healthQuery.isLoading &&
-    !providerStatuses.some((status) => status === "configured");
+    providerStatuses.length > 0 &&
+    providerStatuses.every((status) => status === "disabled");
+  const providerUnavailable =
+    !healthQuery.isLoading &&
+    providerStatuses.some((status) => status !== "configured" && status !== "active" && status !== "disabled");
   const activeGroups = groups.filter((group) => group.is_active).length;
   const pausedGroups = groups.length - activeGroups;
   const lastRunDisplay = useMemo(() => {
@@ -307,12 +311,21 @@ export function DashboardPage() {
           }
         />
 
-        {noProvider ? (
+        {noProviderConfigured ? (
           <Banner
             tone="amber"
             icon={<AlertTriangle className="h-[15px] w-[15px]" />}
             title="No API key configured"
             text="Add SCRAPINGBEE_API_KEY or SCRAPINGBEE_API_KEYS."
+          />
+        ) : null}
+
+        {providerUnavailable ? (
+          <Banner
+            tone="amber"
+            icon={<AlertTriangle className="h-[15px] w-[15px]" />}
+            title="Provider temporarily unavailable"
+            text={`Current provider status: ${providerStatuses.filter((status) => status !== "configured" && status !== "active").join(", ")}. Check Collection Logs and backend logs.`}
           />
         ) : null}
 

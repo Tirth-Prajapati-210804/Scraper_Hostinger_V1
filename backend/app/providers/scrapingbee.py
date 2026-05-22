@@ -291,7 +291,11 @@ class ScrapingBeeProvider:
         self._min_delay_seconds = max(0.0, min_delay_seconds)
         self._quota_blocked_until = 0.0
         self._quota_cooldown_seconds = quota_cooldown_seconds
-        self._last_multi_city_capture = {
+        self._last_multi_city_capture = self._empty_multi_city_capture_state()
+
+    @staticmethod
+    def _empty_multi_city_capture_state() -> dict[str, object]:
+        return {
             "summary_prices": {},
             "card_count": 0,
             "captured_count": 0,
@@ -1640,6 +1644,7 @@ class ScrapingBeeProvider:
             market=market,
             currency=currency,
         )
+        self._last_multi_city_capture = self._empty_multi_city_capture_state()
 
         used_deep_pass = True
         rendered = await self._get_rendered_payload(
@@ -1660,8 +1665,6 @@ class ScrapingBeeProvider:
         captured_sorts = list(parsed_payload["captured_sorts"])
         count_text = str(parsed_payload["count_text"])
         eligible_results = self._filter_results_by_stops(results, max_stops)
-        if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
-            raise ValueError("KAYAK rendered page did not expose extractable result cards.")
         capture_incomplete = self._is_multi_city_capture_incomplete(
             summary_prices=summary_prices,
             captured_count=captured_count,

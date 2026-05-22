@@ -607,6 +607,43 @@ async def test_multi_city_diagnostic_marks_low_capture_as_extract_failed(
 
 
 @pytest.mark.asyncio
+async def test_multi_city_blank_rendered_payload_is_page_empty(
+    provider: ScrapingBeeProvider,
+) -> None:
+    provider._client.get = AsyncMock(
+        return_value=mock_response(
+            {
+                "evaluate_results": [
+                    True,
+                    True,
+                    "{}",
+                ]
+            }
+        )
+    )
+
+    outcome = await provider.search_multi_city_diagnostic(
+        legs=[
+            {"departure_id": "YVR", "arrival_id": "DPS", "outbound_date": DEPART},
+            {
+                "departure_id": "SIN",
+                "arrival_id": "YVR",
+                "outbound_date": DEPART + timedelta(days=12),
+            },
+        ],
+        currency="USD",
+        market="us",
+        max_stops=1,
+    )
+
+    assert provider._client.get.await_count == 1
+    assert outcome.results == []
+    assert outcome.diagnostics.result_reason == "page_empty"
+    assert outcome.diagnostics.capture_incomplete is False
+    assert outcome.diagnostics.summary_price_found is False
+
+
+@pytest.mark.asyncio
 async def test_multi_city_merges_results_across_sort_views(provider: ScrapingBeeProvider) -> None:
     shared_card = {
         "text": (
