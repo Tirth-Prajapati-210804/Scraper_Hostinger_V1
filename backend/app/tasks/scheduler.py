@@ -143,10 +143,12 @@ class FlightScheduler:
         mode: str,
         group_id: UUID | None = None,
         target_dates: list[date] | None = None,
+        force_recollect: bool = False,
     ) -> list[dict[str, object]]:
         payload: dict[str, object] = {
             "code": self._RUN_CONTEXT_CODE,
             "mode": mode,
+            "force_recollect": force_recollect,
         }
         if group_id is not None:
             payload["group_id"] = str(group_id)
@@ -157,12 +159,13 @@ class FlightScheduler:
     def _resume_context_from_run(
         self,
         run: CollectionRun,
-    ) -> tuple[str, UUID | None, list[date] | None]:
+    ) -> tuple[str, UUID | None, list[date] | None, bool]:
         entries = run.errors if isinstance(run.errors, list) else []
         for entry in entries:
             if not isinstance(entry, dict) or entry.get("code") != self._RUN_CONTEXT_CODE:
                 continue
             mode = str(entry.get("mode") or "all")
+            force_recollect = bool(entry.get("force_recollect", False))
             parsed_group_id: UUID | None = None
             raw_group_id = entry.get("group_id")
             if isinstance(raw_group_id, str):
@@ -181,8 +184,8 @@ class FlightScheduler:
                         parsed_dates.append(date.fromisoformat(raw_date))
                     except ValueError:
                         continue
-            return mode, parsed_group_id, parsed_dates or None
-        return "all", None, None
+            return mode, parsed_group_id, parsed_dates or None, force_recollect
+        return "all", None, None, False
 
     async def recover_incomplete_run(self) -> bool:
         if self._active_task is not None and not self._active_task.done():
@@ -199,7 +202,7 @@ class FlightScheduler:
                 return False
 
             newest_run = stale_runs[0]
-            mode, group_id, target_dates = self._resume_context_from_run(newest_run)
+            mode, group_id, target_dates, force_recollect = self._resume_context_from_run(newest_run)
             finished_at = datetime.now(UTC)
 
             for run in stale_runs:
@@ -223,7 +226,11 @@ class FlightScheduler:
             await session.commit()
 
         if mode == "single_group" and group_id is not None:
-            started = self.start_single_group_task(group_id, target_dates)
+            started = self.start_single_group_task(
+                group_id,
+                target_dates,
+                force_recollect=force_recollect,
+            )
         else:
             started = self.start_collection_task()
 
@@ -323,11 +330,18 @@ class FlightScheduler:
         self,
         group_id: UUID,
         target_dates: list[date] | None = None,
+        force_recollect: bool = False,
     ) -> bool:
         if self._active_task is not None and not self._active_task.done():
             return False
 
-        task = asyncio.create_task(self.trigger_single_group(group_id, target_dates))
+        task = asyncio.create_task(
+            self.trigger_single_group(
+                group_id,
+                target_dates,
+                force_recollect=force_recollect,
+            )
+        )
         self._track_task(task)
         return True
 
@@ -699,6 +713,7 @@ class FlightScheduler:
         self,
         group_id: UUID,
         target_dates: list[date] | None = None,
+        force_recollect: bool = False,
     ) -> dict[str, int]:
 
         stats = {
@@ -729,6 +744,7 @@ class FlightScheduler:
                             mode="single_group",
                             group_id=group_id,
                             target_dates=target_dates,
+                            force_recollect=force_recollect,
                         ),
                     )
                     session.add(run)
@@ -767,13 +783,16 @@ class FlightScheduler:
                     route_failed = 0
 
                     for segment in iter_group_segments(group):
-                        remaining = await self._filter_already_scraped(
-                            session=session,
-                            route_group_id=group.id,
-                            origin=segment.origin,
-                            destinations=segment.destinations,
-                            dates=dates,
-                        )
+                        if force_recollect:
+                            remaining = list(dates)
+                        else:
+                            remaining = await self._filter_already_scraped(
+                                session=session,
+                                route_group_id=group.id,
+                                origin=segment.origin,
+                                destinations=segment.destinations,
+                                dates=dates,
+                            )
 
                         if not remaining:
                             continue

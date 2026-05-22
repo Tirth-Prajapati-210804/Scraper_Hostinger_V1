@@ -261,6 +261,71 @@ async def test_trigger_single_group_collects_multi_city_special_sheets(
 
 
 @pytest.mark.asyncio
+async def test_trigger_single_group_force_recollect_bypasses_completion_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from uuid import uuid4
+
+    from app.tasks import scheduler as scheduler_module
+
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_batch_size = 1
+    scheduler.settings.scrape_delay_seconds = 0.0
+
+    group = MagicMock()
+    group.id = uuid4()
+    group.is_active = True
+    group.origins = ["YHZ"]
+    group.destinations = ["TIA"]
+    group.currency = "CAD"
+    group.market = "ca"
+    group.max_stops = None
+    group.same_airline_only = False
+    group.trip_type = "one_way"
+    group.nights = 0
+    group.start_date = D1
+    group.end_date = D1
+    group.days_ahead = 1
+
+    captured: dict = {}
+
+    class DummyCollector:
+        def __init__(self, *a, **kw) -> None:
+            pass
+
+        async def collect_route_batch(self, **kwargs):
+            captured.update(kwargs)
+            return {"success": 1, "errors": 0, "skipped": 0}
+
+    monkeypatch.setattr(scheduler_module, "PriceCollector", DummyCollector)
+
+    fake_provider = MagicMock()
+    fake_provider.is_configured.return_value = True
+    scheduler.provider_registry.get_enabled = MagicMock(return_value=[fake_provider])
+
+    select_result = MagicMock()
+    select_result.scalar_one_or_none.return_value = group
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.execute = AsyncMock(return_value=select_result)
+
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    scheduler.session_factory = factory
+
+    scheduler._filter_already_scraped = AsyncMock(
+        side_effect=AssertionError("force recollect should bypass completion filtering")
+    )
+
+    stats = await scheduler.trigger_single_group(group.id, force_recollect=True)
+
+    assert stats == {"success": 1, "errors": 0, "skipped": 0}
+    assert captured["dates"] == [D1]
+    scheduler._filter_already_scraped.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_trigger_single_group_updates_live_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -476,9 +541,11 @@ async def test_start_single_group_task_tracks_one_active_task(
     async def fake_trigger_single_group(
         passed_group_id,
         target_dates=None,
+        force_recollect=False,
     ) -> dict[str, int]:
         assert passed_group_id == group_id
         assert target_dates == [D1]
+        assert force_recollect is False
         started.set()
         await release.wait()
         return {"success": 0, "errors": 0, "skipped": 0}
@@ -555,6 +622,7 @@ async def test_recover_incomplete_single_group_restarts_same_scope(
                 "mode": "single_group",
                 "group_id": str(group_id),
                 "target_dates": [D1.isoformat(), D2.isoformat()],
+                "force_recollect": True,
             }
         ],
     )
@@ -580,7 +648,11 @@ async def test_recover_incomplete_single_group_restarts_same_scope(
 
     assert resumed is True
     start_collection.assert_not_called()
-    start_single_group.assert_called_once_with(group_id, [D1, D2])
+    start_single_group.assert_called_once_with(
+        group_id,
+        [D1, D2],
+        force_recollect=True,
+    )
     session.commit.assert_awaited_once()
     assert stale_run.status == "failed"
     assert stale_run.errors[0]["code"] == "restarted_mid_collection"

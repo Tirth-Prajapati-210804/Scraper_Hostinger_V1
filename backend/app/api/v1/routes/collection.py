@@ -104,7 +104,8 @@ async def trigger_collection(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_provider_unavailable_detail(registry),
         )
-    scheduler.start_collection_task()
+    if not scheduler.start_collection_task():
+        return {"status": "already_running"}
     return {"status": "triggered"}
 
 
@@ -131,13 +132,16 @@ async def trigger_group(
     _enforce_scrape_rate_limit(request, current_user, f"group:{group_id}")
     await _get_accessible_group(session, group_id)
     scheduler = request.app.state.scheduler
+    if scheduler.is_collecting:
+        return {"status": "already_running", "group_id": str(group_id)}
     registry = request.app.state.provider_registry
     if not registry.get_enabled():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_provider_unavailable_detail(registry),
         )
-    scheduler.start_single_group_task(group_id)
+    if not scheduler.start_single_group_task(group_id, force_recollect=True):
+        return {"status": "already_running", "group_id": str(group_id)}
     return {"status": "triggered", "group_id": str(group_id)}
 
 
@@ -152,13 +156,20 @@ async def trigger_group_date(
     _enforce_scrape_rate_limit(request, current_user, f"group-date:{group_id}:{target_date}")
     await _get_accessible_group(session, group_id)
     scheduler = request.app.state.scheduler
+    if scheduler.is_collecting:
+        return {"status": "already_running", "group_id": str(group_id), "date": str(target_date)}
     registry = request.app.state.provider_registry
     if not registry.get_enabled():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_provider_unavailable_detail(registry),
         )
-    scheduler.start_single_group_task(group_id, [target_date])
+    if not scheduler.start_single_group_task(
+        group_id,
+        [target_date],
+        force_recollect=True,
+    ):
+        return {"status": "already_running", "group_id": str(group_id), "date": str(target_date)}
     return {"status": "triggered", "group_id": str(group_id), "date": str(target_date)}
 
 
