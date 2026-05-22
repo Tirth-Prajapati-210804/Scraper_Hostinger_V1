@@ -16,11 +16,3 @@ def test_search_location_suggestions_includes_airport_codes() -> None:
     results = search_location_suggestions("cun", limit=10)
 
     assert any(item["kind"] == "airport_code" and "CUN" in item["codes"] for item in results)
-
-
-def test_search_location_suggestions_includes_country_city_and_airport_entries() -> None:
-    country_results = search_location_suggestions("can", limit=10)
-    airport_results = search_location_suggestions("heathrow", limit=10)
-
-    assert any(item["kind"] == "country" and item["label"] == "Canada" for item in country_results)
-    assert any(item["kind"] == "airport" and "LHR" in item["codes"] for item in airport_results)

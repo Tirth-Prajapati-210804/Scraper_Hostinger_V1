@@ -16,13 +16,6 @@ interface TagInputProps {
 
 const IATA_RE = /^[A-Za-z0-9]{2,4}$/;
 
-function suggestionHint(kind: LocationSuggestion["kind"]): string {
-  if (kind === "airport_code") return "Add code";
-  if (kind === "airport") return "Add airport code";
-  if (kind === "city") return "Add city airports";
-  return "Add country airports";
-}
-
 export function TagInput({
   value,
   onChange,
@@ -209,7 +202,13 @@ export function TagInput({
                 <div>
                   <div className="text-sm font-medium text-slate-900">{suggestion.label}</div>
                   <div className="mt-0.5 text-xs text-slate-400">
-                  {suggestionHint(suggestion.kind)}
+                    {suggestion.kind === "airport_code"
+                      ? "Add code"
+                      : suggestion.kind === "airport"
+                        ? "Add airport code"
+                        : suggestion.kind === "country"
+                          ? "Add country airports"
+                          : "Add city airports"}
                   </div>
                 </div>
               <div className="text-xs font-medium text-slate-500">

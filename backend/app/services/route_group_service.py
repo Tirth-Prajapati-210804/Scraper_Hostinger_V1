@@ -37,8 +37,6 @@ _ROUTE_IDENTITY_FIELDS = (
     "special_sheets",
     "market",
     "currency",
-    "max_stops",
-    "same_airline_only",
     "start_date",
     "end_date",
 )
@@ -125,6 +123,7 @@ async def create(
         currency=data.currency,
         max_stops=data.max_stops,
         same_airline_only=data.same_airline_only,
+        max_leg_duration_minutes=data.max_leg_duration_minutes,
         start_date=data.start_date,
         end_date=data.end_date,
         user_id=owner_id,
@@ -146,7 +145,7 @@ async def update(
     if not group:
         return None
 
-    payload = data.model_dump(exclude_none=True)
+    payload = data.model_dump(exclude_unset=True)
     route_identity_changed = False
 
     for field, value in payload.items():

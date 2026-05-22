@@ -21,6 +21,8 @@ from app.providers.base import (
     ProviderAuthError,
     ProviderQuotaExhaustedError,
     ProviderRateLimitedError,
+    ProviderSearchDiagnostics,
+    ProviderSearchOutcome,
     ProviderResult,
 )
 
@@ -123,6 +125,17 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 }
 _FAST_MULTI_CITY_CARD_LIMIT = 30
 _DEEP_MULTI_CITY_CARD_LIMIT = 180
+_DEEP_RESULTS_JS_SCENARIO = {
+    "instructions": [
+        {"wait": 5000},
+        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.35);"},
+        {"wait": 2500},
+        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.7);"},
+        {"wait": 2500},
+        {"evaluate": "window.scrollTo(0, document.body.scrollHeight);"},
+        {"wait": 3000},
+    ]
+}
 
 
 def _clean_text(value: object) -> str:
@@ -816,11 +829,79 @@ class ScrapingBeeProvider:
         results: list[ProviderResult],
         max_stops: int | None,
     ) -> list[ProviderResult]:
-        # Temporary client requirement: stop mode should not exclude the cheapest
-        # valid flight. Keep the argument for API compatibility, but let the
-        # collector apply only airline/transport validity filters.
-        del max_stops
-        return results
+        limit = self._allowed_leg_stop_limit(max_stops)
+        if limit is None:
+            return results
+
+        return [
+            result
+            for result in results
+            if all(stops <= limit for stops in self._result_leg_stops(result))
+        ]
+
+    def _allowed_leg_stop_limit(self, max_stops: int | None) -> int | None:
+        if max_stops is None:
+            return None
+        if max_stops <= 0:
+            return 0
+        if max_stops == 1:
+            return 1
+        return 2
+
+    def _diagnostics_for_results(
+        self,
+        *,
+        results: list[ProviderResult],
+        requested_market: str | None,
+        requested_currency: str,
+        result_reason: str | None = None,
+        visible_results_found: bool = False,
+        summary_price_found: bool = False,
+        used_strong_retry: bool = False,
+    ) -> ProviderSearchDiagnostics:
+        detected_currencies = sorted(
+            {
+                _clean_text(result.currency).upper()
+                for result in results
+                if _clean_text(result.currency)
+            }
+        )
+        return ProviderSearchDiagnostics(
+            result_reason=result_reason,
+            raw_offers_found=len(results),
+            eligible_offers_found=len(results),
+            visible_results_found=visible_results_found,
+            summary_price_found=summary_price_found,
+            requested_market=requested_market,
+            requested_currency=requested_currency,
+            detected_currencies=detected_currencies,
+            used_strong_retry=used_strong_retry,
+        )
+
+    def _stop_label_for_count(self, stops: int) -> str:
+        if stops <= 0:
+            return "Direct"
+        if stops == 1:
+            return "1 Stop"
+        return f"{stops} Stops"
+
+    def _stop_label_from_leg_stops(self, leg_stops: list[int]) -> str:
+        if not leg_stops:
+            return ""
+        return " / ".join(self._stop_label_for_count(stops) for stops in leg_stops)
+
+    def _result_leg_stops(self, result: ProviderResult) -> list[int]:
+        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+        leg_stops = raw_data.get("leg_stops")
+        if isinstance(leg_stops, list):
+            normalized = [
+                int(value)
+                for value in leg_stops
+                if isinstance(value, (int, float))
+            ]
+            if normalized:
+                return normalized
+        return [result.stops]
 
     def _extract_rendered_cards_payload(self, rendered: dict) -> dict[str, object] | None:
         evaluate_results = rendered.get("evaluate_results")
@@ -859,6 +940,17 @@ class ScrapingBeeProvider:
             if value:
                 prices[key] = value
         return prices
+
+    def _summary_lowest_price(self, summary_prices: dict[str, str]) -> float | None:
+        prices = [
+            price
+            for price in (
+                self._parse_price(value)
+                for value in summary_prices.values()
+            )
+            if price is not None
+        ]
+        return min(prices) if prices else None
 
     def _results_include_badge(
         self,
@@ -1054,8 +1146,9 @@ class ScrapingBeeProvider:
 
             normalized_legs: list[dict[str, object]] = []
             unique_airlines: list[str] = []
+            leg_stop_counts: list[int] = []
+            leg_durations: list[int] = []
             total_duration = 0
-            total_stops = 0
             for leg in legs[:2]:
                 if not isinstance(leg, dict):
                     continue
@@ -1066,11 +1159,14 @@ class ScrapingBeeProvider:
                 layover_text = _clean_text(leg.get("layover_text"))
                 stops_text = _clean_text(leg.get("stops_text"))
                 route_text = _clean_text(leg.get("route_text"))
-                total_duration += self._parse_duration_minutes(
+                leg_duration = self._parse_duration_minutes(
                     "",
                     duration_text,
                 )
-                total_stops += self._parse_stops(f"{stops_text} {layover_text}".strip())
+                leg_durations.append(leg_duration)
+                total_duration += leg_duration
+                leg_stops = self._parse_stops(f"{stops_text} {layover_text}".strip())
+                leg_stop_counts.append(leg_stops)
                 normalized_legs.append(
                     {
                         "airline": airline,
@@ -1079,12 +1175,15 @@ class ScrapingBeeProvider:
                         "stops_text": stops_text,
                         "layover_text": layover_text,
                         "duration_text": duration_text,
+                        "duration_minutes": leg_duration,
                         "text": _clean_text(leg.get("text")),
                     }
                 )
 
             if len(normalized_legs) < 2:
                 continue
+
+            total_stops = sum(leg_stop_counts)
 
             airline_text = _clean_text(card.get("airline_text"))
             display_airline = airline_text or " / ".join(unique_airlines) or "Unknown airline"
@@ -1139,10 +1238,9 @@ class ScrapingBeeProvider:
                         "badges": badges,
                         "legs": normalized_legs,
                         "airline_names": unique_airlines,
-                        "leg_stops": [
-                            self._parse_stops(f"{leg.get('stops_text', '')} {leg.get('layover_text', '')}".strip())
-                            for leg in normalized_legs
-                        ],
+                        "leg_stops": leg_stop_counts,
+                        "leg_durations": leg_durations,
+                        "stop_result_label": self._stop_label_from_leg_stops(leg_stop_counts),
                         "outbound_airline": normalized_legs[0].get("airline") or "",
                         "return_airline": normalized_legs[1].get("airline") or "",
                     },
@@ -1193,13 +1291,21 @@ class ScrapingBeeProvider:
                 continue
 
             airline_parts = [part.strip() for part in airline.split("/") if part.strip()]
+            stop_count = self._parse_stops(summary, offer.get("stops"))
+            duration_minutes = self._parse_duration_minutes(
+                summary,
+                duration_text,
+                offer.get("duration"),
+            )
             raw_data = {
                 "trip_type": trip_type,
                 "price_text": _clean_text(offer.get("price_text")),
                 "duration_text": duration_text,
                 "summary": summary,
                 "airline_names": airline_parts or ([airline] if airline else []),
-                "leg_stops": [self._parse_stops(summary, offer.get("stops"))],
+                "leg_stops": [stop_count],
+                "leg_durations": [duration_minutes],
+                "stop_result_label": self._stop_label_for_count(stop_count),
             }
             if trip_type != "one_way":
                 outbound_airline = airline_parts[0] if airline_parts else airline
@@ -1214,12 +1320,8 @@ class ScrapingBeeProvider:
                     airline=airline,
                     deep_link=normalized_link,
                     provider=self.name,
-                    duration_minutes=self._parse_duration_minutes(
-                        summary,
-                        duration_text,
-                        offer.get("duration"),
-                    ),
-                    stops=self._parse_stops(summary, offer.get("stops")),
+                    duration_minutes=duration_minutes,
+                    stops=stop_count,
                     raw_data=raw_data,
                 )
             )
@@ -1234,6 +1336,7 @@ class ScrapingBeeProvider:
         *,
         market: str | None = None,
         currency: str = "USD",
+        js_scenario: dict[str, object] | None = None,
     ) -> list[ProviderResult]:
         if self._quota_blocked():
             raise ProviderQuotaExhaustedError("ScrapingBee quota cooldown active.")
@@ -1246,7 +1349,11 @@ class ScrapingBeeProvider:
             market=market,
             currency=currency,
         )
-        payload = await self._get_payload(target_url, country_code=market_country_code)
+        payload = await self._get_payload(
+            target_url,
+            country_code=market_country_code,
+            js_scenario=js_scenario,
+        )
         results = self._normalize_flights(
             payload,
             currency=currency,
@@ -1274,6 +1381,7 @@ class ScrapingBeeProvider:
         *,
         market: str | None = None,
         currency: str = "USD",
+        js_scenario: dict[str, object] | None = None,
     ) -> list[ProviderResult]:
         if self._quota_blocked():
             raise ProviderQuotaExhaustedError("ScrapingBee quota cooldown active.")
@@ -1287,7 +1395,11 @@ class ScrapingBeeProvider:
             market=market,
             currency=currency,
         )
-        payload = await self._get_payload(target_url, country_code=market_country_code)
+        payload = await self._get_payload(
+            target_url,
+            country_code=market_country_code,
+            js_scenario=js_scenario,
+        )
         results = self._normalize_flights(
             payload,
             currency=currency,
@@ -1346,7 +1458,7 @@ class ScrapingBeeProvider:
 
         used_deep_pass = True
         rendered: dict = {}
-        summary_prices: list[float] = []
+        summary_prices: dict[str, str] = {}
         results: list[ProviderResult] = []
         card_count = 0
         captured_count = 0
@@ -1370,6 +1482,32 @@ class ScrapingBeeProvider:
                 continue
 
         eligible_results = self._filter_results_by_stops(results, max_stops)
+        summary_lowest = self._summary_lowest_price(summary_prices)
+        eligible_lowest = min((result.price for result in eligible_results), default=None)
+        if (
+            summary_lowest is not None
+            and (eligible_lowest is None or summary_lowest + 1 < eligible_lowest)
+        ):
+            retry_rendered = await self._get_rendered_payload(
+                target_url,
+                js_scenario=self._build_multi_city_results_scenario(deep=True),
+                country_code=market_country_code,
+            )
+            retry_summary_prices = self._multi_city_summary_prices(retry_rendered)
+            retry_results, retry_card_count, retry_captured_count = await self._parse_multi_city_rendered_payload(
+                retry_rendered,
+                currency=currency,
+                deep_link=target_url,
+                market_country_code=market_country_code,
+            )
+            retry_eligible = self._filter_results_by_stops(retry_results, max_stops)
+            if retry_eligible or retry_results:
+                rendered = retry_rendered
+                summary_prices = retry_summary_prices
+                results = retry_results
+                card_count = retry_card_count
+                captured_count = retry_captured_count
+                eligible_results = retry_eligible
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
         self._log_multi_city_debug_snapshot(
@@ -1388,8 +1526,8 @@ class ScrapingBeeProvider:
             max_stops=max_stops,
             used_deep_pass=used_deep_pass,
         )
-        results = self._annotate_multi_city_results(
-            results,
+        eligible_results = self._annotate_multi_city_results(
+            eligible_results,
             outbound_origin=outbound_origin,
             outbound_destination=outbound_destination,
             outbound_date=outbound_date,
@@ -1402,11 +1540,122 @@ class ScrapingBeeProvider:
             trip_type="multi_city",
             outbound=f"{outbound_origin}->{outbound_destination}",
             inbound=f"{inbound_origin}->{inbound_destination}",
-            count=len(results),
+            count=len(eligible_results),
             currency=currency,
             target_url=target_url,
         )
-        return results
+        return eligible_results
+
+    async def search_one_way_diagnostic(
+        self,
+        *,
+        origin: str,
+        destination: str,
+        depart_date: date,
+        market: str | None = None,
+        currency: str = "USD",
+        max_stops: int | None = None,
+    ) -> ProviderSearchOutcome:
+        del max_stops
+
+        results = await self._search_one_way_once(
+            origin=origin,
+            destination=destination,
+            depart_date=depart_date,
+            market=market,
+            currency=currency,
+        )
+        used_strong_retry = False
+        if not results:
+            retry_results = await self._search_one_way_once(
+                origin=origin,
+                destination=destination,
+                depart_date=depart_date,
+                market=market,
+                currency=currency,
+                js_scenario=_DEEP_RESULTS_JS_SCENARIO,
+            )
+            if retry_results:
+                results = retry_results
+                used_strong_retry = True
+
+        diagnostics = self._diagnostics_for_results(
+            results=results,
+            requested_market=market,
+            requested_currency=currency,
+            result_reason="page_empty" if not results else "success",
+            used_strong_retry=used_strong_retry,
+        )
+        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
+
+    async def search_round_trip_diagnostic(
+        self,
+        *,
+        origin: str,
+        destination: str,
+        depart_date: date,
+        return_date: date,
+        market: str | None = None,
+        currency: str = "USD",
+        max_stops: int | None = None,
+    ) -> ProviderSearchOutcome:
+        del max_stops
+
+        results = await self._search_round_trip_once(
+            origin=origin,
+            destination=destination,
+            depart_date=depart_date,
+            return_date=return_date,
+            market=market,
+            currency=currency,
+        )
+        used_strong_retry = False
+        if not results:
+            retry_results = await self._search_round_trip_once(
+                origin=origin,
+                destination=destination,
+                depart_date=depart_date,
+                return_date=return_date,
+                market=market,
+                currency=currency,
+                js_scenario=_DEEP_RESULTS_JS_SCENARIO,
+            )
+            if retry_results:
+                results = retry_results
+                used_strong_retry = True
+
+        diagnostics = self._diagnostics_for_results(
+            results=results,
+            requested_market=market,
+            requested_currency=currency,
+            result_reason="page_empty" if not results else "success",
+            used_strong_retry=used_strong_retry,
+        )
+        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
+
+    async def search_multi_city_diagnostic(
+        self,
+        *,
+        legs: list[dict[str, object]],
+        market: str | None = None,
+        currency: str = "USD",
+        max_stops: int | None = None,
+    ) -> ProviderSearchOutcome:
+        results = await self._search_multi_city_once(
+            legs=legs,
+            market=market,
+            currency=currency,
+            max_stops=max_stops,
+        )
+        diagnostics = self._diagnostics_for_results(
+            results=results,
+            requested_market=market,
+            requested_currency=currency,
+            result_reason="page_empty" if not results else "success",
+            visible_results_found=bool(results),
+            summary_price_found=bool(results),
+        )
+        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
 
     def _should_retry(self, exc: BaseException) -> bool:
         return isinstance(exc, RuntimeError) and not isinstance(
@@ -1438,14 +1687,15 @@ class ScrapingBeeProvider:
             reraise=True,
         ):
             with attempt:
-                results = await self._search_one_way_once(
+                outcome = await self.search_one_way_diagnostic(
                     origin=origin,
                     destination=destination,
                     depart_date=depart_date,
                     market=market,
                     currency=currency,
+                    max_stops=max_stops,
                 )
-                return self._filter_results_by_stops(results, max_stops)
+                return self._filter_results_by_stops(outcome.results, max_stops)
 
         return []
 
@@ -1471,15 +1721,16 @@ class ScrapingBeeProvider:
             reraise=True,
         ):
             with attempt:
-                results = await self._search_round_trip_once(
+                outcome = await self.search_round_trip_diagnostic(
                     origin=origin,
                     destination=destination,
                     depart_date=depart_date,
                     return_date=return_date,
                     market=market,
                     currency=currency,
+                    max_stops=max_stops,
                 )
-                return self._filter_results_by_stops(results, max_stops)
+                return self._filter_results_by_stops(outcome.results, max_stops)
 
         return []
 
@@ -1502,12 +1753,13 @@ class ScrapingBeeProvider:
             reraise=True,
         ):
             with attempt:
-                results = await self._search_multi_city_once(
+                outcome = await self.search_multi_city_diagnostic(
                     legs=legs,
                     market=market,
                     currency=currency,
                     max_stops=max_stops,
                 )
+                results = outcome.results
                 if max_stops is None:
                     return results
                 return self._filter_results_by_stops(results, max_stops)

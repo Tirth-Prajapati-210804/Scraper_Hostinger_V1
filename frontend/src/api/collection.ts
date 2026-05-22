@@ -5,6 +5,13 @@ export interface CollectionProgress {
   routes_total: number;
   routes_done: number;
   routes_failed: number;
+  checks_total: number;
+  checks_started: number;
+  checks_done: number;
+  checks_failed: number;
+  active_searches: number;
+  retries_started: number;
+  retries_done: number;
   prices_total: number;
   prices_started: number;
   prices_done: number;

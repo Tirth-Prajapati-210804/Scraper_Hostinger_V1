@@ -13,16 +13,13 @@ interface Props {
 export function CollectionProgressBar({
   progress,
 }: Props) {
-  const processedTotal = progress.prices_total > 0 ? progress.prices_total : progress.routes_total;
-  const processedDone = progress.prices_total > 0 ? progress.prices_done : progress.routes_done;
+  const processedTotal = progress.checks_total > 0 ? progress.checks_total : progress.routes_total;
+  const processedDone = progress.checks_total > 0 ? progress.checks_done : progress.routes_done;
   const processedStarted =
-    progress.prices_total > 0
-      ? Math.max(progress.prices_started, progress.prices_done)
+    progress.checks_total > 0
+      ? Math.max(progress.checks_started, progress.checks_done)
       : progress.routes_done;
-  const activeSearches =
-    progress.prices_total > 0
-      ? Math.max(progress.prices_started - progress.prices_done, 0)
-      : 0;
+  const activeSearches = progress.active_searches ?? 0;
   const pct =
     processedTotal > 0
       ? Math.round(
@@ -111,11 +108,18 @@ export function CollectionProgressBar({
           </div>
         ) : null}
 
-        {progress.routes_failed > 0 || progress.prices_failed > 0 ? (
+        {progress.retries_started > 0 ? (
+          <div className="inline-flex items-center gap-1 text-brand-700">
+            <Activity className="h-3.5 w-3.5" />
+            {progress.retries_done}/{progress.retries_started} retries resolved
+          </div>
+        ) : null}
+
+        {progress.routes_failed > 0 || progress.checks_failed > 0 ? (
           <div className="inline-flex items-center gap-1 text-red-600">
             <AlertTriangle className="h-3.5 w-3.5" />
-            {progress.prices_failed > 0
-              ? `${progress.prices_failed} checks failed`
+            {progress.checks_failed > 0
+              ? `${progress.checks_failed} checks failed`
               : `${progress.routes_failed} routes failed`}
           </div>
         ) : null}

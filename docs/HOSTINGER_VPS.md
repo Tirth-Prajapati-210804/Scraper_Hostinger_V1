@@ -89,7 +89,8 @@ Important:
 - Use only one ScrapingBee key source if possible.
 - Prefer `SCRAPINGBEE_API_KEY` for a single key.
 - Leave `SCRAPINGBEE_API_KEYS` empty unless you intentionally want a key pool.
-- Start with `PROVIDER_CONCURRENCY_LIMIT=3`; reduce to `2` if ScrapingBee starts returning rate-limit errors.
+- Leave `SCRAPINGBEE_COUNTRY_CODE` blank in production so each route group's market selects the KAYAK locale and proxy country.
+- Start with `PROVIDER_CONCURRENCY_LIMIT=3`, `SCRAPE_ROUTE_PARALLELISM=3`, and `SCRAPE_BATCH_SIZE=1`; this runs one search per active group across up to three groups.
 
 ## 4. Start the stack
 
@@ -177,6 +178,9 @@ Why:
 - `JWT_ACCESS_TOKEN_EXPIRE_MINUTES=525600`
 - `PROVIDER_CONCURRENCY_LIMIT=3`
 - `PROVIDER_MIN_DELAY_SECONDS=1.0`
-- `SCRAPE_BATCH_SIZE=3`
+- `SCRAPE_BATCH_SIZE=1`
+- `SCRAPE_ROUTE_PARALLELISM=3`
+- `SCRAPE_DELAY_SECONDS=1.0`
 - `SCRAPINGBEE_PREMIUM_PROXY=false`
 - `SCRAPINGBEE_STEALTH_PROXY=false`
+- `SCRAPINGBEE_COUNTRY_CODE=`

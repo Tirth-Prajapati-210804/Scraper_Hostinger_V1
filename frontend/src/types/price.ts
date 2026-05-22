@@ -10,6 +10,14 @@ export interface DailyPrice {
   stops: number | null;
   stop_label?: string | null;
   duration_minutes: number | null;
+  itinerary_data?: {
+    duration_text?: string | null;
+    leg_durations?: number[] | null;
+    legs?: Array<{
+      duration_text?: string | null;
+      duration_minutes?: number | null;
+    }> | null;
+  } | null;
   scraped_at: string;
 }
 
@@ -47,6 +55,21 @@ export interface ScrapeLogEntry {
     | "parse_error"
     | "stopped";
   offers_found: number;
+  result_reason:
+    | "success"
+    | "page_empty"
+    | "extract_failed"
+    | "filtered_out"
+    | "market_mismatch"
+    | null;
+  raw_offers_found: number;
+  eligible_offers_found: number;
+  filtered_by_stop_count: number;
+  filtered_by_same_airline: number;
+  filtered_by_duration: number;
+  requested_market: string | null;
+  requested_currency: string | null;
+  detected_currency: string | null;
   cheapest_price: number | null;
   error_message: string | null;
   duration_ms: number | null;

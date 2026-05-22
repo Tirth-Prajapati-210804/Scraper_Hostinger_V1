@@ -104,8 +104,7 @@ async def trigger_collection(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_provider_unavailable_detail(registry),
         )
-    if not scheduler.start_collection_task():
-        return {"status": "already_running"}
+    scheduler.start_collection_task()
     return {"status": "triggered"}
 
 
@@ -132,16 +131,13 @@ async def trigger_group(
     _enforce_scrape_rate_limit(request, current_user, f"group:{group_id}")
     await _get_accessible_group(session, group_id)
     scheduler = request.app.state.scheduler
-    if scheduler.is_collecting:
-        return {"status": "already_running", "group_id": str(group_id)}
     registry = request.app.state.provider_registry
     if not registry.get_enabled():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_provider_unavailable_detail(registry),
         )
-    if not scheduler.start_single_group_task(group_id, force_recollect=True):
-        return {"status": "already_running", "group_id": str(group_id)}
+    scheduler.start_single_group_task(group_id)
     return {"status": "triggered", "group_id": str(group_id)}
 
 
@@ -156,20 +152,13 @@ async def trigger_group_date(
     _enforce_scrape_rate_limit(request, current_user, f"group-date:{group_id}:{target_date}")
     await _get_accessible_group(session, group_id)
     scheduler = request.app.state.scheduler
-    if scheduler.is_collecting:
-        return {"status": "already_running", "group_id": str(group_id), "date": str(target_date)}
     registry = request.app.state.provider_registry
     if not registry.get_enabled():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_provider_unavailable_detail(registry),
         )
-    if not scheduler.start_single_group_task(
-        group_id,
-        [target_date],
-        force_recollect=True,
-    ):
-        return {"status": "already_running", "group_id": str(group_id), "date": str(target_date)}
+    scheduler.start_single_group_task(group_id, [target_date])
     return {"status": "triggered", "group_id": str(group_id), "date": str(target_date)}
 
 
@@ -228,6 +217,15 @@ async def list_logs(
             "provider": lg.provider,
             "status": lg.status,
             "offers_found": lg.offers_found,
+            "result_reason": lg.result_reason,
+            "raw_offers_found": lg.raw_offers_found,
+            "eligible_offers_found": lg.eligible_offers_found,
+            "filtered_by_stop_count": lg.filtered_by_stop_count,
+            "filtered_by_same_airline": lg.filtered_by_same_airline,
+            "filtered_by_duration": lg.filtered_by_duration,
+            "requested_market": lg.requested_market,
+            "requested_currency": lg.requested_currency,
+            "detected_currency": lg.detected_currency,
             "cheapest_price": float(lg.cheapest_price) if lg.cheapest_price else None,
             "error_message": lg.error_message,
             "duration_ms": lg.duration_ms,
