@@ -405,7 +405,17 @@ class FlightScheduler:
             configured = int(getattr(self.settings, "scrape_route_parallelism", 1) or 1)
         except (TypeError, ValueError):
             configured = 1
-        return max(1, min(configured, max(route_count, 1)))
+        try:
+            provider_limit = int(getattr(self.settings, "provider_concurrency_limit", 1) or 1)
+        except (TypeError, ValueError):
+            provider_limit = 1
+        try:
+            batch_size = int(getattr(self.settings, "scrape_batch_size", 1) or 1)
+        except (TypeError, ValueError):
+            batch_size = 1
+
+        provider_capped_groups = max(1, provider_limit // max(1, batch_size))
+        return max(1, min(configured, max(route_count, 1), provider_capped_groups))
 
     async def _summarize_group_completion(
         self,

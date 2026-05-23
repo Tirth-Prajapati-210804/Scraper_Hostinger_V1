@@ -594,3 +594,16 @@ async def test_recover_incomplete_single_group_restarts_same_scope(
     session.commit.assert_awaited_once()
     assert stale_run.status == "failed"
     assert stale_run.errors[0]["code"] == "restarted_mid_collection"
+
+
+def test_route_parallelism_caps_groups_by_provider_budget() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_route_parallelism = 5
+    scheduler.settings.provider_concurrency_limit = 5
+    scheduler.settings.scrape_batch_size = 1
+
+    assert scheduler._route_parallelism(10) == 5
+    assert scheduler._route_parallelism(3) == 3
+
+    scheduler.settings.scrape_batch_size = 2
+    assert scheduler._route_parallelism(10) == 2

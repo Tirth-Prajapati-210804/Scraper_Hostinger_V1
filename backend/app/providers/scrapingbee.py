@@ -801,10 +801,28 @@ fh.extract=()=>{{
 return true;
 }})()
 """.strip()
-        click_cheapest_script = "window.__fhResults?.clickCheapest?.() ?? false"
-        apply_airline_script = "window.__fhResults?.applyAirlineFacet?.() ?? false"
-        settle_script = "window.__fhResults?.settle?.() ?? false"
-        script = "window.__fhResults?.extract?.() ?? '{}'"
+        helper_script = """
+(()=>{{
+const m=__MODE__,l=__LIMIT__,h=m?3:2,w=window.__fhResults||(window.__fhResults={});
+w.t=v=>(v||'').toString().replace(/\\s+/g,' ').trim();
+w.n=v=>(v||'').toString().replace(/\\u00a0/g,' ').split(/\\n+/).map(w.t).filter(Boolean);
+w.v=e=>{{if(!e)return 0;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none';}};
+w.p=v=>{{const m=w.t(v).replace(/,/g,'').match(/(?:[A-Z]{{0,3}}\\$|[$â‚¬Â£â‚¹])\\s*([0-9]+(?:\\.[0-9]+)?)/i);return m?Number(m[1]):null;}};
+w.g=()=>Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text')).map(n=>w.t(n.innerText)).filter(Boolean).slice(0,6);
+w.c=()=>{{const e=Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).find(n=>w.v(n)&&/^cheapest(?:\\s|$)/i.test(w.t(n.innerText||n.getAttribute('aria-label'))));if(!e)return 0;(e.closest('button,a,[role="button"]')||e).click();return 1;}};
+w.b=()=>Array.from(document.querySelectorAll('[role="progressbar"],progress,[aria-busy="true"],[class*="loading"],[class*="progress"]')).some(w.v);
+w.r=()=>Array.from(document.querySelectorAll('section,aside,div')).filter(e=>w.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{{0,3}}\\$|[$â‚¬Â£â‚¹])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;
+w.o=()=>{{const r=w.r();if(!r)return[];const x=/^(select all|clear all|show \\d+ more airlines?|alliance|airports|times|take-off|landing|book now, pay later|transportation options)$/i,y=/(multiple airlines|multiple airline|mixed airlines|various airlines)/i,s=new Map();for(const e of Array.from(r.querySelectorAll('label,button,[role="button"],li,div,span'))){if(!w.v(e))continue;const a=w.n(e.innerText);if(!a.length||a.length>3)continue;const j=a.join('|'),p=w.p(j);if(p===null)continue;let n=a.find(z=>w.p(z)===null)||'';n=w.t(n.replace(/\\b\\d+\\b/g,''));if(!n||x.test(n)||y.test(n))continue;const c=e.closest('label,button,[role="button"],li')||e,k=n.toLowerCase(),u=s.get(k);if(!u||p<u.p)s.set(k,{{n,p,e:c}});}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4);}};
+w.f=()=>{{if(!m)return 0;const o=w.o();window.__fhFacetState={{s:'',o:o.map(x=>({{n:x.n,p:x.p}}))}};if(!o.length)return 0;const t=o[0];window.__fhFacetState.s=t.n;const c=t.e.querySelector('input[type="checkbox"]');if(c&&!c.checked){{c.click();return 1;}}t.e.click();return 1;}};
+w.s=()=>{{const p=w.g().join('|'),y=Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).filter(w.v).map(e=>w.t(e.innerText||e.getAttribute('aria-label'))).filter(v=>/^(cheapest|best|quickest)(\\s|$)/i.test(v)).slice(0,3).join('|'),o=(window.__fhFacetState?.o||w.o().map(x=>({{n:x.n,p:x.p}}))).map(x=>`${{x.n}}:${{x.p}}`).join('|'),k=[w.b()?1:0,window.__fhFacetState?.s||'',y,p,o].join('||'),st=window.__fhSettleState||{{k:'',h:0}};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=w.b()?1:0;window.__fhSettleState=st;return !st.b&&p&&st.h>=h;}};
+w.x=()=>{{const d=n=>n&&n.querySelector('.nrc6-price-section .e2GB-price-text')&&n.querySelectorAll('ol.hJSA-list>li').length>=2,r=Array.from(document.querySelectorAll('div[aria-label^="Result item"],div[data-resultid],div.nrc6,div[class*="nrc6"]')).filter(d),u=r.filter((c,i)=>!r.some((o,j)=>j!==i&&c.contains(o)&&d(o))),tt=q=>(Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).find(e=>new RegExp('^'+q+'(?:\\\\s|$)','i').test(w.t(e.innerText||e.getAttribute('aria-label'))))?.innerText||'').trim();return JSON.stringify({{n:u.length,m:u.slice(0,l).length,c:u.slice(0,l).map(c=>({{t:w.t(c.innerText),p:w.t(c.querySelector('.nrc6-price-section .e2GB-price-text')?.innerText),h:w.t(c.querySelector('.nrc6-price-section a[href*="/book/"]')?.getAttribute('href')),cb:w.t(c.querySelector('.nrc6-price-section .Hy6H')?.innerText),a:w.t(c.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(c.querySelectorAll('span,div,button')).map(n=>w.t(n.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(c.querySelectorAll('ol.hJSA-list>li')).map(i=>({{t:w.t(i.innerText),a:w.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:w.t(i.querySelector('.VY2U .vmXl')?.innerText),r:w.t(i.querySelector('.VY2U [dir="ltr"]')?.innerText),s:w.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:w.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:w.t(i.querySelector('.xdW8 .vmXl')?.innerText)}})).filter(i=>i.t)}})),s:{{c:tt('cheapest'),b:tt('best'),q:tt('quickest')}},f:{{s:w.t(window.__fhFacetState?.s||''),o:window.__fhFacetState?.o||w.o().map(x=>({{n:x.n,p:x.p}}))}},e:!!(window.__fhSettleState&&window.__fhSettleState.h>=h&&!window.__fhSettleState.b),sm:m}});}};w.clickCheapest=w.c;w.applyAirlineFacet=w.f;w.settle=w.s;w.extract=w.x;
+return true;
+})()
+""".replace("{{", "{").replace("}}", "}").replace("__MODE__", "true" if same_airline_only else "false").replace("__LIMIT__", str(card_limit)).strip()
+        click_cheapest_script = "window.__fhResults?.c?.() ?? window.__fhResults?.clickCheapest?.() ?? false"
+        apply_airline_script = "window.__fhResults?.f?.() ?? window.__fhResults?.applyAirlineFacet?.() ?? false"
+        settle_script = "window.__fhResults?.s?.() ?? window.__fhResults?.settle?.() ?? false"
+        script = "window.__fhResults?.x?.() ?? window.__fhResults?.extract?.() ?? '{}'"
         if not deep:
             return {
                 "strict": False,
@@ -1038,8 +1056,58 @@ return true;
                 payload = json.loads(item)
             except json.JSONDecodeError:
                 continue
-            if isinstance(payload, dict) and isinstance(payload.get("cards"), list):
+            if not isinstance(payload, dict):
+                continue
+            if isinstance(payload.get("cards"), list):
                 return payload
+            if isinstance(payload.get("c"), list):
+                return {
+                    "card_count": payload.get("n", 0),
+                    "captured_count": payload.get("m", 0),
+                    "cards": [
+                        {
+                            "text": card.get("t", ""),
+                            "price_text": card.get("p", ""),
+                            "booking_href": card.get("h", ""),
+                            "cabin": card.get("cb", ""),
+                            "airline_text": card.get("a", ""),
+                            "badges": card.get("b", []),
+                            "legs": [
+                                {
+                                    "text": leg.get("t", ""),
+                                    "airline": leg.get("a", ""),
+                                    "time_text": leg.get("tm", ""),
+                                    "route_text": leg.get("r", ""),
+                                    "stops_text": leg.get("s", ""),
+                                    "layover_text": leg.get("ly", ""),
+                                    "duration_text": leg.get("d", ""),
+                                }
+                                for leg in card.get("l", [])
+                                if isinstance(leg, dict)
+                            ],
+                        }
+                        for card in payload.get("c", [])
+                        if isinstance(card, dict)
+                    ],
+                    "summary": {
+                        "cheapest": ((payload.get("s") or {}).get("c", "")),
+                        "best": ((payload.get("s") or {}).get("b", "")),
+                        "quickest": ((payload.get("s") or {}).get("q", "")),
+                    },
+                    "facet": {
+                        "selected": ((payload.get("f") or {}).get("s", "")),
+                        "options": [
+                            {
+                                "name": option.get("n", ""),
+                                "price": option.get("p"),
+                            }
+                            for option in ((payload.get("f") or {}).get("o") or [])
+                            if isinstance(option, dict)
+                        ],
+                    },
+                    "settled": payload.get("e"),
+                    "same_airline_mode": payload.get("sm"),
+                }
         return None
 
     def _rendered_payload_has_summary_prices(self, rendered: dict) -> bool:

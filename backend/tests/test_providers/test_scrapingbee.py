@@ -400,7 +400,7 @@ async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider
     assert "nrc6-price-section" in params["js_scenario"]
     assert "cheapest" in params["js_scenario"].lower()
     assert "scrollBy" in params["js_scenario"]
-    assert "cardLimit=180" in params["js_scenario"]
+    assert "const m=false,l=180,h=m?3:2" in params["js_scenario"]
     assert results[0].price == 829.0
     assert results[0].airline == "Icelandair / Lufthansa"
     assert results[0].duration_minutes == 1439
@@ -418,12 +418,11 @@ async def test_multi_city_uses_native_kayak_search(provider: ScrapingBeeProvider
 def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeProvider) -> None:
     scenario = json.dumps(provider._build_multi_city_results_scenario(deep=False))
 
-    assert "card.contains(other)" in scenario
-    assert "other.contains(card)" not in scenario
+    assert "const m=false,l=30,h=m?3:2" in scenario
     assert 'a[href*=\\"/book/\\"]' in scenario
-    assert "__fhSettleState" in scenario
-    assert "badges:Array.from(card.querySelectorAll" in scenario
-    assert "topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text'))" in scenario
+    assert "window.__fhSettleState" in scenario
+    assert "w.x=()=>{" in scenario
+    assert ".nrc6-price-section .e2GB-price-text" in scenario
 
 
 def test_multi_city_same_airline_scenario_uses_airline_facet_and_stricter_settle(
@@ -431,9 +430,9 @@ def test_multi_city_same_airline_scenario_uses_airline_facet_and_stricter_settle
 ) -> None:
     scenario = json.dumps(provider._build_multi_city_results_scenario(deep=True, same_airline_only=True))
 
-    assert "sameAirlineMode=true" in scenario
-    assert "applyAirlineFacet" in scenario
-    assert "requiredHits=sameAirlineMode?3:2" in scenario
+    assert "const m=true,l=180,h=m?3:2" in scenario
+    assert "window.__fhResults?.f?.() ?? window.__fhResults?.applyAirlineFacet?.() ?? false" in scenario
+    assert "window.__fhResults?.s?.() ?? window.__fhResults?.settle?.() ?? false" in scenario
     assert "window.__fhFacetState" in scenario
 
 
@@ -632,8 +631,8 @@ async def test_multi_city_same_airline_mode_uses_facet_primary_scenario(
     params = provider._client.get.await_args_list[0].kwargs["params"]
 
     assert len(results) == 1
-    assert "sameAirlineMode=true" in params["js_scenario"]
-    assert "applyAirlineFacet" in params["js_scenario"]
+    assert "const m=true,l=180,h=m?3:2" in params["js_scenario"]
+    assert "window.__fhResults?.f?.() ?? window.__fhResults?.applyAirlineFacet?.() ?? false" in params["js_scenario"]
     assert results[0].price == 1845.0
     assert results[0].airline == "Austrian Airlines"
 
