@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from io import BytesIO
 from statistics import mean
 
@@ -13,6 +13,7 @@ from app.models.all_flight_result import AllFlightResult
 from app.models.route_group import RouteGroup
 
 log = get_logger(__name__)
+_MISSING_VALUE = "N-A"
 
 _MAIN_HEADERS = [
     "Date",
@@ -164,6 +165,28 @@ def _set_date_cell(ws, *, row: int, column: int, value: object):
     return cell
 
 
+def _export_dates(route_group: RouteGroup, fallback_dates: list[date]) -> list[date]:
+    unique_fallback = sorted({d for d in fallback_dates if isinstance(d, date)})
+    configured_start = getattr(route_group, "start_date", None)
+    configured_end = getattr(route_group, "end_date", None)
+    raw_days_ahead = getattr(route_group, "days_ahead", None)
+
+    configured_start = configured_start if isinstance(configured_start, date) else None
+    configured_end = configured_end if isinstance(configured_end, date) else None
+    days_ahead = max(1, min(raw_days_ahead, 730)) if isinstance(raw_days_ahead, int) else None
+
+    if configured_start or configured_end:
+        if configured_start is None:
+            configured_start = unique_fallback[0] if unique_fallback else date.today()
+        if configured_end is None:
+            configured_end = configured_start + timedelta(days=(days_ahead or 1) - 1)
+        if configured_end >= configured_start:
+            total_days = min((configured_end - configured_start).days + 1, 730)
+            return [configured_start + timedelta(days=i) for i in range(total_days)]
+
+    return unique_fallback
+
+
 def export_route_group(
     route_group: RouteGroup,
     all_results: list[AllFlightResult],
@@ -186,7 +209,7 @@ def export_route_group(
     # LOOKUPS
     # --------------------------------------------------
 
-    all_dates = sorted({r.depart_date for r in all_results})
+    all_dates = _export_dates(route_group, [r.depart_date for r in all_results])
 
     cheapest_by_origin_date: dict[tuple[str, object], AllFlightResult] = {}
     prices_by_route: dict[tuple[str, str], list[float]] = {}
@@ -243,6 +266,11 @@ def export_route_group(
                     column=8,
                     value=int(round(float(result.price))),
                 )
+            else:
+                ws.cell(row=row_idx, column=5, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=6, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=7, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
 
         _autosize_columns(ws)
 
@@ -296,6 +324,11 @@ def export_route_group(
                         column=8,
                         value=int(round(float(result.price))),
                     )
+                else:
+                    ws.cell(row=row_idx, column=5, value=_MISSING_VALUE)
+                    ws.cell(row=row_idx, column=6, value=_MISSING_VALUE)
+                    ws.cell(row=row_idx, column=7, value=_MISSING_VALUE)
+                    ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
             else:
                 if result:
                     ws.cell(
@@ -303,6 +336,8 @@ def export_route_group(
                         column=4,
                         value=int(round(float(result.price))),
                     )
+                else:
+                    ws.cell(row=row_idx, column=4, value=_MISSING_VALUE)
 
         _autosize_columns(ws)
 
@@ -425,6 +460,7 @@ def _export_multi_city_route_group(
         return output.read()
 
     sheet_name_map = route_group.sheet_name_map or {o: o for o in route_group.origins}
+    all_dates = _export_dates(route_group, [row.depart_date for row in itinerary_rows])
 
     cheapest_by_route_date: dict[tuple[str, str, object], AllFlightResult] = {}
     for row in itinerary_rows:
@@ -465,29 +501,36 @@ def _export_multi_city_route_group(
             suffix += 1
 
     for (origin, destination), rows in sorted(rows_by_route.items()):
-        rows.sort(key=lambda item: item.depart_date)
-        if not rows:
-            continue
-
         ws = wb.create_sheet(title=build_sheet_name(origin, destination))
         _write_header_row(ws, _MULTI_CITY_HEADERS)
 
-        for row_idx, result in enumerate(rows, start=2):
-            itinerary = result.itinerary_data or {}
-            return_date = itinerary.get("return_date")
+        rows_by_date = {row.depart_date: row for row in rows}
 
-            _set_date_cell(ws, row=row_idx, column=1, value=result.depart_date)
-            _set_date_cell(ws, row=row_idx, column=2, value=return_date)
-            ws.cell(row=row_idx, column=3, value=result.origin)
-            ws.cell(row=row_idx, column=4, value=result.destination)
+        for row_idx, depart_date in enumerate(all_dates, start=2):
+            result = rows_by_date.get(depart_date)
+            itinerary = result.itinerary_data if result else {}
+            return_date = itinerary.get("return_date") if isinstance(itinerary, dict) else None
+
+            _set_date_cell(ws, row=row_idx, column=1, value=depart_date)
+            if return_date:
+                _set_date_cell(ws, row=row_idx, column=2, value=return_date)
+            else:
+                ws.cell(row=row_idx, column=2, value=_MISSING_VALUE)
+            ws.cell(row=row_idx, column=3, value=origin)
+            ws.cell(row=row_idx, column=4, value=destination)
             ws.cell(row=row_idx, column=5, value=route_group.nights)
-            ws.cell(row=row_idx, column=6, value=result.airline)
-            ws.cell(row=row_idx, column=7, value=_safe_stop_label(result.stop_label, result.stops))
-            ws.cell(row=row_idx, column=8, value=_safe_duration_label(result))
-            ws.cell(row=row_idx, column=9, value=int(round(float(result.price))))
-
-            itinerary_prices_by_origin.setdefault(origin, []).append(float(result.price))
-            all_itinerary_prices.append(result)
+            if result:
+                ws.cell(row=row_idx, column=6, value=result.airline)
+                ws.cell(row=row_idx, column=7, value=_safe_stop_label(result.stop_label, result.stops))
+                ws.cell(row=row_idx, column=8, value=_safe_duration_label(result))
+                ws.cell(row=row_idx, column=9, value=int(round(float(result.price))))
+                itinerary_prices_by_origin.setdefault(origin, []).append(float(result.price))
+                all_itinerary_prices.append(result)
+            else:
+                ws.cell(row=row_idx, column=6, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=7, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=9, value=_MISSING_VALUE)
 
         _autosize_columns(ws)
 

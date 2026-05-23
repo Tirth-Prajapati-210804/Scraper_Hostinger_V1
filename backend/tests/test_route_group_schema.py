@@ -107,6 +107,17 @@ def test_route_group_accepts_same_airline_only_flag() -> None:
     assert payload.same_airline_only is True
 
 
+def test_route_group_defaults_same_airline_only_to_true() -> None:
+    payload = RouteGroupCreate(
+        name="Canada to Japan",
+        destination_label="Japan",
+        destinations=["NRT"],
+        origins=["YVR"],
+    )
+
+    assert payload.same_airline_only is True
+
+
 def test_route_group_accepts_max_leg_duration() -> None:
     payload = RouteGroupCreate(
         name="Canada to Japan",

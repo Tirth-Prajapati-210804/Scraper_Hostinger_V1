@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from app.models.route_group import RouteGroup
-from app.schemas.route_group import RouteGroupUpdate
+from app.schemas.route_group import RouteGroupCreate, RouteGroupUpdate
 from app.services import route_group_service
 
 
@@ -237,6 +237,68 @@ async def test_update_keeps_collection_data_when_same_airline_only_changes() -> 
     assert updated is group
     assert group.same_airline_only is True
     clear_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_forces_same_airline_only_true() -> None:
+    session = AsyncMock()
+    session.add = Mock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+
+    payload = RouteGroupCreate(
+        name="Canada to Vietnam",
+        destination_label="Vietnam",
+        destinations=["SGN"],
+        origins=["YVR"],
+        same_airline_only=False,
+    )
+
+    created = await route_group_service.create(session=session, data=payload)
+
+    assert created.same_airline_only is True
+    session.add.assert_called_once()
+    session.commit.assert_awaited_once()
+    session.refresh.assert_awaited_once_with(created)
+
+
+@pytest.mark.asyncio
+async def test_update_keeps_same_airline_only_true_when_false_is_requested() -> None:
+    session = AsyncMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+
+    group_id = uuid.uuid4()
+    group = RouteGroup(
+        id=group_id,
+        name="Canada to Vietnam",
+        destination_label="Vietnam",
+        destinations=["SGN", "HAN"],
+        origins=["YVR", "YYZ"],
+        nights=10,
+        days_ahead=90,
+        sheet_name_map={"YVR": "Canada", "YYZ": "Canada"},
+        special_sheets=[],
+        is_active=True,
+        market="us",
+        currency="USD",
+        max_stops=1,
+        same_airline_only=True,
+        start_date=None,
+        end_date=None,
+        trip_type="round_trip",
+        user_id=None,
+    )
+
+    with patch.object(route_group_service, "get_by_id", AsyncMock(return_value=group)):
+        updated = await route_group_service.update(
+            session=session,
+            group_id=group_id,
+            data=RouteGroupUpdate(same_airline_only=False),
+        )
+
+    assert updated is group
+    assert group.same_airline_only is True
 
 
 @pytest.mark.asyncio

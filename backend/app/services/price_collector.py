@@ -150,10 +150,14 @@ class PriceCollector:
         provider: FlightProvider,
         *,
         market: str | None,
-    ) -> dict[str, str]:
+        same_airline_only: bool = False,
+    ) -> dict[str, object]:
+        kwargs: dict[str, object] = {}
         if market and getattr(provider, "name", "") == "scrapingbee":
-            return {"market": market}
-        return {}
+            kwargs["market"] = market
+        if same_airline_only and getattr(provider, "name", "") == "scrapingbee":
+            kwargs["same_airline_only"] = True
+        return kwargs
 
     def _normalize_stop_mode(self, max_stops: int | None) -> int | None:
         if max_stops is None:
@@ -375,6 +379,7 @@ class PriceCollector:
         nights: int | None,
         return_origin: str | None,
         return_date: date | None,
+        same_airline_only: bool,
     ) -> ProviderSearchOutcome:
         if trip_type == "multi_city":
             method = getattr(provider, "search_multi_city_diagnostic", None)
@@ -395,13 +400,21 @@ class PriceCollector:
                     legs=legs,
                     currency=currency,
                     max_stops=requested_stop_mode,
-                    **self._provider_search_kwargs(provider, market=market),
+                    **self._provider_search_kwargs(
+                        provider,
+                        market=market,
+                        same_airline_only=same_airline_only,
+                    ),
                 )
             results = await provider.search_multi_city(
                 legs=legs,
                 currency=currency,
                 max_stops=requested_stop_mode,
-                **self._provider_search_kwargs(provider, market=market),
+                **self._provider_search_kwargs(
+                    provider,
+                    market=market,
+                    same_airline_only=same_airline_only,
+                ),
             )
         elif trip_type == "round_trip":
             method = getattr(provider, "search_round_trip_diagnostic", None)
@@ -433,7 +446,7 @@ class PriceCollector:
                     depart_date=depart_date,
                     currency=currency,
                     max_stops=requested_stop_mode,
-                    **self._provider_search_kwargs(provider, market=market),
+                    **self._provider_search_kwargs(provider, market=market, same_airline_only=False),
                 )
             results = await provider.search_one_way(
                 origin=origin,
@@ -441,7 +454,7 @@ class PriceCollector:
                 depart_date=depart_date,
                 currency=currency,
                 max_stops=requested_stop_mode,
-                **self._provider_search_kwargs(provider, market=market),
+                **self._provider_search_kwargs(provider, market=market, same_airline_only=False),
             )
 
         diagnostics = ProviderSearchDiagnostics(
@@ -507,6 +520,7 @@ class PriceCollector:
                             nights=stay_nights,
                             return_origin=return_origin,
                             return_date=return_date,
+                            same_airline_only=same_airline_only,
                         )
                     elif trip_type == "round_trip":
                         stay_nights = nights or 3
@@ -523,6 +537,7 @@ class PriceCollector:
                             nights=stay_nights,
                             return_origin=return_origin,
                             return_date=return_date,
+                            same_airline_only=False,
                         )
                     else:
                         return_date = None
@@ -538,6 +553,7 @@ class PriceCollector:
                             nights=nights,
                             return_origin=return_origin,
                             return_date=None,
+                            same_airline_only=False,
                         )
 
                     raw_results = list(outcome.results)

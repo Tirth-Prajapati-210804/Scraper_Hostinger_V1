@@ -426,6 +426,17 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
     assert "topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text'))" in scenario
 
 
+def test_multi_city_same_airline_scenario_uses_airline_facet_and_stricter_settle(
+    provider: ScrapingBeeProvider,
+) -> None:
+    scenario = json.dumps(provider._build_multi_city_results_scenario(deep=True, same_airline_only=True))
+
+    assert "sameAirlineMode=true" in scenario
+    assert "applyAirlineFacet" in scenario
+    assert "requiredHits=sameAirlineMode?3:2" in scenario
+    assert "window.__fhFacetState" in scenario
+
+
 @pytest.mark.asyncio
 async def test_multi_city_filters_out_bus_results(provider: ScrapingBeeProvider) -> None:
     provider._client.get = AsyncMock(
@@ -539,6 +550,92 @@ async def test_multi_city_filters_out_bus_results(provider: ScrapingBeeProvider)
     assert len(results) == 1
     assert results[0].price == 991.0
     assert results[0].deep_link == "https://www.ca.kayak.com/book/air-only"
+
+
+@pytest.mark.asyncio
+async def test_multi_city_same_airline_mode_uses_facet_primary_scenario(
+    provider: ScrapingBeeProvider,
+) -> None:
+    provider._client.get = AsyncMock(
+        return_value=mock_response(
+            {
+                "evaluate_results": [
+                    True,
+                    True,
+                    json.dumps(
+                        {
+                            "cards": [
+                                {
+                                    "text": (
+                                        "7:50 am - 11:00 am+1 "
+                                        "YEG Edmonton - TIA Tirana "
+                                        "2 stops 19h 10m "
+                                        "7:00 am - 7:13 pm "
+                                        "SPU Split - YEG Edmonton "
+                                        "2 stops 20h 13m "
+                                        "C$1845 Economy Light Select"
+                                    ),
+                                    "price_text": "C$1845",
+                                    "booking_href": "/book/open-jaw-os",
+                                    "cabin": "Economy Light",
+                                    "airline_text": "Austrian Airlines",
+                                    "legs": [
+                                        {
+                                            "text": "YEG Edmonton - TIA Tirana 2 stops 19h 10m",
+                                            "airline": "Austrian Airlines",
+                                            "time_text": "7:50 am - 11:00 am+1",
+                                            "route_text": "YEG Edmonton - TIA Tirana",
+                                            "stops_text": "2 stops",
+                                            "layover_text": "YYZ, MUC",
+                                            "duration_text": "19h 10m",
+                                        },
+                                        {
+                                            "text": "SPU Split - YEG Edmonton 2 stops 20h 13m",
+                                            "airline": "Austrian Airlines",
+                                            "time_text": "7:00 am - 7:13 pm",
+                                            "route_text": "SPU Split - YEG Edmonton",
+                                            "stops_text": "2 stops",
+                                            "layover_text": "VIE, YYZ",
+                                            "duration_text": "20h 13m",
+                                        },
+                                    ],
+                                }
+                            ],
+                            "facet": {
+                                "selected": "Austrian Airlines",
+                                "options": [
+                                    {"name": "Austrian Airlines", "price": 1845},
+                                ],
+                            },
+                            "summary": {"cheapest": "C$1845", "best": "C$1845"},
+                        }
+                    ),
+                ]
+            }
+        )
+    )
+
+    results = await provider.search_multi_city(
+        [
+            {"departure_id": "YEG", "arrival_id": "TIA", "outbound_date": DEPART},
+            {
+                "departure_id": "SPU",
+                "arrival_id": "YEG",
+                "outbound_date": DEPART + timedelta(days=13),
+            },
+        ],
+        currency="CAD",
+        market="ca",
+        same_airline_only=True,
+    )
+
+    params = provider._client.get.await_args_list[0].kwargs["params"]
+
+    assert len(results) == 1
+    assert "sameAirlineMode=true" in params["js_scenario"]
+    assert "applyAirlineFacet" in params["js_scenario"]
+    assert results[0].price == 1845.0
+    assert results[0].airline == "Austrian Airlines"
 
 
 @pytest.mark.asyncio

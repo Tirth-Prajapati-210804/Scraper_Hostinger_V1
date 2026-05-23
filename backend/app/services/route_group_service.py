@@ -122,7 +122,7 @@ async def create(
         market=data.market,
         currency=data.currency,
         max_stops=data.max_stops,
-        same_airline_only=data.same_airline_only,
+        same_airline_only=True,
         max_leg_duration_minutes=data.max_leg_duration_minutes,
         start_date=data.start_date,
         end_date=data.end_date,
@@ -157,6 +157,8 @@ async def update(
             if previous != incoming:
                 route_identity_changed = True
         setattr(group, field, value)
+
+    group.same_airline_only = True
 
     if route_identity_changed:
         await _clear_group_collection_data(session, group_id)

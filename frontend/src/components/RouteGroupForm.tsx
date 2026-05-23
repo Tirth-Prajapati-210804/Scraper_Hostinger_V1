@@ -173,7 +173,7 @@ function buildInitialManualState(initial?: RouteGroup | null): ManualState {
     startDate: initial?.start_date ?? "",
     endDate: initial?.end_date ?? "",
     stops: stopModeToUi(initial?.max_stops),
-    sameAirlineOnly: initial?.same_airline_only ?? false,
+    sameAirlineOnly: true,
     maxLegDurationHours: initial?.max_leg_duration_minutes
       ? String(Math.round(initial.max_leg_duration_minutes / 60))
       : "",
@@ -390,29 +390,17 @@ function ConnectionSelector({
   );
 }
 
-function SameAirlineSelector({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
+function SameAirlineNotice() {
   return (
-    <label className="flex items-start gap-3 rounded-[24px] border border-[#dfe6f0] bg-[#f8fbff] px-5 py-4 text-[14px] text-[#47556f]">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-4 w-4 rounded border-[#c7d2e4] text-brand-600"
-      />
+    <div className="rounded-[24px] border border-[#dfe6f0] bg-[#f8fbff] px-5 py-4 text-[14px] text-[#47556f]">
       <span>
         <span className="block font-medium text-[#12203f]">Same airline only</span>
         <span className="mt-1 block text-[13px] leading-6 text-[#7b8aa4]">
-          Save only itineraries where the outbound airline and return airline are the same. If several
-          same-airline results exist, the cheapest one is used.
+          Same-airline collection is always enabled. Only itineraries where the outbound and return
+          airline match will be saved, and the cheapest valid same-airline result is used.
         </span>
       </span>
-    </label>
+    </div>
   );
 }
 
@@ -547,7 +535,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         market: state.market,
         currency: state.currency,
         max_stops: stopModeToApi(state.stops),
-        same_airline_only: state.sameAirlineOnly,
+        same_airline_only: true,
         max_leg_duration_minutes: maxLegDurationMinutes,
         start_date: resolvedStartDate,
         end_date: resolvedEndDate,
@@ -835,10 +823,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
           onChange={(stops) => setState((current) => ({ ...current, stops }))}
         />
 
-        <SameAirlineSelector
-          checked={state.sameAirlineOnly}
-          onChange={(sameAirlineOnly) => setState((current) => ({ ...current, sameAirlineOnly }))}
-        />
+        <SameAirlineNotice />
 
         <MaxLegDurationSelector
           value={state.maxLegDurationHours}

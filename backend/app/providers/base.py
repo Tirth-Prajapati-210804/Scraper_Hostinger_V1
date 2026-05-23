@@ -89,6 +89,7 @@ class FlightProvider(Protocol):
         cabin: str = "economy",
         currency: str = "USD",
         max_stops: int | None = None,
+        same_airline_only: bool = False,
     ) -> list[ProviderResult]: ...
 
     def is_configured(self) -> bool: ...

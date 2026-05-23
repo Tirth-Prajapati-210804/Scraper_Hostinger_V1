@@ -84,3 +84,48 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
     assert sheet["G2"].value == "1 Stop"
     assert sheet["H2"].value == "8h 20m / 10h 20m"
     assert sheet["I2"].value == 829
+
+
+def test_multi_city_export_marks_missing_dates_as_na() -> None:
+    group = SimpleNamespace(
+        trip_type="multi_city",
+        origins=["YYZ"],
+        nights=11,
+        days_ahead=3,
+        start_date=date(2026, 5, 20),
+        end_date=date(2026, 5, 22),
+        sheet_name_map={"YYZ": "Toronto Open Jaw"},
+    )
+
+    results = [
+        SimpleNamespace(
+            origin="YYZ",
+            destination="BER",
+            depart_date=date(2026, 5, 20),
+            airline="Icelandair / Lufthansa",
+            price=829.0,
+            stops=1,
+            stop_label="1 Stop",
+            itinerary_data={
+                "return_date": "2026-05-31",
+                "return_origin": "BUD",
+                "outbound_airline": "Icelandair",
+                "return_airline": "Lufthansa",
+                "stop_result_label": "1 Stop",
+                "leg_durations": [500, 620],
+            },
+        ),
+    ]
+
+    workbook_bytes = export_route_group(group, results)
+    workbook = load_workbook(BytesIO(workbook_bytes))
+    sheet = workbook["Toronto Open Jaw"]
+
+    assert sheet["A2"].value == datetime(2026, 5, 20)
+    assert sheet["A3"].value == datetime(2026, 5, 21)
+    assert sheet["A4"].value == datetime(2026, 5, 22)
+    assert sheet["B3"].value == "N-A"
+    assert sheet["F3"].value == "N-A"
+    assert sheet["G3"].value == "N-A"
+    assert sheet["H3"].value == "N-A"
+    assert sheet["I3"].value == "N-A"

@@ -119,7 +119,10 @@ def test_export_missing_date_shows_none_price() -> None:
     results = [make_result(origin="YVR", depart_date=today + timedelta(days=1), price=100.0)]
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, results)))
     ws = wb["Toronto"]
-    assert ws.cell(2, 8).value is None
+    assert ws.cell(2, 5).value == "N-A"
+    assert ws.cell(2, 6).value == "N-A"
+    assert ws.cell(2, 7).value == "N-A"
+    assert ws.cell(2, 8).value == "N-A"
 
 
 def test_export_special_sheet_4_columns() -> None:
