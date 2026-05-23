@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import date, timedelta
 from urllib.parse import urlencode
@@ -327,6 +328,66 @@ async def test_429_maps_to_rate_limited(provider: ScrapingBeeProvider) -> None:
 
     with pytest.raises(ProviderRateLimitedError):
         await provider._search_one_way_once("YVR", "NRT", DEPART)
+
+
+@pytest.mark.asyncio
+async def test_rendered_requests_use_dedicated_lane_without_blocking_plain_requests() -> None:
+    provider = ScrapingBeeProvider(
+        api_key="test-key",
+        timeout=10,
+        max_retries=1,
+        concurrency_limit=3,
+        rendered_concurrency_limit=1,
+        min_delay_seconds=0,
+    )
+
+    first_render_started = asyncio.Event()
+    allow_first_render_to_finish = asyncio.Event()
+    second_render_started = asyncio.Event()
+    plain_request_started = asyncio.Event()
+    rendered_calls = 0
+
+    async def fake_get(*_args, **kwargs):
+        nonlocal rendered_calls
+        params = kwargs["params"]
+        if params.get("json_response") == "True":
+            rendered_calls += 1
+            if rendered_calls == 1:
+                first_render_started.set()
+                await allow_first_render_to_finish.wait()
+            else:
+                second_render_started.set()
+            return mock_rendered_cards_response([])
+
+        plain_request_started.set()
+        return mock_response({"offers": []})
+
+    provider._client.get = AsyncMock(side_effect=fake_get)
+
+    first_render = asyncio.create_task(
+        provider._get_rendered_payload(
+            "https://example.com/rendered-one",
+            js_scenario={"instructions": [{"wait": 1}]},
+        )
+    )
+    await asyncio.wait_for(first_render_started.wait(), timeout=1)
+
+    second_render = asyncio.create_task(
+        provider._get_rendered_payload(
+            "https://example.com/rendered-two",
+            js_scenario={"instructions": [{"wait": 1}]},
+        )
+    )
+    plain_request = asyncio.create_task(provider._get_payload("https://example.com/plain"))
+
+    await asyncio.wait_for(plain_request_started.wait(), timeout=1)
+    assert second_render_started.is_set() is False
+
+    allow_first_render_to_finish.set()
+
+    await plain_request
+    await first_render
+    await second_render
 
 
 @pytest.mark.asyncio

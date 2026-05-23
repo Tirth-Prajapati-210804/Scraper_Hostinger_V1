@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from contextlib import asynccontextmanager
 from datetime import date
 from time import monotonic
 from urllib.parse import urljoin
@@ -261,6 +262,7 @@ class ScrapingBeeProvider:
         timeout: int = 30,
         max_retries: int = 3,
         concurrency_limit: int = 2,
+        rendered_concurrency_limit: int | None = None,
         min_delay_seconds: float = 1.0,
         quota_cooldown_seconds: int = 3600,
         country_code: str = "us",
@@ -286,6 +288,12 @@ class ScrapingBeeProvider:
         )
 
         self._semaphore = asyncio.Semaphore(max(1, concurrency_limit))
+        effective_rendered_limit = (
+            concurrency_limit
+            if rendered_concurrency_limit is None
+            else rendered_concurrency_limit
+        )
+        self._rendered_semaphore = asyncio.Semaphore(max(1, effective_rendered_limit))
         self._throttle_lock = asyncio.Lock()
         self._next_request_at = 0.0
         self._min_delay_seconds = max(0.0, min_delay_seconds)
@@ -455,6 +463,19 @@ class ScrapingBeeProvider:
                 await asyncio.sleep(wait_for)
             self._next_request_at = monotonic() + self._min_delay_seconds
 
+    @asynccontextmanager
+    async def _request_slot(self, *, rendered: bool = False):
+        if rendered:
+            async with self._rendered_semaphore:
+                async with self._semaphore:
+                    await self._wait_for_slot()
+                    yield
+            return
+
+        async with self._semaphore:
+            await self._wait_for_slot()
+            yield
+
     def _raise_for_status(self, response: httpx.Response) -> None:
         message = _extract_body_message(response) or "ScrapingBee request failed."
 
@@ -485,8 +506,7 @@ class ScrapingBeeProvider:
         js_scenario: dict[str, object] | None = None,
         country_code: str | None = None,
     ) -> dict:
-        async with self._semaphore:
-            await self._wait_for_slot()
+        async with self._request_slot():
             try:
                 response = await self._client.get(
                     self._base_url,
@@ -530,8 +550,7 @@ class ScrapingBeeProvider:
         params["block_resources"] = "True"
         params["wait"] = 2500
 
-        async with self._semaphore:
-            await self._wait_for_slot()
+        async with self._request_slot(rendered=True):
             try:
                 response = await self._client.get(
                     self._base_url,
@@ -2434,12 +2453,15 @@ class ScrapingBeePoolProvider:
         self._cursor = (self._cursor + 1) % len(self._providers)
         return self._providers[start:] + self._providers[:start]
 
-    async def _search_with_failover(self, search_fn) -> list[ProviderResult]:
+    async def _search_outcome_with_failover(self, search_fn) -> ProviderSearchOutcome:
         last_exc: BaseException | None = None
 
         for provider in self._ordered_providers():
             try:
-                return await search_fn(provider)
+                outcome = await search_fn(provider)
+                if isinstance(outcome, ProviderSearchOutcome):
+                    return outcome
+                return ProviderSearchOutcome(results=list(outcome))
             except (
                 ProviderQuotaExhaustedError,
                 ProviderAuthError,
@@ -2452,7 +2474,78 @@ class ScrapingBeePoolProvider:
         if last_exc is not None:
             raise last_exc
 
-        return []
+        return ProviderSearchOutcome(results=[])
+
+    async def _search_with_failover(self, search_fn) -> list[ProviderResult]:
+        outcome = await self._search_outcome_with_failover(search_fn)
+        return outcome.results
+
+    async def search_one_way_diagnostic(
+        self,
+        *,
+        origin: str,
+        destination: str,
+        depart_date: date,
+        market: str | None = None,
+        currency: str = "USD",
+        max_stops: int | None = None,
+        same_airline_only: bool = False,
+    ) -> ProviderSearchOutcome:
+        return await self._search_outcome_with_failover(
+            lambda provider: provider.search_one_way_diagnostic(
+                origin=origin,
+                destination=destination,
+                depart_date=depart_date,
+                market=market,
+                currency=currency,
+                max_stops=max_stops,
+                same_airline_only=same_airline_only,
+            )
+        )
+
+    async def search_round_trip_diagnostic(
+        self,
+        *,
+        origin: str,
+        destination: str,
+        depart_date: date,
+        return_date: date,
+        market: str | None = None,
+        currency: str = "USD",
+        max_stops: int | None = None,
+        same_airline_only: bool = False,
+    ) -> ProviderSearchOutcome:
+        return await self._search_outcome_with_failover(
+            lambda provider: provider.search_round_trip_diagnostic(
+                origin=origin,
+                destination=destination,
+                depart_date=depart_date,
+                return_date=return_date,
+                market=market,
+                currency=currency,
+                max_stops=max_stops,
+                same_airline_only=same_airline_only,
+            )
+        )
+
+    async def search_multi_city_diagnostic(
+        self,
+        *,
+        legs: list[dict[str, object]],
+        market: str | None = None,
+        currency: str = "USD",
+        max_stops: int | None = None,
+        same_airline_only: bool = False,
+    ) -> ProviderSearchOutcome:
+        return await self._search_outcome_with_failover(
+            lambda provider: provider.search_multi_city_diagnostic(
+                legs=legs,
+                market=market,
+                currency=currency,
+                max_stops=max_stops,
+                same_airline_only=same_airline_only,
+            )
+        )
 
     async def search_one_way(
         self,

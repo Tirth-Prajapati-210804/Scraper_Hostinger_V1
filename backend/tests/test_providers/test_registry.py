@@ -21,6 +21,7 @@ def make_settings(**overrides) -> MagicMock:
     settings.provider_timeout_seconds = 30
     settings.provider_max_retries = 3
     settings.provider_concurrency_limit = 2
+    settings.provider_rendered_concurrency_limit = 1
     settings.provider_min_delay_seconds = 0.5
     for k, v in overrides.items():
         setattr(settings, k, v)
@@ -57,7 +58,7 @@ def test_scrapingbee_debug_flag_is_passed_to_provider() -> None:
     assert provider._providers[0]._multi_city_debug is True
 
 
-def test_scrapingbee_provider_uses_minimum_concurrency_of_two() -> None:
+def test_scrapingbee_provider_respects_configured_concurrency_limit() -> None:
     registry = ProviderRegistry(
         make_settings(
             scrapingbee_api_key="bee-key-123",
@@ -67,7 +68,22 @@ def test_scrapingbee_provider_uses_minimum_concurrency_of_two() -> None:
 
     provider = registry.get_enabled()[0]
 
-    assert provider._providers[0]._semaphore._value == 2
+    assert provider._providers[0]._semaphore._value == 1
+
+
+def test_scrapingbee_provider_uses_dedicated_rendered_limit() -> None:
+    registry = ProviderRegistry(
+        make_settings(
+            scrapingbee_api_key="bee-key-123",
+            provider_concurrency_limit=3,
+            provider_rendered_concurrency_limit=1,
+        )
+    )
+
+    provider = registry.get_enabled()[0]
+
+    assert provider._providers[0]._semaphore._value == 3
+    assert provider._providers[0]._rendered_semaphore._value == 1
 
 def test_status_scrapingbee_configured() -> None:
     registry = ProviderRegistry(make_settings(scrapingbee_api_key="bee-key"))

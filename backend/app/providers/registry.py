@@ -36,16 +36,21 @@ class ProviderRegistry:
 
         scrapingbee_keys = settings.get_scrapingbee_keys()
         if scrapingbee_keys:
-            # Keep at least two in-flight slots so multi-city batches of two
-            # can actually execute concurrently even if a stale env var still
-            # pins the global provider limit to one.
-            concurrency_limit = max(2, settings.provider_concurrency_limit)
+            concurrency_limit = max(1, settings.provider_concurrency_limit)
+            rendered_concurrency_limit = max(
+                1,
+                min(
+                    getattr(settings, "provider_rendered_concurrency_limit", 1),
+                    concurrency_limit,
+                ),
+            )
             self.providers["scrapingbee"] = ScrapingBeePoolProvider(
                 api_keys=scrapingbee_keys,
                 base_url=settings.scrapingbee_base_url,
                 timeout=settings.provider_timeout_seconds,
                 max_retries=settings.provider_max_retries,
                 concurrency_limit=concurrency_limit,
+                rendered_concurrency_limit=rendered_concurrency_limit,
                 min_delay_seconds=settings.provider_min_delay_seconds,
                 country_code=settings.scrapingbee_country_code,
                 premium_proxy=settings.scrapingbee_premium_proxy,

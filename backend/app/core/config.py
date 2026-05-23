@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     provider_timeout_seconds: int = 60
     provider_max_retries: int = 1
     provider_concurrency_limit: int = 3
+    provider_rendered_concurrency_limit: int = 1
     provider_min_delay_seconds: float = 1.0
     login_rate_limit_attempts: int = 5
     login_rate_limit_window_seconds: int = 300
