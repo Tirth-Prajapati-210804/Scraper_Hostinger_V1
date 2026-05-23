@@ -459,7 +459,7 @@ def test_multi_city_same_airline_scenario_uses_airline_facet_and_stricter_settle
     assert "window.__fhR.f()" in scenario
     assert "window.__fhR.s()" in scenario
     assert "window.__fhF" in scenario
-    assert scenario_payload["instructions"][1]["wait"] == 30_000
+    assert scenario_payload["instructions"][1]["wait"] == 35_000
 
 
 def test_multi_city_same_airline_primary_request_stays_under_cap_for_live_route(
@@ -810,8 +810,8 @@ async def test_multi_city_same_airline_retries_safe_facet_primary_with_longer_wa
     assert len(results) == 1
     assert results[0].airline == "United Airlines"
     assert provider._client.get.await_count == 2
-    assert '"wait":30000' in first_params["js_scenario"]
-    assert '"wait":35000' in second_params["js_scenario"]
+    assert '"wait":35000' in first_params["js_scenario"]
+    assert '"wait":40000' in second_params["js_scenario"]
     assert "const m=true,l=180,h=m?3:2" in second_params["js_scenario"]
 
 
@@ -861,6 +861,70 @@ async def test_round_trip_same_airline_diagnostic_does_not_retry_unsafe_generic_
     assert outcome.results == []
     assert outcome.diagnostics.result_reason == "filtered_out"
     assert provider._render_results_attempt.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_round_trip_same_airline_retries_safe_rendered_path_with_longer_wait(
+    provider: ScrapingBeeProvider,
+) -> None:
+    provider._client.get = AsyncMock(
+        side_effect=[
+            mock_rendered_cards_response([]),
+            mock_rendered_cards_response(
+                [
+                    {
+                        "text": "YYZ - TIA / SPU - YYZ Air Canada C$1398",
+                        "price_text": "C$1398",
+                        "booking_href": "/book/air-canada-round-trip",
+                        "cabin": "Standard",
+                        "airline_text": "Air Canada",
+                        "legs": [
+                            {
+                                "text": "YYZ - TIA 1 stop 11h 20m",
+                                "airline": "Air Canada",
+                                "time_text": "6:00 pm - 11:20 am+1",
+                                "route_text": "YYZ - TIA",
+                                "stops_text": "1 stop",
+                                "layover_text": "VIE",
+                                "duration_text": "11h 20m",
+                            },
+                            {
+                                "text": "SPU - YYZ 1 stop 12h 50m",
+                                "airline": "Air Canada",
+                                "time_text": "8:05 am - 2:55 pm",
+                                "route_text": "SPU - YYZ",
+                                "stops_text": "1 stop",
+                                "layover_text": "CPH",
+                                "duration_text": "12h 50m",
+                            },
+                        ],
+                    }
+                ],
+                summary={"cheapest": "C$1398", "best": "C$1398"},
+                facet={"selected": "Air Canada", "options": [{"name": "Air Canada", "price": 1398}]},
+            ),
+        ]
+    )
+
+    outcome = await provider.search_round_trip_diagnostic(
+        origin="YYZ",
+        destination="TIA",
+        depart_date=date(2026, 6, 1),
+        return_date=date(2026, 6, 15),
+        market="ca",
+        currency="CAD",
+        max_stops=2,
+        same_airline_only=True,
+    )
+
+    first_params = provider._client.get.await_args_list[0].kwargs["params"]
+    second_params = provider._client.get.await_args_list[1].kwargs["params"]
+
+    assert len(outcome.results) == 1
+    assert outcome.results[0].airline == "Air Canada"
+    assert provider._client.get.await_count == 2
+    assert '"wait":35000' in first_params["js_scenario"]
+    assert '"wait":40000' in second_params["js_scenario"]
 
 
 @pytest.mark.asyncio

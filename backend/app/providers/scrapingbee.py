@@ -126,8 +126,8 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 }
 _FAST_MULTI_CITY_CARD_LIMIT = 30
 _DEEP_MULTI_CITY_CARD_LIMIT = 180
-_SAME_AIRLINE_INITIAL_WAIT_MS = 30_000
-_SAME_AIRLINE_RETRY_WAIT_MS = 35_000
+_SAME_AIRLINE_INITIAL_WAIT_MS = 35_000
+_SAME_AIRLINE_RETRY_WAIT_MS = 40_000
 def _clean_text(value: object) -> str:
     return str(value or "").strip()
 
@@ -789,10 +789,12 @@ return true;
         deep: bool = False,
         same_airline_only: bool = False,
         minimum_leg_count: int = 1,
+        same_airline_wait_ms: int | None = None,
     ) -> dict[str, object]:
         scenario = self._build_multi_city_results_scenario(
             deep=deep,
             same_airline_only=same_airline_only,
+            same_airline_wait_ms=same_airline_wait_ms,
         )
         if minimum_leg_count == 2:
             return scenario
@@ -1629,6 +1631,7 @@ return true;
         minimum_leg_count: int,
         deep: bool,
         same_airline_only: bool,
+        same_airline_wait_ms: int | None = None,
     ) -> tuple[dict, dict[str, str], list[ProviderResult], int, int]:
         rendered = await self._get_rendered_payload(
             target_url,
@@ -1636,6 +1639,7 @@ return true;
                 deep=deep,
                 same_airline_only=same_airline_only,
                 minimum_leg_count=minimum_leg_count,
+                same_airline_wait_ms=same_airline_wait_ms,
             ),
             country_code=country_code,
         )
@@ -1679,6 +1683,28 @@ return true;
             same_airline_results = self._same_airline_results_only(eligible_results)
             if same_airline_results:
                 eligible_results = same_airline_results
+            elif not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+                retry_rendered, retry_summary_prices, retry_results, retry_card_count, _ = await self._render_results_attempt(
+                    target_url=target_url,
+                    country_code=market_country_code,
+                    currency=requested_currency,
+                    trip_type=trip_type,
+                    minimum_leg_count=minimum_leg_count,
+                    deep=True,
+                    same_airline_only=True,
+                    same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+                )
+                if retry_results or retry_card_count > 0 or self._rendered_payload_has_summary_prices(retry_rendered):
+                    rendered = retry_rendered
+                    summary_prices = retry_summary_prices
+                    results = retry_results
+                    card_count = retry_card_count
+                    eligible_results = self._same_airline_results_only(
+                        self._filter_results_by_stops(retry_results, max_stops)
+                    )
+                    used_strong_retry = True
+                else:
+                    eligible_results = []
             else:
                 # Do not fall back to the generic rendered scenario here.
                 # That request shape is larger and can exceed ScrapingBee's
@@ -1799,12 +1825,17 @@ return true;
         card_count = 0
         captured_count = 0
 
-        async def _render_attempt(*, facet_primary: bool) -> tuple[dict, dict[str, str], list[ProviderResult], int, int]:
+        async def _render_attempt(
+            *,
+            facet_primary: bool,
+            same_airline_wait_ms: int | None = None,
+        ) -> tuple[dict, dict[str, str], list[ProviderResult], int, int]:
             attempt_rendered = await self._get_rendered_payload(
                 target_url,
                 js_scenario=self._build_multi_city_results_scenario(
                     deep=True,
                     same_airline_only=facet_primary,
+                    same_airline_wait_ms=same_airline_wait_ms,
                 ),
                 country_code=market_country_code,
             )
