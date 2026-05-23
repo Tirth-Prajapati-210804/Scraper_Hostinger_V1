@@ -751,6 +751,71 @@ async def test_multi_city_same_airline_does_not_retry_unsafe_generic_fallback(
 
 
 @pytest.mark.asyncio
+async def test_multi_city_same_airline_retries_safe_facet_primary_with_longer_wait(
+    provider: ScrapingBeeProvider,
+) -> None:
+    provider._client.get = AsyncMock(
+        side_effect=[
+            mock_rendered_cards_response([]),
+            mock_rendered_cards_response(
+                [
+                    {
+                        "text": "ASJ - DSS / DWD - ASJ United Airlines $910",
+                        "price_text": "$910",
+                        "booking_href": "/book/united-multi-city",
+                        "cabin": "Economy",
+                        "airline_text": "United Airlines",
+                        "legs": [
+                            {
+                                "text": "ASJ - DSS 1 stop 10h 00m",
+                                "airline": "United Airlines",
+                                "time_text": "8:00 am - 6:00 pm",
+                                "route_text": "ASJ - DSS",
+                                "stops_text": "1 stop",
+                                "layover_text": "IAD",
+                                "duration_text": "10h 00m",
+                            },
+                            {
+                                "text": "DWD - ASJ 1 stop 11h 00m",
+                                "airline": "United Airlines",
+                                "time_text": "9:00 am - 8:00 pm",
+                                "route_text": "DWD - ASJ",
+                                "stops_text": "1 stop",
+                                "layover_text": "IAD",
+                                "duration_text": "11h 00m",
+                            },
+                        ],
+                    }
+                ],
+                summary={"cheapest": "$910", "best": "$910"},
+                facet={"selected": "United Airlines", "options": [{"name": "United Airlines", "price": 910}]},
+            ),
+        ]
+    )
+
+    results = await provider.search_multi_city(
+        [
+            {"departure_id": "ASJ", "arrival_id": "DSS", "outbound_date": date(2026, 5, 23)},
+            {"departure_id": "DWD", "arrival_id": "ASJ", "outbound_date": date(2026, 6, 2)},
+        ],
+        currency="USD",
+        market="us",
+        max_stops=1,
+        same_airline_only=True,
+    )
+
+    first_params = provider._client.get.await_args_list[0].kwargs["params"]
+    second_params = provider._client.get.await_args_list[1].kwargs["params"]
+
+    assert len(results) == 1
+    assert results[0].airline == "United Airlines"
+    assert provider._client.get.await_count == 2
+    assert '"wait":30000' in first_params["js_scenario"]
+    assert '"wait":35000' in second_params["js_scenario"]
+    assert "const m=true,l=180,h=m?3:2" in second_params["js_scenario"]
+
+
+@pytest.mark.asyncio
 async def test_round_trip_same_airline_diagnostic_does_not_retry_unsafe_generic_fallback(
     provider: ScrapingBeeProvider,
 ) -> None:

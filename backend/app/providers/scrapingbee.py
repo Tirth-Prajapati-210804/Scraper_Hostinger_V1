@@ -126,6 +126,8 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 }
 _FAST_MULTI_CITY_CARD_LIMIT = 30
 _DEEP_MULTI_CITY_CARD_LIMIT = 180
+_SAME_AIRLINE_INITIAL_WAIT_MS = 30_000
+_SAME_AIRLINE_RETRY_WAIT_MS = 35_000
 def _clean_text(value: object) -> str:
     return str(value or "").strip()
 
@@ -519,8 +521,14 @@ class ScrapingBeeProvider:
         *,
         deep: bool = False,
         same_airline_only: bool = False,
+        same_airline_wait_ms: int | None = None,
     ) -> dict[str, object]:
         card_limit = _DEEP_MULTI_CITY_CARD_LIMIT if deep else _FAST_MULTI_CITY_CARD_LIMIT
+        effective_same_airline_wait_ms = (
+            same_airline_wait_ms
+            if same_airline_only and same_airline_wait_ms is not None
+            else _SAME_AIRLINE_INITIAL_WAIT_MS
+        )
         helper_script = f"""
 (()=>{{
 const sameAirlineMode={'true' if same_airline_only else 'false'};
@@ -671,7 +679,7 @@ return true;
         if not deep:
             instructions = [
                 {"evaluate": helper_script},
-                {"wait": 30_000 if same_airline_only else 5_000},
+                {"wait": effective_same_airline_wait_ms if same_airline_only else 5_000},
             ]
             if same_airline_only:
                 instructions.extend(
@@ -717,7 +725,7 @@ return true;
             }
         instructions = [
             {"evaluate": helper_script},
-            {"wait": 30_000 if same_airline_only else 6_500},
+            {"wait": effective_same_airline_wait_ms if same_airline_only else 6_500},
         ]
         if same_airline_only:
             instructions.extend(
@@ -1823,8 +1831,46 @@ return true;
         if same_airline_only:
             # Keep same-airline searches on the facet-primary rendered path.
             # The generic deep fallback is larger and can exceed ScrapingBee's
-            # request-line cap on live traffic.
-            eligible_results = self._same_airline_results_only(eligible_results)
+            # request-line cap on live traffic. If the first facet-primary pass
+            # comes back empty, retry the same safe request shape with a slightly
+            # longer settle before failing the collection.
+            same_airline_results = self._same_airline_results_only(eligible_results)
+            if same_airline_results:
+                eligible_results = same_airline_results
+            elif not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+                retry_rendered = await self._get_rendered_payload(
+                    target_url,
+                    js_scenario=self._build_multi_city_results_scenario(
+                        deep=True,
+                        same_airline_only=True,
+                        same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+                    ),
+                    country_code=market_country_code,
+                )
+                retry_summary_prices = self._multi_city_summary_prices(retry_rendered)
+                retry_results, retry_card_count, retry_captured_count = await self._parse_multi_city_rendered_payload(
+                    retry_rendered,
+                    currency=currency,
+                    deep_link=target_url,
+                    market_country_code=market_country_code,
+                )
+                if (
+                    retry_results
+                    or retry_card_count > 0
+                    or self._rendered_payload_has_summary_prices(retry_rendered)
+                ):
+                    rendered = retry_rendered
+                    summary_prices = retry_summary_prices
+                    results = retry_results
+                    card_count = retry_card_count
+                    captured_count = retry_captured_count
+                    eligible_results = self._same_airline_results_only(
+                        self._filter_results_by_stops(retry_results, max_stops)
+                    )
+                else:
+                    eligible_results = []
+            else:
+                eligible_results = []
         else:
             for deep_attempt in range(2):
                 if results or card_count > 0 or self._rendered_payload_has_summary_prices(rendered):
