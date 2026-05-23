@@ -671,7 +671,7 @@ return true;
         if not deep:
             instructions = [
                 {"evaluate": helper_script},
-                {"wait": 35_000 if same_airline_only else 5_000},
+                {"wait": 30_000 if same_airline_only else 5_000},
             ]
             if same_airline_only:
                 instructions.extend(
@@ -717,7 +717,7 @@ return true;
             }
         instructions = [
             {"evaluate": helper_script},
-            {"wait": 35_000 if same_airline_only else 6_500},
+            {"wait": 30_000 if same_airline_only else 6_500},
         ]
         if same_airline_only:
             instructions.extend(
@@ -1672,27 +1672,10 @@ return true;
             if same_airline_results:
                 eligible_results = same_airline_results
             else:
-                used_strong_retry = True
-                fallback_rendered, fallback_summary_prices, fallback_results, fallback_card_count, _ = await self._render_results_attempt(
-                    target_url=target_url,
-                    country_code=market_country_code,
-                    currency=requested_currency,
-                    trip_type=trip_type,
-                    minimum_leg_count=minimum_leg_count,
-                    deep=True,
-                    same_airline_only=False,
-                )
-                fallback_eligible = self._filter_results_by_stops(fallback_results, max_stops)
-                fallback_same_airline = self._same_airline_results_only(fallback_eligible)
-                if (
-                    fallback_same_airline
-                    or (not results and fallback_results)
-                    or (not results and fallback_card_count > card_count)
-                ):
-                    rendered = fallback_rendered
-                    summary_prices = fallback_summary_prices
-                    results = fallback_results
-                    eligible_results = fallback_same_airline or fallback_eligible
+                # Do not fall back to the generic rendered scenario here.
+                # That request shape is larger and can exceed ScrapingBee's
+                # request-line limit for same-airline searches.
+                eligible_results = []
         else:
             if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
                 retry_rendered, retry_summary_prices, retry_results, retry_card_count, _ = await self._render_results_attempt(
@@ -1838,24 +1821,10 @@ return true;
         eligible_results = self._filter_results_by_stops(results, max_stops)
 
         if same_airline_only:
-            primary_same_airline = self._same_airline_results_only(eligible_results)
-            if not primary_same_airline:
-                fallback_rendered, fallback_summary_prices, fallback_results, fallback_card_count, fallback_captured_count = await _render_attempt(
-                    facet_primary=False
-                )
-                fallback_eligible = self._filter_results_by_stops(fallback_results, max_stops)
-                fallback_same_airline = self._same_airline_results_only(fallback_eligible)
-                if (
-                    fallback_same_airline
-                    or (not results and fallback_results)
-                    or (not results and fallback_card_count > card_count)
-                ):
-                    rendered = fallback_rendered
-                    summary_prices = fallback_summary_prices
-                    results = fallback_results
-                    card_count = fallback_card_count
-                    captured_count = fallback_captured_count
-                    eligible_results = fallback_eligible
+            # Keep same-airline searches on the facet-primary rendered path.
+            # The generic deep fallback is larger and can exceed ScrapingBee's
+            # request-line cap on live traffic.
+            eligible_results = self._same_airline_results_only(eligible_results)
         else:
             for deep_attempt in range(2):
                 if results or card_count > 0 or self._rendered_payload_has_summary_prices(rendered):

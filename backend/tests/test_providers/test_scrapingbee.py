@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
+from urllib.parse import urlencode
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.providers.base import ProviderQuotaExhaustedError, ProviderRateLimitedError
+from app.providers.base import ProviderQuotaExhaustedError, ProviderRateLimitedError, ProviderResult
 from app.providers.scrapingbee import ScrapingBeeProvider
 
 
@@ -458,7 +459,39 @@ def test_multi_city_same_airline_scenario_uses_airline_facet_and_stricter_settle
     assert "window.__fhR.f()" in scenario
     assert "window.__fhR.s()" in scenario
     assert "window.__fhF" in scenario
-    assert scenario_payload["instructions"][1]["wait"] == 35_000
+    assert scenario_payload["instructions"][1]["wait"] == 30_000
+
+
+def test_multi_city_same_airline_primary_request_stays_under_cap_for_live_route(
+    provider: ScrapingBeeProvider,
+) -> None:
+    target_url = provider._build_multi_city_results_url(
+        outbound_origin="ASJ",
+        outbound_destination="DSS",
+        outbound_date=date(2026, 5, 23),
+        inbound_origin="DWD",
+        inbound_destination="ASJ",
+        inbound_date=date(2026, 6, 2),
+        market="us",
+        currency="USD",
+    )
+
+    def request_line_len(*, same_airline_only: bool) -> int:
+        params = provider._base_request_params(target_url, country_code="us")
+        params["json_response"] = "True"
+        params["js_scenario"] = json.dumps(
+            provider._build_multi_city_results_scenario(
+                deep=True,
+                same_airline_only=same_airline_only,
+            ),
+            separators=(",", ":"),
+        )
+        params["block_resources"] = "True"
+        params["wait"] = 2500
+        return len(provider._base_url + "?" + urlencode(params))
+
+    assert request_line_len(same_airline_only=True) < 8190
+    assert request_line_len(same_airline_only=False) > 8190
 
 
 @pytest.mark.asyncio
@@ -660,6 +693,109 @@ async def test_multi_city_same_airline_mode_uses_facet_primary_scenario(
     assert "window.__fhR.f()" in params["js_scenario"]
     assert results[0].price == 1845.0
     assert results[0].airline == "Austrian Airlines"
+
+
+@pytest.mark.asyncio
+async def test_multi_city_same_airline_does_not_retry_unsafe_generic_fallback(
+    provider: ScrapingBeeProvider,
+) -> None:
+    provider._client.get = AsyncMock(
+        return_value=mock_rendered_cards_response(
+            [
+                {
+                    "text": "ASJ - DSS / DWD - ASJ mixed carriers $910",
+                    "price_text": "$910",
+                    "booking_href": "/book/mixed-multi-city",
+                    "cabin": "Economy",
+                    "airline_text": "United Airlines / Lufthansa",
+                    "legs": [
+                        {
+                            "text": "ASJ - DSS 1 stop 10h 00m",
+                            "airline": "United Airlines",
+                            "time_text": "8:00 am - 6:00 pm",
+                            "route_text": "ASJ - DSS",
+                            "stops_text": "1 stop",
+                            "layover_text": "IAD",
+                            "duration_text": "10h 00m",
+                        },
+                        {
+                            "text": "DWD - ASJ 1 stop 11h 00m",
+                            "airline": "Lufthansa",
+                            "time_text": "9:00 am - 8:00 pm",
+                            "route_text": "DWD - ASJ",
+                            "stops_text": "1 stop",
+                            "layover_text": "FRA",
+                            "duration_text": "11h 00m",
+                        },
+                    ],
+                }
+            ],
+            summary={"cheapest": "$910", "best": "$910"},
+            facet={"selected": "United Airlines", "options": [{"name": "United Airlines", "price": 910}]},
+        )
+    )
+
+    results = await provider.search_multi_city(
+        [
+            {"departure_id": "ASJ", "arrival_id": "DSS", "outbound_date": date(2026, 5, 23)},
+            {"departure_id": "DWD", "arrival_id": "ASJ", "outbound_date": date(2026, 6, 2)},
+        ],
+        currency="USD",
+        market="us",
+        max_stops=1,
+        same_airline_only=True,
+    )
+
+    assert results == []
+    assert provider._client.get.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_round_trip_same_airline_diagnostic_does_not_retry_unsafe_generic_fallback(
+    provider: ScrapingBeeProvider,
+) -> None:
+    mixed_result = ProviderResult(
+        price=910.0,
+        currency="USD",
+        airline="United Airlines / Lufthansa",
+        deep_link="https://www.kayak.com/book/mixed-round-trip",
+        provider="scrapingbee",
+        duration_minutes=1260,
+        stops=2,
+        raw_data={
+            "airline_names": ["United Airlines", "Lufthansa"],
+            "legs": [
+                {"airline": "United Airlines"},
+                {"airline": "Lufthansa"},
+            ],
+            "outbound_airline": "United Airlines",
+            "return_airline": "Lufthansa",
+        },
+    )
+    provider._render_results_attempt = AsyncMock(
+        return_value=(
+            {"facet": {"selected": "United Airlines", "options": [{"name": "United Airlines", "price": 910}]}},
+            {"cheapest": "$910"},
+            [mixed_result],
+            1,
+            1,
+        )
+    )
+
+    outcome = await provider.search_round_trip_diagnostic(
+        origin="ASJ",
+        destination="DSS",
+        depart_date=date(2026, 5, 23),
+        return_date=date(2026, 6, 2),
+        market="us",
+        currency="USD",
+        max_stops=1,
+        same_airline_only=True,
+    )
+
+    assert outcome.results == []
+    assert outcome.diagnostics.result_reason == "filtered_out"
+    assert provider._render_results_attempt.await_count == 1
 
 
 @pytest.mark.asyncio
