@@ -826,7 +826,7 @@ return true;
         if not deep:
             instructions = [
                 {"evaluate": helper_script},
-                {"wait": 4_500 if same_airline_only else 5_000},
+                {"wait": 30_000 if same_airline_only else 5_000},
             ]
             if same_airline_only:
                 instructions.extend(
@@ -872,7 +872,7 @@ return true;
             }
         instructions = [
             {"evaluate": helper_script},
-            {"wait": 5_500 if same_airline_only else 6_500},
+            {"wait": 30_000 if same_airline_only else 6_500},
         ]
         if same_airline_only:
             instructions.extend(
