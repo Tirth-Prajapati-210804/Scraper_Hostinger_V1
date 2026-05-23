@@ -803,7 +803,7 @@ return true;
 """.strip()
         helper_script = """
 (()=>{{
-const m=__MODE__,l=__LIMIT__,h=m?3:2,w=window.__fhResults||(window.__fhResults={});
+const m=__MODE__,l=__LIMIT__,h=m?3:2,w=window.__fhR||(window.__fhR={});
 w.t=v=>(v||'').toString().replace(/\\s+/g,' ').trim();
 w.n=v=>(v||'').toString().replace(/\\u00a0/g,' ').split(/\\n+/).map(w.t).filter(Boolean);
 w.v=e=>{{if(!e)return 0;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none';}};
@@ -813,31 +813,75 @@ w.c=()=>{{const e=Array.from(document.querySelectorAll('button,a,[role="button"]
 w.b=()=>Array.from(document.querySelectorAll('[role="progressbar"],progress,[aria-busy="true"],[class*="loading"],[class*="progress"]')).some(w.v);
 w.r=()=>Array.from(document.querySelectorAll('section,aside,div')).filter(e=>w.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{{0,3}}\\$|[$â‚¬Â£â‚¹])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;
 w.o=()=>{{const r=w.r();if(!r)return[];const x=/^(select all|clear all|show \\d+ more airlines?|alliance|airports|times|take-off|landing|book now, pay later|transportation options)$/i,y=/(multiple airlines|multiple airline|mixed airlines|various airlines)/i,s=new Map();for(const e of Array.from(r.querySelectorAll('label,button,[role="button"],li,div,span'))){if(!w.v(e))continue;const a=w.n(e.innerText);if(!a.length||a.length>3)continue;const j=a.join('|'),p=w.p(j);if(p===null)continue;let n=a.find(z=>w.p(z)===null)||'';n=w.t(n.replace(/\\b\\d+\\b/g,''));if(!n||x.test(n)||y.test(n))continue;const c=e.closest('label,button,[role="button"],li')||e,k=n.toLowerCase(),u=s.get(k);if(!u||p<u.p)s.set(k,{{n,p,e:c}});}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4);}};
-w.f=()=>{{if(!m)return 0;const o=w.o();window.__fhFacetState={{s:'',o:o.map(x=>({{n:x.n,p:x.p}}))}};if(!o.length)return 0;const t=o[0];window.__fhFacetState.s=t.n;const c=t.e.querySelector('input[type="checkbox"]');if(c&&!c.checked){{c.click();return 1;}}t.e.click();return 1;}};
-w.s=()=>{{const p=w.g().join('|'),y=Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).filter(w.v).map(e=>w.t(e.innerText||e.getAttribute('aria-label'))).filter(v=>/^(cheapest|best|quickest)(\\s|$)/i.test(v)).slice(0,3).join('|'),o=(window.__fhFacetState?.o||w.o().map(x=>({{n:x.n,p:x.p}}))).map(x=>`${{x.n}}:${{x.p}}`).join('|'),k=[w.b()?1:0,window.__fhFacetState?.s||'',y,p,o].join('||'),st=window.__fhSettleState||{{k:'',h:0}};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=w.b()?1:0;window.__fhSettleState=st;return !st.b&&p&&st.h>=h;}};
-w.x=()=>{{const d=n=>n&&n.querySelector('.nrc6-price-section .e2GB-price-text')&&n.querySelectorAll('ol.hJSA-list>li').length>=2,r=Array.from(document.querySelectorAll('div[aria-label^="Result item"],div[data-resultid],div.nrc6,div[class*="nrc6"]')).filter(d),u=r.filter((c,i)=>!r.some((o,j)=>j!==i&&c.contains(o)&&d(o))),tt=q=>(Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).find(e=>new RegExp('^'+q+'(?:\\\\s|$)','i').test(w.t(e.innerText||e.getAttribute('aria-label'))))?.innerText||'').trim();return JSON.stringify({{n:u.length,m:u.slice(0,l).length,c:u.slice(0,l).map(c=>({{t:w.t(c.innerText),p:w.t(c.querySelector('.nrc6-price-section .e2GB-price-text')?.innerText),h:w.t(c.querySelector('.nrc6-price-section a[href*="/book/"]')?.getAttribute('href')),cb:w.t(c.querySelector('.nrc6-price-section .Hy6H')?.innerText),a:w.t(c.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(c.querySelectorAll('span,div,button')).map(n=>w.t(n.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(c.querySelectorAll('ol.hJSA-list>li')).map(i=>({{t:w.t(i.innerText),a:w.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:w.t(i.querySelector('.VY2U .vmXl')?.innerText),r:w.t(i.querySelector('.VY2U [dir="ltr"]')?.innerText),s:w.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:w.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:w.t(i.querySelector('.xdW8 .vmXl')?.innerText)}})).filter(i=>i.t)}})),s:{{c:tt('cheapest'),b:tt('best'),q:tt('quickest')}},f:{{s:w.t(window.__fhFacetState?.s||''),o:window.__fhFacetState?.o||w.o().map(x=>({{n:x.n,p:x.p}}))}},e:!!(window.__fhSettleState&&window.__fhSettleState.h>=h&&!window.__fhSettleState.b),sm:m}});}};w.clickCheapest=w.c;w.applyAirlineFacet=w.f;w.settle=w.s;w.extract=w.x;
+w.f=()=>{{if(!m)return 0;const o=w.o();window.__fhF={{s:'',o:o.map(x=>({{n:x.n,p:x.p}}))}};if(!o.length)return 0;const t=o[0];window.__fhF.s=t.n;const c=t.e.querySelector('input[type="checkbox"]');if(c&&!c.checked){{c.click();return 1;}}t.e.click();return 1;}};
+w.s=()=>{{const p=w.g().join('|'),y=Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).filter(w.v).map(e=>w.t(e.innerText||e.getAttribute('aria-label'))).filter(v=>/^(cheapest|best|quickest)(\\s|$)/i.test(v)).slice(0,3).join('|'),o=(window.__fhF?.o||w.o().map(x=>({{n:x.n,p:x.p}}))).map(x=>`${{x.n}}:${{x.p}}`).join('|'),k=[w.b()?1:0,window.__fhF?.s||'',y,p,o].join('||'),st=window.__fhS||{{k:'',h:0}};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=w.b()?1:0;window.__fhS=st;return !st.b&&p&&st.h>=h;}};
+w.x=()=>{{const d=n=>n&&n.querySelector('.nrc6-price-section .e2GB-price-text')&&n.querySelectorAll('ol.hJSA-list>li').length>=2,r=Array.from(document.querySelectorAll('div[aria-label^="Result item"],div[data-resultid],div.nrc6,div[class*="nrc6"]')).filter(d),u=r.filter((c,i)=>!r.some((o,j)=>j!==i&&c.contains(o)&&d(o))),tt=q=>(Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).find(e=>new RegExp('^'+q+'(?:\\\\s|$)','i').test(w.t(e.innerText||e.getAttribute('aria-label'))))?.innerText||'').trim();return JSON.stringify({{n:u.length,m:u.slice(0,l).length,c:u.slice(0,l).map(c=>({{t:w.t(c.innerText),p:w.t(c.querySelector('.nrc6-price-section .e2GB-price-text')?.innerText),h:w.t(c.querySelector('.nrc6-price-section a[href*="/book/"]')?.getAttribute('href')),cb:w.t(c.querySelector('.nrc6-price-section .Hy6H')?.innerText),a:w.t(c.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(c.querySelectorAll('span,div,button')).map(n=>w.t(n.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(c.querySelectorAll('ol.hJSA-list>li')).map(i=>({{t:w.t(i.innerText),a:w.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:w.t(i.querySelector('.VY2U .vmXl')?.innerText),r:w.t(i.querySelector('.VY2U [dir="ltr"]')?.innerText),s:w.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:w.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:w.t(i.querySelector('.xdW8 .vmXl')?.innerText)}})).filter(i=>i.t)}})),s:{{c:tt('cheapest'),b:tt('best'),q:tt('quickest')}},f:{{s:w.t(window.__fhF?.s||''),o:window.__fhF?.o||w.o().map(x=>({{n:x.n,p:x.p}}))}},e:!!(window.__fhS&&window.__fhS.h>=h&&!window.__fhS.b),sm:m}});}};
 return true;
 })()
 """.replace("{{", "{").replace("}}", "}").replace("__MODE__", "true" if same_airline_only else "false").replace("__LIMIT__", str(card_limit)).strip()
-        click_cheapest_script = "window.__fhResults?.c?.() ?? window.__fhResults?.clickCheapest?.() ?? false"
-        apply_airline_script = "window.__fhResults?.f?.() ?? window.__fhResults?.applyAirlineFacet?.() ?? false"
-        settle_script = "window.__fhResults?.s?.() ?? window.__fhResults?.settle?.() ?? false"
-        script = "window.__fhResults?.x?.() ?? window.__fhResults?.extract?.() ?? '{}'"
+        click_cheapest_script = "window.__fhR.c()"
+        apply_airline_script = "window.__fhR.f()"
+        settle_script = "window.__fhR.s()"
+        script = "window.__fhR.x()"
         if not deep:
+            instructions = [
+                {"evaluate": helper_script},
+                {"wait": 4_500 if same_airline_only else 5_000},
+            ]
+            if same_airline_only:
+                instructions.extend(
+                    [
+                        {"evaluate": apply_airline_script},
+                        {"wait": 1_200},
+                        {"evaluate": "window.scrollBy(0,1200)"},
+                        {"wait": 800},
+                        {"evaluate": settle_script},
+                        {"wait": 1_000},
+                        {"evaluate": settle_script},
+                        {"wait": 1_000},
+                        {"evaluate": settle_script},
+                        {"evaluate": script},
+                    ]
+                )
+            else:
+                instructions.extend(
+                    [
+                        {"evaluate": settle_script},
+                        {"wait": 1_000},
+                        {"evaluate": settle_script},
+                        {"wait": 1_000},
+                        {"evaluate": apply_airline_script},
+                        {"wait": 1_200},
+                        {"evaluate": click_cheapest_script},
+                        {"wait": 1_000},
+                        {"evaluate": "window.scrollBy(0,1200)"},
+                        {"wait": 800},
+                        {"evaluate": settle_script},
+                        {"wait": 1_000},
+                        {"evaluate": settle_script},
+                        {"wait": 1_000},
+                        {"evaluate": settle_script},
+                        {"wait": 1_000},
+                        {"evaluate": settle_script},
+                        {"evaluate": script},
+                    ]
+                )
             return {
                 "strict": False,
-                "instructions": [
-                    {"evaluate": helper_script},
-                    {"wait": 4_500 if same_airline_only else 5_000},
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
+                "instructions": instructions,
+            }
+        instructions = [
+            {"evaluate": helper_script},
+            {"wait": 5_500 if same_airline_only else 6_500},
+        ]
+        if same_airline_only:
+            instructions.extend(
+                [
                     {"evaluate": apply_airline_script},
                     {"wait": 1_200},
-                    {"evaluate": click_cheapest_script},
-                    {"wait": 1_000},
-                    {"evaluate": "window.scrollBy(0, 1200);"},
+                    {"evaluate": "window.scrollBy(0,1800)"},
+                    {"wait": 800},
+                    {"evaluate": "window.scrollBy(0,2800)"},
                     {"wait": 800},
                     {"evaluate": settle_script},
                     {"wait": 1_000},
@@ -847,41 +891,43 @@ return true;
                     {"wait": 1_000},
                     {"evaluate": settle_script},
                     {"evaluate": script},
-                ],
-            }
+                ]
+            )
+        else:
+            instructions.extend(
+                [
+                    {"evaluate": settle_script},
+                    {"wait": 1_000},
+                    {"evaluate": settle_script},
+                    {"wait": 1_000},
+                    {"evaluate": apply_airline_script},
+                    {"wait": 1_200},
+                    {"evaluate": click_cheapest_script},
+                    {"wait": 1_200},
+                    {"evaluate": "window.scrollBy(0,1200)"},
+                    {"wait": 800},
+                    {"evaluate": "window.scrollBy(0,1800)"},
+                    {"wait": 800},
+                    {"evaluate": click_cheapest_script},
+                    {"evaluate": "window.scrollBy(0,2400)"},
+                    {"wait": 800},
+                    {"evaluate": "window.scrollBy(0,2800)"},
+                    {"wait": 800},
+                    {"evaluate": "window.scrollBy(0,3200)"},
+                    {"wait": 800},
+                    {"evaluate": settle_script},
+                    {"wait": 1_000},
+                    {"evaluate": settle_script},
+                    {"wait": 1_000},
+                    {"evaluate": settle_script},
+                    {"wait": 1_000},
+                    {"evaluate": settle_script},
+                    {"evaluate": script},
+                ]
+            )
         return {
             "strict": False,
-            "instructions": [
-                {"evaluate": helper_script},
-                {"wait": 5_500 if same_airline_only else 6_500},
-                {"evaluate": settle_script},
-                {"wait": 1_000},
-                {"evaluate": settle_script},
-                {"wait": 1_000},
-                {"evaluate": apply_airline_script},
-                {"wait": 1_200},
-                {"evaluate": click_cheapest_script},
-                {"wait": 1_200},
-                {"evaluate": "window.scrollBy(0, 1200);"},
-                {"wait": 800},
-                {"evaluate": "window.scrollBy(0, 1800);"},
-                {"wait": 800},
-                {"evaluate": click_cheapest_script},
-                {"evaluate": "window.scrollBy(0, 2400);"},
-                {"wait": 800},
-                {"evaluate": "window.scrollBy(0, 2800);"},
-                {"wait": 800},
-                {"evaluate": "window.scrollBy(0, 3200);"},
-                {"wait": 800},
-                {"evaluate": settle_script},
-                {"wait": 1_000},
-                {"evaluate": settle_script},
-                {"wait": 1_000},
-                {"evaluate": settle_script},
-                {"wait": 1_000},
-                {"evaluate": settle_script},
-                {"evaluate": script},
-            ],
+            "instructions": instructions,
         }
 
     async def _parse_multi_city_rendered_payload(

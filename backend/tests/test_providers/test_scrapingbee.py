@@ -420,7 +420,7 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
 
     assert "const m=false,l=30,h=m?3:2" in scenario
     assert 'a[href*=\\"/book/\\"]' in scenario
-    assert "window.__fhSettleState" in scenario
+    assert "window.__fhS" in scenario
     assert "w.x=()=>{" in scenario
     assert ".nrc6-price-section .e2GB-price-text" in scenario
 
@@ -431,9 +431,9 @@ def test_multi_city_same_airline_scenario_uses_airline_facet_and_stricter_settle
     scenario = json.dumps(provider._build_multi_city_results_scenario(deep=True, same_airline_only=True))
 
     assert "const m=true,l=180,h=m?3:2" in scenario
-    assert "window.__fhResults?.f?.() ?? window.__fhResults?.applyAirlineFacet?.() ?? false" in scenario
-    assert "window.__fhResults?.s?.() ?? window.__fhResults?.settle?.() ?? false" in scenario
-    assert "window.__fhFacetState" in scenario
+    assert "window.__fhR.f()" in scenario
+    assert "window.__fhR.s()" in scenario
+    assert "window.__fhF" in scenario
 
 
 @pytest.mark.asyncio
@@ -632,7 +632,7 @@ async def test_multi_city_same_airline_mode_uses_facet_primary_scenario(
 
     assert len(results) == 1
     assert "const m=true,l=180,h=m?3:2" in params["js_scenario"]
-    assert "window.__fhResults?.f?.() ?? window.__fhResults?.applyAirlineFacet?.() ?? false" in params["js_scenario"]
+    assert "window.__fhR.f()" in params["js_scenario"]
     assert results[0].price == 1845.0
     assert results[0].airline == "Austrian Airlines"
 
