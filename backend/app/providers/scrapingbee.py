@@ -126,6 +126,17 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 }
 _FAST_MULTI_CITY_CARD_LIMIT = 30
 _DEEP_MULTI_CITY_CARD_LIMIT = 180
+_DEEP_RESULTS_JS_SCENARIO = {
+    "instructions": [
+        {"wait": 5000},
+        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.35);"},
+        {"wait": 2500},
+        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.7);"},
+        {"wait": 2500},
+        {"evaluate": "window.scrollTo(0, document.body.scrollHeight);"},
+        {"wait": 3000},
+    ]
+}
 _SAME_AIRLINE_INITIAL_WAIT_MS = 35_000
 _SAME_AIRLINE_RETRY_WAIT_MS = 40_000
 def _clean_text(value: object) -> str:
@@ -193,6 +204,55 @@ class ScrapingBeeProvider:
 
     name = "scrapingbee"
 
+    _AI_EXTRACT_RULES = {
+        "offers": {
+            "description": "visible KAYAK flight offers on the page",
+            "type": "list",
+            "output": {
+                "price": {
+                    "description": "total itinerary price as a number without currency symbols",
+                    "type": "number",
+                },
+                "price_text": {
+                    "description": "exact displayed itinerary price text including currency symbol or code",
+                    "type": "string",
+                },
+                "airline": {
+                    "description": "airline name or airline combination shown for the itinerary",
+                    "type": "string",
+                },
+                "duration": {
+                    "description": "total itinerary duration in minutes if inferable, otherwise 0",
+                    "type": "number",
+                },
+                "duration_text": {
+                    "description": "displayed itinerary duration text such as 23h 10m",
+                    "type": "string",
+                },
+                "stops": {
+                    "description": "number of stops as an integer where nonstop is 0",
+                    "type": "number",
+                },
+                "link": {
+                    "description": "deal or booking link for the itinerary if visible",
+                    "type": "string",
+                },
+                "summary": {
+                    "description": "short itinerary summary including times, stops, and other visible details",
+                    "type": "string",
+                },
+            },
+        }
+    }
+
+    _JS_SCENARIO = {
+        "instructions": [
+            {"wait": 3000},
+            {"evaluate": "window.scrollTo(0, document.body.scrollHeight);"},
+            {"wait": 3000},
+        ]
+    }
+
     def __init__(
         self,
         api_key: str,
@@ -237,6 +297,40 @@ class ScrapingBeeProvider:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    def _parse_partial_payload(self, body: str) -> dict | None:
+        if '"offers"' not in body:
+            return None
+
+        offers_key = body.find('"offers"')
+        list_start = body.find("[", offers_key)
+        if list_start < 0:
+            return None
+
+        decoder = json.JSONDecoder()
+        cursor = list_start + 1
+        offers: list[dict[str, object]] = []
+
+        while cursor < len(body):
+            while cursor < len(body) and body[cursor] in " \r\n\t,":
+                cursor += 1
+
+            if cursor >= len(body) or body[cursor] == "]":
+                break
+
+            try:
+                parsed, next_cursor = decoder.raw_decode(body, cursor)
+            except json.JSONDecodeError:
+                break
+
+            if isinstance(parsed, dict):
+                offers.append(parsed)
+            cursor = next_cursor
+
+        if not offers:
+            return None
+
+        return {"offers": offers}
 
     def _market_country_code(
         self,
@@ -328,6 +422,25 @@ class ScrapingBeeProvider:
             params["stealth_proxy"] = "True"
         return params
 
+    def _base_params(
+        self,
+        target_url: str,
+        *,
+        ai_extract_rules: dict[str, object] | None = None,
+        js_scenario: dict[str, object] | None = None,
+        country_code: str | None = None,
+    ) -> dict[str, object]:
+        params = self._base_request_params(target_url, country_code=country_code)
+        params["ai_extract_rules"] = json.dumps(
+            ai_extract_rules or self._AI_EXTRACT_RULES,
+            separators=(",", ":"),
+        )
+        params["js_scenario"] = json.dumps(
+            js_scenario or self._JS_SCENARIO,
+            separators=(",", ":"),
+        )
+        return params
+
     def _quota_blocked(self) -> bool:
         return monotonic() < self._quota_blocked_until
 
@@ -363,6 +476,46 @@ class ScrapingBeeProvider:
                 self._trip_quota_breaker()
                 raise ProviderQuotaExhaustedError(message)
             raise RuntimeError(message)
+
+    async def _get_payload(
+        self,
+        target_url: str,
+        *,
+        ai_extract_rules: dict[str, object] | None = None,
+        js_scenario: dict[str, object] | None = None,
+        country_code: str | None = None,
+    ) -> dict:
+        async with self._semaphore:
+            await self._wait_for_slot()
+            try:
+                response = await self._client.get(
+                    self._base_url,
+                    params=self._base_params(
+                        target_url,
+                        ai_extract_rules=ai_extract_rules,
+                        js_scenario=js_scenario,
+                        country_code=country_code,
+                    ),
+                )
+            except httpx.TimeoutException as exc:
+                raise RuntimeError("ScrapingBee request timed out.") from exc
+            except httpx.HTTPError as exc:
+                raise RuntimeError("ScrapingBee request failed.") from exc
+
+        self._raise_for_status(response)
+
+        try:
+            data = await asyncio.to_thread(response.json)
+        except Exception as exc:
+            partial = self._parse_partial_payload(response.text)
+            if partial is not None:
+                return partial
+            raise RuntimeError("ScrapingBee returned invalid JSON.") from exc
+
+        if not isinstance(data, dict):
+            raise RuntimeError("ScrapingBee returned an unexpected response body.")
+
+        return data
 
     async def _get_rendered_payload(
         self,
@@ -1556,14 +1709,18 @@ return true;
             market=market,
             currency=currency,
         )
-        rendered, _, results, _, _ = await self._render_results_attempt(
-            target_url=target_url,
+        del same_airline_only
+        payload = await self._get_payload(
+            target_url,
             country_code=market_country_code,
+            js_scenario=_DEEP_RESULTS_JS_SCENARIO if deep else None,
+        )
+        results = self._normalize_flights(
+            payload,
             currency=currency,
+            deep_link=target_url,
             trip_type="one_way",
-            minimum_leg_count=1,
-            deep=deep,
-            same_airline_only=same_airline_only,
+            market_country_code=market_country_code,
         )
         log.info(
             "scrapingbee_results",
@@ -1600,15 +1757,29 @@ return true;
             market=market,
             currency=currency,
         )
-        rendered, _, results, _, _ = await self._render_results_attempt(
-            target_url=target_url,
-            country_code=market_country_code,
-            currency=currency,
-            trip_type="round_trip",
-            minimum_leg_count=2,
-            deep=deep,
-            same_airline_only=same_airline_only,
-        )
+        if same_airline_only:
+            rendered, _, results, _, _ = await self._render_results_attempt(
+                target_url=target_url,
+                country_code=market_country_code,
+                currency=currency,
+                trip_type="round_trip",
+                minimum_leg_count=2,
+                deep=deep,
+                same_airline_only=True,
+            )
+        else:
+            payload = await self._get_payload(
+                target_url,
+                country_code=market_country_code,
+                js_scenario=_DEEP_RESULTS_JS_SCENARIO if deep else None,
+            )
+            results = self._normalize_flights(
+                payload,
+                currency=currency,
+                deep_link=target_url,
+                trip_type="round_trip",
+                market_country_code=market_country_code,
+            )
         log.info(
             "scrapingbee_results",
             trip_type="round_trip",
@@ -2006,24 +2177,37 @@ return true;
         max_stops: int | None = None,
         same_airline_only: bool = False,
     ) -> ProviderSearchOutcome:
-        market_country_code = self._market_country_code(currency, market)
-        target_url = self._build_search_url(
+        del max_stops, same_airline_only
+
+        results = await self._search_one_way_once(
             origin=origin,
             destination=destination,
             depart_date=depart_date,
             market=market,
             currency=currency,
         )
-        return await self._search_rendered_itinerary_diagnostic(
-            trip_type="one_way",
-            target_url=target_url,
+        used_strong_retry = False
+        if not results:
+            retry_results = await self._search_one_way_once(
+                origin=origin,
+                destination=destination,
+                depart_date=depart_date,
+                market=market,
+                currency=currency,
+                deep=True,
+            )
+            if retry_results:
+                results = retry_results
+                used_strong_retry = True
+
+        diagnostics = self._diagnostics_for_results(
+            results=results,
             requested_market=market,
             requested_currency=currency,
-            market_country_code=market_country_code,
-            max_stops=max_stops,
-            same_airline_only=same_airline_only,
-            minimum_leg_count=1,
+            result_reason="page_empty" if not results else "success",
+            used_strong_retry=used_strong_retry,
         )
+        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
 
     async def search_round_trip_diagnostic(
         self,
@@ -2037,6 +2221,39 @@ return true;
         max_stops: int | None = None,
         same_airline_only: bool = False,
     ) -> ProviderSearchOutcome:
+        if not same_airline_only:
+            results = await self._search_round_trip_once(
+                origin=origin,
+                destination=destination,
+                depart_date=depart_date,
+                return_date=return_date,
+                market=market,
+                currency=currency,
+            )
+            used_strong_retry = False
+            if not results:
+                retry_results = await self._search_round_trip_once(
+                    origin=origin,
+                    destination=destination,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    market=market,
+                    currency=currency,
+                    deep=True,
+                )
+                if retry_results:
+                    results = retry_results
+                    used_strong_retry = True
+
+            diagnostics = self._diagnostics_for_results(
+                results=results,
+                requested_market=market,
+                requested_currency=currency,
+                result_reason="page_empty" if not results else "success",
+                used_strong_retry=used_strong_retry,
+            )
+            return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
+
         market_country_code = self._market_country_code(currency, market)
         target_url = self._build_search_url(
             origin=origin,

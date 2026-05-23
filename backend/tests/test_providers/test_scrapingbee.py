@@ -51,28 +51,21 @@ def mock_rendered_cards_response(
 @pytest.mark.asyncio
 async def test_parse_one_way_offer(provider: ScrapingBeeProvider) -> None:
     provider._client.get = AsyncMock(
-        return_value=mock_rendered_cards_response(
-            [
-                {
-                    "text": "Air Canada nonstop 12h 15m C$812",
-                    "price_text": "C$812",
-                    "booking_href": "/book/flight-123",
-                    "cabin": "Economy",
-                    "airline_text": "Air Canada",
-                    "legs": [
-                        {
-                            "text": "YVR Vancouver - NRT Tokyo nonstop 12h 15m",
-                            "airline": "Air Canada",
-                            "time_text": "8:00 am - 12:15 pm+1",
-                            "route_text": "YVR Vancouver - NRT Tokyo",
-                            "stops_text": "nonstop",
-                            "layover_text": "",
-                            "duration_text": "12h 15m",
-                        }
-                    ],
-                }
-            ],
-            summary={"cheapest": "C$812", "best": "C$812"},
+        return_value=mock_response(
+            {
+                "offers": [
+                    {
+                        "price": 812,
+                        "price_text": "C$812",
+                        "airline": "Air Canada",
+                        "duration": 735,
+                        "duration_text": "12h 15m",
+                        "stops": 0,
+                        "summary": "Air Canada nonstop 12h 15m",
+                        "link": "/book/flight-123",
+                    }
+                ]
+            }
         )
     )
 
@@ -279,7 +272,8 @@ async def test_round_trip_builds_round_trip_search_url(provider: ScrapingBeeProv
     assert "kayak.com/flights/YYZ-DPS/" in target_url
     assert f"/{DEPART:%Y-%m-%d}/{DEPART + timedelta(days=12):%Y-%m-%d}" in target_url
     assert "sort=price_a" in target_url
-    assert params["json_response"] == "True"
+    assert "json_response" not in params
+    assert "ai_extract_rules" in params
     assert isinstance(params["js_scenario"], str)
 
 
@@ -492,6 +486,33 @@ def test_multi_city_same_airline_primary_request_stays_under_cap_for_live_route(
 
     assert request_line_len(same_airline_only=True) < 8190
     assert request_line_len(same_airline_only=False) > 8190
+
+
+def test_round_trip_same_airline_rendered_request_stays_under_cap_for_live_route(
+    provider: ScrapingBeeProvider,
+) -> None:
+    target_url = provider._build_search_url(
+        origin="YYZ",
+        destination="TIA",
+        depart_date=date(2026, 6, 1),
+        return_date=date(2026, 6, 15),
+        market="ca",
+        currency="CAD",
+    )
+    params = provider._base_request_params(target_url, country_code="ca")
+    params["json_response"] = "True"
+    params["js_scenario"] = json.dumps(
+        provider._build_results_scenario(
+            deep=True,
+            same_airline_only=True,
+            minimum_leg_count=2,
+        ),
+        separators=(",", ":"),
+    )
+    params["block_resources"] = "True"
+    params["wait"] = 2500
+
+    assert len(provider._base_url + "?" + urlencode(params)) < 8190
 
 
 @pytest.mark.asyncio
