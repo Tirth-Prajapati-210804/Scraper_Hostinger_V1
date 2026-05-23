@@ -426,7 +426,11 @@ class PriceCollector:
                     return_date=return_date,
                     currency=currency,
                     max_stops=requested_stop_mode,
-                    **self._provider_search_kwargs(provider, market=market),
+                    **self._provider_search_kwargs(
+                        provider,
+                        market=market,
+                        same_airline_only=same_airline_only,
+                    ),
                 )
             results = await provider.search_round_trip(
                 origin=origin,
@@ -435,7 +439,11 @@ class PriceCollector:
                 return_date=return_date,
                 currency=currency,
                 max_stops=requested_stop_mode,
-                **self._provider_search_kwargs(provider, market=market),
+                **self._provider_search_kwargs(
+                    provider,
+                    market=market,
+                    same_airline_only=same_airline_only,
+                ),
             )
         else:
             method = getattr(provider, "search_one_way_diagnostic", None)
@@ -446,7 +454,11 @@ class PriceCollector:
                     depart_date=depart_date,
                     currency=currency,
                     max_stops=requested_stop_mode,
-                    **self._provider_search_kwargs(provider, market=market, same_airline_only=False),
+                    **self._provider_search_kwargs(
+                        provider,
+                        market=market,
+                        same_airline_only=same_airline_only,
+                    ),
                 )
             results = await provider.search_one_way(
                 origin=origin,
@@ -454,7 +466,11 @@ class PriceCollector:
                 depart_date=depart_date,
                 currency=currency,
                 max_stops=requested_stop_mode,
-                **self._provider_search_kwargs(provider, market=market, same_airline_only=False),
+                **self._provider_search_kwargs(
+                    provider,
+                    market=market,
+                    same_airline_only=same_airline_only,
+                ),
             )
 
         diagnostics = ProviderSearchDiagnostics(
@@ -537,7 +553,7 @@ class PriceCollector:
                             nights=stay_nights,
                             return_origin=return_origin,
                             return_date=return_date,
-                            same_airline_only=False,
+                            same_airline_only=same_airline_only,
                         )
                     else:
                         return_date = None
@@ -553,7 +569,7 @@ class PriceCollector:
                             nights=nights,
                             return_origin=return_origin,
                             return_date=None,
-                            same_airline_only=False,
+                            same_airline_only=same_airline_only,
                         )
 
                     raw_results = list(outcome.results)

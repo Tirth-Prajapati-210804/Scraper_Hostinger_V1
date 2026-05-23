@@ -609,6 +609,40 @@ async def test_collect_single_date_same_airline_only_filters_before_choosing_che
 
 
 @pytest.mark.asyncio
+async def test_collect_single_date_round_trip_forwards_same_airline_only_to_scrapingbee() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "scrapingbee"
+    provider.search_round_trip = AsyncMock(
+        return_value=[make_result(1800, airline="Air Canada", provider="scrapingbee")]
+    )
+    provider.search_round_trip_diagnostic = None
+
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+    collector._save_all_results = AsyncMock()
+
+    await collector.collect_single_date(
+        origin="YYZ",
+        destination="NRT",
+        depart_date=DEPART,
+        route_group_id=ROUTE_ID,
+        trip_type="round_trip",
+        nights=10,
+        same_airline_only=True,
+    )
+
+    kwargs = provider.search_round_trip.call_args.kwargs
+    assert kwargs["same_airline_only"] is True
+
+
+@pytest.mark.asyncio
 async def test_collect_single_date_prefers_shorter_duration_when_price_ties() -> None:
     session = AsyncMock()
     session.add = MagicMock()

@@ -126,19 +126,6 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 }
 _FAST_MULTI_CITY_CARD_LIMIT = 30
 _DEEP_MULTI_CITY_CARD_LIMIT = 180
-_DEEP_RESULTS_JS_SCENARIO = {
-    "instructions": [
-        {"wait": 5000},
-        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.35);"},
-        {"wait": 2500},
-        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.7);"},
-        {"wait": 2500},
-        {"evaluate": "window.scrollTo(0, document.body.scrollHeight);"},
-        {"wait": 3000},
-    ]
-}
-
-
 def _clean_text(value: object) -> str:
     return str(value or "").strip()
 
@@ -204,55 +191,6 @@ class ScrapingBeeProvider:
 
     name = "scrapingbee"
 
-    _AI_EXTRACT_RULES = {
-        "offers": {
-            "description": "visible KAYAK flight offers on the page",
-            "type": "list",
-            "output": {
-                "price": {
-                    "description": "total itinerary price as a number without currency symbols",
-                    "type": "number",
-                },
-                "price_text": {
-                    "description": "exact displayed itinerary price text including currency symbol or code",
-                    "type": "string",
-                },
-                "airline": {
-                    "description": "airline name or airline combination shown for the itinerary",
-                    "type": "string",
-                },
-                "duration": {
-                    "description": "total itinerary duration in minutes if inferable, otherwise 0",
-                    "type": "number",
-                },
-                "duration_text": {
-                    "description": "displayed itinerary duration text such as 23h 10m",
-                    "type": "string",
-                },
-                "stops": {
-                    "description": "number of stops as an integer where nonstop is 0",
-                    "type": "number",
-                },
-                "link": {
-                    "description": "deal or booking link for the itinerary if visible",
-                    "type": "string",
-                },
-                "summary": {
-                    "description": "short itinerary summary including times, stops, and other visible details",
-                    "type": "string",
-                },
-            },
-        }
-    }
-
-    _JS_SCENARIO = {
-        "instructions": [
-            {"wait": 3000},
-            {"evaluate": "window.scrollTo(0, document.body.scrollHeight);"},
-            {"wait": 3000},
-        ]
-    }
-
     def __init__(
         self,
         api_key: str,
@@ -297,40 +235,6 @@ class ScrapingBeeProvider:
 
     async def close(self) -> None:
         await self._client.aclose()
-
-    def _parse_partial_payload(self, body: str) -> dict | None:
-        if '"offers"' not in body:
-            return None
-
-        offers_key = body.find('"offers"')
-        list_start = body.find("[", offers_key)
-        if list_start < 0:
-            return None
-
-        decoder = json.JSONDecoder()
-        cursor = list_start + 1
-        offers: list[dict[str, object]] = []
-
-        while cursor < len(body):
-            while cursor < len(body) and body[cursor] in " \r\n\t,":
-                cursor += 1
-
-            if cursor >= len(body) or body[cursor] == "]":
-                break
-
-            try:
-                parsed, next_cursor = decoder.raw_decode(body, cursor)
-            except json.JSONDecodeError:
-                break
-
-            if isinstance(parsed, dict):
-                offers.append(parsed)
-            cursor = next_cursor
-
-        if not offers:
-            return None
-
-        return {"offers": offers}
 
     def _market_country_code(
         self,
@@ -436,25 +340,6 @@ class ScrapingBeeProvider:
                 await asyncio.sleep(wait_for)
             self._next_request_at = monotonic() + self._min_delay_seconds
 
-    def _base_params(
-        self,
-        target_url: str,
-        *,
-        ai_extract_rules: dict[str, object] | None = None,
-        js_scenario: dict[str, object] | None = None,
-        country_code: str | None = None,
-    ) -> dict[str, object]:
-        params = self._base_request_params(target_url, country_code=country_code)
-        params["ai_extract_rules"] = json.dumps(
-            ai_extract_rules or self._AI_EXTRACT_RULES,
-            separators=(",", ":"),
-        )
-        params["js_scenario"] = json.dumps(
-            js_scenario or self._JS_SCENARIO,
-            separators=(",", ":"),
-        )
-        return params
-
     def _raise_for_status(self, response: httpx.Response) -> None:
         message = _extract_body_message(response) or "ScrapingBee request failed."
 
@@ -476,46 +361,6 @@ class ScrapingBeeProvider:
                 self._trip_quota_breaker()
                 raise ProviderQuotaExhaustedError(message)
             raise RuntimeError(message)
-
-    async def _get_payload(
-        self,
-        target_url: str,
-        *,
-        ai_extract_rules: dict[str, object] | None = None,
-        js_scenario: dict[str, object] | None = None,
-        country_code: str | None = None,
-    ) -> dict:
-        async with self._semaphore:
-            await self._wait_for_slot()
-            try:
-                response = await self._client.get(
-                    self._base_url,
-                    params=self._base_params(
-                        target_url,
-                        ai_extract_rules=ai_extract_rules,
-                        js_scenario=js_scenario,
-                        country_code=country_code,
-                    ),
-                )
-            except httpx.TimeoutException as exc:
-                raise RuntimeError("ScrapingBee request timed out.") from exc
-            except httpx.HTTPError as exc:
-                raise RuntimeError("ScrapingBee request failed.") from exc
-
-        self._raise_for_status(response)
-
-        try:
-            data = await asyncio.to_thread(response.json)
-        except Exception as exc:
-            partial = self._parse_partial_payload(response.text)
-            if partial is not None:
-                return partial
-            raise RuntimeError("ScrapingBee returned invalid JSON.") from exc
-
-        if not isinstance(data, dict):
-            raise RuntimeError("ScrapingBee returned an unexpected response body.")
-
-        return data
 
     async def _get_rendered_payload(
         self,
@@ -930,17 +775,62 @@ return true;
             "instructions": instructions,
         }
 
-    async def _parse_multi_city_rendered_payload(
+    def _build_results_scenario(
+        self,
+        *,
+        deep: bool = False,
+        same_airline_only: bool = False,
+        minimum_leg_count: int = 1,
+    ) -> dict[str, object]:
+        scenario = self._build_multi_city_results_scenario(
+            deep=deep,
+            same_airline_only=same_airline_only,
+        )
+        if minimum_leg_count == 2:
+            return scenario
+
+        instructions: list[dict[str, object]] = []
+        for instruction in scenario["instructions"]:
+            cloned = dict(instruction)
+            evaluate = cloned.get("evaluate")
+            if isinstance(evaluate, str):
+                evaluate = evaluate.replace(
+                    "querySelectorAll('ol.hJSA-list > li').length>=2",
+                    f"querySelectorAll('ol.hJSA-list > li').length>={minimum_leg_count}",
+                )
+                evaluate = evaluate.replace(
+                    "querySelectorAll('ol.hJSA-list>li').length>=2",
+                    f"querySelectorAll('ol.hJSA-list>li').length>={minimum_leg_count}",
+                )
+                cloned["evaluate"] = evaluate
+            instructions.append(cloned)
+
+        return {
+            "strict": bool(scenario.get("strict", False)),
+            "instructions": instructions,
+        }
+
+    async def _parse_rendered_payload(
         self,
         rendered: dict,
         *,
         currency: str,
         deep_link: str,
         market_country_code: str,
+        trip_type: str,
+        expected_leg_count: int,
     ) -> tuple[list[ProviderResult], int, int]:
         cards_payload = self._extract_rendered_cards_payload(rendered)
         if cards_payload is None:
-            return [], 0, 0
+            fallback_results = await asyncio.to_thread(
+                self._normalize_flights,
+                rendered,
+                currency=currency,
+                deep_link=deep_link,
+                trip_type=trip_type,
+                market_country_code=market_country_code,
+            )
+            return fallback_results, len(fallback_results), len(fallback_results)
 
         card_count = 0
         captured_count = 0
@@ -952,13 +842,32 @@ return true;
             captured_count = raw_captured_count
 
         results = await asyncio.to_thread(
-            self._normalize_multi_city_cards,
+            self._normalize_rendered_cards,
             cards_payload,
             currency=currency,
             deep_link=deep_link,
+            trip_type=trip_type,
             market_country_code=market_country_code,
+            expected_leg_count=expected_leg_count,
         )
         return results, card_count, captured_count
+
+    async def _parse_multi_city_rendered_payload(
+        self,
+        rendered: dict,
+        *,
+        currency: str,
+        deep_link: str,
+        market_country_code: str,
+    ) -> tuple[list[ProviderResult], int, int]:
+        return await self._parse_rendered_payload(
+            rendered,
+            currency=currency,
+            deep_link=deep_link,
+            market_country_code=market_country_code,
+            trip_type="multi_city",
+            expected_leg_count=2,
+        )
 
     def _filter_results_by_stops(
         self,
@@ -1371,13 +1280,15 @@ return true;
             return False
         return any(term in haystack for term in _NON_FLIGHT_TRANSPORT_TERMS)
 
-    def _normalize_multi_city_cards(
+    def _normalize_rendered_cards(
         self,
         payload: dict,
         *,
         currency: str,
         deep_link: str,
+        trip_type: str,
         market_country_code: str,
+        expected_leg_count: int,
     ) -> list[ProviderResult]:
         raw_cards = payload.get("cards")
         if not isinstance(raw_cards, list):
@@ -1393,7 +1304,7 @@ return true;
                 continue
 
             legs = card.get("legs")
-            if not isinstance(legs, list) or len(legs) < 2:
+            if not isinstance(legs, list) or len(legs) < expected_leg_count:
                 continue
 
             normalized_legs: list[dict[str, object]] = []
@@ -1401,7 +1312,7 @@ return true;
             leg_stop_counts: list[int] = []
             leg_durations: list[int] = []
             total_duration = 0
-            for leg in legs[:2]:
+            for leg in legs[:expected_leg_count]:
                 if not isinstance(leg, dict):
                     continue
                 airline = _clean_text(leg.get("airline"))
@@ -1432,12 +1343,13 @@ return true;
                     }
                 )
 
-            if len(normalized_legs) < 2:
+            if len(normalized_legs) < expected_leg_count:
                 continue
 
             total_stops = sum(leg_stop_counts)
 
             airline_text = _clean_text(card.get("airline_text"))
+            airline_parts = [part.strip() for part in airline_text.split("/") if part.strip()]
             display_airline = airline_text or " / ".join(unique_airlines) or "Unknown airline"
             booking_href = _clean_text(card.get("booking_href"))
             normalized_link = urljoin(deep_link, booking_href) if booking_href else deep_link
@@ -1478,7 +1390,7 @@ return true;
                     duration_minutes=total_duration,
                     stops=total_stops,
                     raw_data={
-                        "trip_type": "multi_city",
+                        "trip_type": trip_type,
                         "duration_text": " / ".join(
                             leg["duration_text"]
                             for leg in normalized_legs
@@ -1489,17 +1401,49 @@ return true;
                         "cabin": _clean_text(card.get("cabin")),
                         "badges": badges,
                         "legs": normalized_legs,
-                        "airline_names": unique_airlines,
+                        "airline_names": unique_airlines or airline_parts,
                         "leg_stops": leg_stop_counts,
                         "leg_durations": leg_durations,
-                        "stop_result_label": self._stop_label_from_leg_stops(leg_stop_counts),
-                        "outbound_airline": normalized_legs[0].get("airline") or "",
-                        "return_airline": normalized_legs[1].get("airline") or "",
+                        "stop_result_label": (
+                            self._stop_label_from_leg_stops(leg_stop_counts)
+                            if expected_leg_count > 1
+                            else self._stop_label_for_count(total_stops)
+                        ),
                     },
                 )
             )
 
+            raw_data = results[-1].raw_data
+            if trip_type != "one_way":
+                outbound_airline = _clean_text(normalized_legs[0].get("airline")) or (
+                    airline_parts[0] if airline_parts else display_airline
+                )
+                return_airline = outbound_airline
+                if len(normalized_legs) > 1:
+                    return_airline = _clean_text(normalized_legs[1].get("airline")) or (
+                        airline_parts[1] if len(airline_parts) > 1 else outbound_airline
+                    )
+                raw_data["outbound_airline"] = outbound_airline
+                raw_data["return_airline"] = return_airline
+
         return sorted(results, key=lambda item: item.price)
+
+    def _normalize_multi_city_cards(
+        self,
+        payload: dict,
+        *,
+        currency: str,
+        deep_link: str,
+        market_country_code: str,
+    ) -> list[ProviderResult]:
+        return self._normalize_rendered_cards(
+            payload,
+            currency=currency,
+            deep_link=deep_link,
+            trip_type="multi_city",
+            market_country_code=market_country_code,
+            expected_leg_count=2,
+        )
 
     def _normalize_flights(
         self,
@@ -1588,7 +1532,8 @@ return true;
         *,
         market: str | None = None,
         currency: str = "USD",
-        js_scenario: dict[str, object] | None = None,
+        deep: bool = False,
+        same_airline_only: bool = False,
     ) -> list[ProviderResult]:
         if self._quota_blocked():
             raise ProviderQuotaExhaustedError("ScrapingBee quota cooldown active.")
@@ -1601,17 +1546,14 @@ return true;
             market=market,
             currency=currency,
         )
-        payload = await self._get_payload(
-            target_url,
+        rendered, _, results, _, _ = await self._render_results_attempt(
+            target_url=target_url,
             country_code=market_country_code,
-            js_scenario=js_scenario,
-        )
-        results = self._normalize_flights(
-            payload,
             currency=currency,
-            deep_link=target_url,
             trip_type="one_way",
-            market_country_code=market_country_code,
+            minimum_leg_count=1,
+            deep=deep,
+            same_airline_only=same_airline_only,
         )
         log.info(
             "scrapingbee_results",
@@ -1633,7 +1575,8 @@ return true;
         *,
         market: str | None = None,
         currency: str = "USD",
-        js_scenario: dict[str, object] | None = None,
+        deep: bool = False,
+        same_airline_only: bool = False,
     ) -> list[ProviderResult]:
         if self._quota_blocked():
             raise ProviderQuotaExhaustedError("ScrapingBee quota cooldown active.")
@@ -1647,17 +1590,14 @@ return true;
             market=market,
             currency=currency,
         )
-        payload = await self._get_payload(
-            target_url,
+        rendered, _, results, _, _ = await self._render_results_attempt(
+            target_url=target_url,
             country_code=market_country_code,
-            js_scenario=js_scenario,
-        )
-        results = self._normalize_flights(
-            payload,
             currency=currency,
-            deep_link=target_url,
             trip_type="round_trip",
-            market_country_code=market_country_code,
+            minimum_leg_count=2,
+            deep=deep,
+            same_airline_only=same_airline_only,
         )
         log.info(
             "scrapingbee_results",
@@ -1670,6 +1610,158 @@ return true;
             currency=currency,
         )
         return results
+
+    async def _render_results_attempt(
+        self,
+        *,
+        target_url: str,
+        country_code: str,
+        currency: str,
+        trip_type: str,
+        minimum_leg_count: int,
+        deep: bool,
+        same_airline_only: bool,
+    ) -> tuple[dict, dict[str, str], list[ProviderResult], int, int]:
+        rendered = await self._get_rendered_payload(
+            target_url,
+            js_scenario=self._build_results_scenario(
+                deep=deep,
+                same_airline_only=same_airline_only,
+                minimum_leg_count=minimum_leg_count,
+            ),
+            country_code=country_code,
+        )
+        summary_prices = self._multi_city_summary_prices(rendered)
+        results, card_count, captured_count = await self._parse_rendered_payload(
+            rendered,
+            currency=currency,
+            deep_link=target_url,
+            market_country_code=country_code,
+            trip_type=trip_type,
+            expected_leg_count=minimum_leg_count,
+        )
+        return rendered, summary_prices, results, card_count, captured_count
+
+    async def _search_rendered_itinerary_diagnostic(
+        self,
+        *,
+        trip_type: str,
+        target_url: str,
+        requested_market: str | None,
+        requested_currency: str,
+        market_country_code: str,
+        max_stops: int | None,
+        same_airline_only: bool,
+        minimum_leg_count: int,
+    ) -> ProviderSearchOutcome:
+        initial_deep = same_airline_only
+        rendered, summary_prices, results, card_count, _ = await self._render_results_attempt(
+            target_url=target_url,
+            country_code=market_country_code,
+            currency=requested_currency,
+            trip_type=trip_type,
+            minimum_leg_count=minimum_leg_count,
+            deep=initial_deep,
+            same_airline_only=same_airline_only,
+        )
+        eligible_results = self._filter_results_by_stops(results, max_stops)
+        used_strong_retry = False
+
+        if same_airline_only:
+            same_airline_results = self._same_airline_results_only(eligible_results)
+            if same_airline_results:
+                eligible_results = same_airline_results
+            else:
+                used_strong_retry = True
+                fallback_rendered, fallback_summary_prices, fallback_results, fallback_card_count, _ = await self._render_results_attempt(
+                    target_url=target_url,
+                    country_code=market_country_code,
+                    currency=requested_currency,
+                    trip_type=trip_type,
+                    minimum_leg_count=minimum_leg_count,
+                    deep=True,
+                    same_airline_only=False,
+                )
+                fallback_eligible = self._filter_results_by_stops(fallback_results, max_stops)
+                fallback_same_airline = self._same_airline_results_only(fallback_eligible)
+                if (
+                    fallback_same_airline
+                    or (not results and fallback_results)
+                    or (not results and fallback_card_count > card_count)
+                ):
+                    rendered = fallback_rendered
+                    summary_prices = fallback_summary_prices
+                    results = fallback_results
+                    eligible_results = fallback_same_airline or fallback_eligible
+        else:
+            if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+                retry_rendered, retry_summary_prices, retry_results, retry_card_count, _ = await self._render_results_attempt(
+                    target_url=target_url,
+                    country_code=market_country_code,
+                    currency=requested_currency,
+                    trip_type=trip_type,
+                    minimum_leg_count=minimum_leg_count,
+                    deep=True,
+                    same_airline_only=False,
+                )
+                if retry_results or retry_card_count > 0 or self._rendered_payload_has_summary_prices(retry_rendered):
+                    rendered = retry_rendered
+                    summary_prices = retry_summary_prices
+                    results = retry_results
+                    eligible_results = self._filter_results_by_stops(retry_results, max_stops)
+                    used_strong_retry = True
+
+            summary_lowest = self._summary_lowest_price(summary_prices)
+            eligible_lowest = min((result.price for result in eligible_results), default=None)
+            if summary_lowest is not None and (eligible_lowest is None or summary_lowest + 1 < eligible_lowest):
+                retry_rendered, retry_summary_prices, retry_results, _, _ = await self._render_results_attempt(
+                    target_url=target_url,
+                    country_code=market_country_code,
+                    currency=requested_currency,
+                    trip_type=trip_type,
+                    minimum_leg_count=minimum_leg_count,
+                    deep=True,
+                    same_airline_only=False,
+                )
+                retry_eligible = self._filter_results_by_stops(retry_results, max_stops)
+                if retry_eligible or retry_results:
+                    rendered = retry_rendered
+                    summary_prices = retry_summary_prices
+                    results = retry_results
+                    eligible_results = retry_eligible
+                    used_strong_retry = True
+
+        if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            raise ValueError("KAYAK rendered page did not expose extractable result cards.")
+
+        selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
+        visible_results_found = card_count > 0 or facet_option_count > 0
+        summary_price_found = bool(summary_prices) or facet_option_count > 0
+
+        if same_airline_only:
+            if eligible_results:
+                result_reason = "success"
+            elif results or visible_results_found:
+                result_reason = "filtered_out"
+            elif summary_price_found:
+                result_reason = "extract_failed"
+            else:
+                result_reason = "page_empty"
+        else:
+            result_reason = "success" if eligible_results else ("extract_failed" if (visible_results_found or summary_price_found) else "page_empty")
+
+        diagnostics = self._diagnostics_for_results(
+            results=results,
+            requested_market=requested_market,
+            requested_currency=requested_currency,
+            result_reason=result_reason,
+            visible_results_found=visible_results_found,
+            summary_price_found=summary_price_found,
+            used_strong_retry=used_strong_retry or (same_airline_only and bool(selected_facet)),
+        )
+        diagnostics.raw_offers_found = len(results)
+        diagnostics.eligible_offers_found = len(eligible_results)
+        return ProviderSearchOutcome(results=eligible_results, diagnostics=diagnostics)
 
     async def _search_multi_city_once(
         self,
@@ -1866,38 +1958,26 @@ return true;
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
+        same_airline_only: bool = False,
     ) -> ProviderSearchOutcome:
-        del max_stops
-
-        results = await self._search_one_way_once(
+        market_country_code = self._market_country_code(currency, market)
+        target_url = self._build_search_url(
             origin=origin,
             destination=destination,
             depart_date=depart_date,
             market=market,
             currency=currency,
         )
-        used_strong_retry = False
-        if not results:
-            retry_results = await self._search_one_way_once(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                market=market,
-                currency=currency,
-                js_scenario=_DEEP_RESULTS_JS_SCENARIO,
-            )
-            if retry_results:
-                results = retry_results
-                used_strong_retry = True
-
-        diagnostics = self._diagnostics_for_results(
-            results=results,
+        return await self._search_rendered_itinerary_diagnostic(
+            trip_type="one_way",
+            target_url=target_url,
             requested_market=market,
             requested_currency=currency,
-            result_reason="page_empty" if not results else "success",
-            used_strong_retry=used_strong_retry,
+            market_country_code=market_country_code,
+            max_stops=max_stops,
+            same_airline_only=same_airline_only,
+            minimum_leg_count=1,
         )
-        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
 
     async def search_round_trip_diagnostic(
         self,
@@ -1909,10 +1989,10 @@ return true;
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
+        same_airline_only: bool = False,
     ) -> ProviderSearchOutcome:
-        del max_stops
-
-        results = await self._search_round_trip_once(
+        market_country_code = self._market_country_code(currency, market)
+        target_url = self._build_search_url(
             origin=origin,
             destination=destination,
             depart_date=depart_date,
@@ -1920,29 +2000,16 @@ return true;
             market=market,
             currency=currency,
         )
-        used_strong_retry = False
-        if not results:
-            retry_results = await self._search_round_trip_once(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                return_date=return_date,
-                market=market,
-                currency=currency,
-                js_scenario=_DEEP_RESULTS_JS_SCENARIO,
-            )
-            if retry_results:
-                results = retry_results
-                used_strong_retry = True
-
-        diagnostics = self._diagnostics_for_results(
-            results=results,
+        return await self._search_rendered_itinerary_diagnostic(
+            trip_type="round_trip",
+            target_url=target_url,
             requested_market=market,
             requested_currency=currency,
-            result_reason="page_empty" if not results else "success",
-            used_strong_retry=used_strong_retry,
+            market_country_code=market_country_code,
+            max_stops=max_stops,
+            same_airline_only=same_airline_only,
+            minimum_leg_count=2,
         )
-        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
 
     async def search_multi_city_diagnostic(
         self,
@@ -1981,6 +2048,7 @@ return true;
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
+        same_airline_only: bool = False,
     ) -> list[ProviderResult]:
         del adults, cabin
 
@@ -1999,6 +2067,7 @@ return true;
                     market=market,
                     currency=currency,
                     max_stops=max_stops,
+                    same_airline_only=same_airline_only,
                 )
                 return self._filter_results_by_stops(outcome.results, max_stops)
 
@@ -2015,6 +2084,7 @@ return true;
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
+        same_airline_only: bool = False,
     ) -> list[ProviderResult]:
         del adults, cabin
 
@@ -2034,6 +2104,7 @@ return true;
                     market=market,
                     currency=currency,
                     max_stops=max_stops,
+                    same_airline_only=same_airline_only,
                 )
                 return self._filter_results_by_stops(outcome.results, max_stops)
 
@@ -2130,6 +2201,7 @@ class ScrapingBeePoolProvider:
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
+        same_airline_only: bool = False,
     ) -> list[ProviderResult]:
         return await self._search_with_failover(
             lambda provider: provider.search_one_way(
@@ -2141,6 +2213,7 @@ class ScrapingBeePoolProvider:
                 market=market,
                 currency=currency,
                 max_stops=max_stops,
+                same_airline_only=same_airline_only,
             )
         )
 
@@ -2155,6 +2228,7 @@ class ScrapingBeePoolProvider:
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
+        same_airline_only: bool = False,
     ) -> list[ProviderResult]:
         return await self._search_with_failover(
             lambda provider: provider.search_round_trip(
@@ -2167,6 +2241,7 @@ class ScrapingBeePoolProvider:
                 market=market,
                 currency=currency,
                 max_stops=max_stops,
+                same_airline_only=same_airline_only,
             )
         )
 

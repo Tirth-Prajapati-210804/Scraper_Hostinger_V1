@@ -32,23 +32,46 @@ def mock_response(data: dict, status_code: int = 200) -> MagicMock:
     return resp
 
 
+def mock_rendered_cards_response(
+    cards: list[dict[str, object]],
+    *,
+    summary: dict[str, str] | None = None,
+    facet: dict[str, object] | None = None,
+    status_code: int = 200,
+) -> MagicMock:
+    payload = {
+        "cards": cards,
+        "summary": summary or {},
+        "facet": facet or {"selected": "", "options": []},
+    }
+    return mock_response({"evaluate_results": [True, True, json.dumps(payload)]}, status_code=status_code)
+
+
 @pytest.mark.asyncio
 async def test_parse_one_way_offer(provider: ScrapingBeeProvider) -> None:
     provider._client.get = AsyncMock(
-        return_value=mock_response(
-            {
-                "offers": [
-                    {
-                        "price": 812,
-                        "airline": "Air Canada",
-                        "duration": 735,
-                        "duration_text": "12h 15m",
-                        "stops": 0,
-                        "summary": "Air Canada nonstop",
-                        "link": "/book/flight-123",
-                    }
-                ]
-            }
+        return_value=mock_rendered_cards_response(
+            [
+                {
+                    "text": "Air Canada nonstop 12h 15m C$812",
+                    "price_text": "C$812",
+                    "booking_href": "/book/flight-123",
+                    "cabin": "Economy",
+                    "airline_text": "Air Canada",
+                    "legs": [
+                        {
+                            "text": "YVR Vancouver - NRT Tokyo nonstop 12h 15m",
+                            "airline": "Air Canada",
+                            "time_text": "8:00 am - 12:15 pm+1",
+                            "route_text": "YVR Vancouver - NRT Tokyo",
+                            "stops_text": "nonstop",
+                            "layover_text": "",
+                            "duration_text": "12h 15m",
+                        }
+                    ],
+                }
+            ],
+            summary={"cheapest": "C$812", "best": "C$812"},
         )
     )
 
@@ -72,7 +95,7 @@ async def test_parse_one_way_offer(provider: ScrapingBeeProvider) -> None:
 
 @pytest.mark.asyncio
 async def test_explicit_market_overrides_currency_domain(provider: ScrapingBeeProvider) -> None:
-    provider._client.get = AsyncMock(return_value=mock_response({"offers": []}))
+    provider._client.get = AsyncMock(return_value=mock_rendered_cards_response([]))
 
     await provider._search_one_way_once(
         "YVR",
@@ -255,7 +278,7 @@ async def test_round_trip_builds_round_trip_search_url(provider: ScrapingBeeProv
     assert "kayak.com/flights/YYZ-DPS/" in target_url
     assert f"/{DEPART:%Y-%m-%d}/{DEPART + timedelta(days=12):%Y-%m-%d}" in target_url
     assert "sort=price_a" in target_url
-    assert isinstance(params["ai_extract_rules"], str)
+    assert params["json_response"] == "True"
     assert isinstance(params["js_scenario"], str)
 
 
@@ -428,12 +451,14 @@ def test_multi_city_js_scenario_prefers_deepest_card_root(provider: ScrapingBeeP
 def test_multi_city_same_airline_scenario_uses_airline_facet_and_stricter_settle(
     provider: ScrapingBeeProvider,
 ) -> None:
-    scenario = json.dumps(provider._build_multi_city_results_scenario(deep=True, same_airline_only=True))
+    scenario_payload = provider._build_multi_city_results_scenario(deep=True, same_airline_only=True)
+    scenario = json.dumps(scenario_payload)
 
     assert "const m=true,l=180,h=m?3:2" in scenario
     assert "window.__fhR.f()" in scenario
     assert "window.__fhR.s()" in scenario
     assert "window.__fhF" in scenario
+    assert scenario_payload["instructions"][1]["wait"] == 35_000
 
 
 @pytest.mark.asyncio

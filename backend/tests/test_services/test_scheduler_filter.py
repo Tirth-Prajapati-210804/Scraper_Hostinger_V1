@@ -263,6 +263,7 @@ async def test_trigger_single_group_collects_multi_city_special_sheets(
     assert captured[0]["trip_type"] == "multi_city"
     assert captured[0]["nights"] == 7
     assert captured[0]["market"] == "ca"
+    assert captured[0]["same_airline_only"] is False
     assert captured[0]["return_origin"] == "BUD"
     assert captured[0]["batch_size"] == 2
     assert callable(captured[0]["stop_check"])
