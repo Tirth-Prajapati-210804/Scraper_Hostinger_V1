@@ -33,8 +33,12 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     )
 
     instructions = scenario["instructions"]
+    helper_script = instructions[0]["evaluate"]
 
     assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
+    assert "f.applyFacet=f.a" in helper_script
+    assert "f.settle=f.s" in helper_script
+    assert "f.extract=f.e" in helper_script
     assert any(
         instruction.get("evaluate") == "window.__fhCollector.applyFacet()"
         for instruction in instructions
