@@ -37,17 +37,13 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
 
   const progress = progressQuery.data;
   const tripType =
-    group.trip_type === "round_trip"
-      ? "Round Trip"
-      : group.trip_type === "multi_city"
-        ? "Multi City"
-        : "One Way";
+    group.trip_type === "multi_city"
+      ? "Multi City"
+      : "Round Trip";
   const stayLabel =
     group.trip_type === "multi_city"
       ? `${group.nights} nights`
-      : group.trip_type === "round_trip"
-        ? `${group.nights} nights`
-        : "-";
+      : `${group.nights} nights`;
   const routeLabel = `${group.origins[0] ?? "-"}->${group.destinations[0] ?? "-"}`;
   const coveragePct = progress ? Math.min(progress.coverage_percent, 100) : 0;
 

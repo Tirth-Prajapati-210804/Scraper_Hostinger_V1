@@ -118,6 +118,17 @@ def test_route_group_defaults_same_airline_only_to_true() -> None:
     assert payload.same_airline_only is True
 
 
+def test_route_group_rejects_one_way_trip_type() -> None:
+    with pytest.raises(ValidationError, match="trip_type must be one of"):
+        RouteGroupCreate(
+            name="Canada to Japan",
+            destination_label="Japan",
+            destinations=["NRT"],
+            origins=["YVR"],
+            trip_type="one_way",
+        )
+
+
 def test_route_group_accepts_max_leg_duration() -> None:
     payload = RouteGroupCreate(
         name="Canada to Japan",

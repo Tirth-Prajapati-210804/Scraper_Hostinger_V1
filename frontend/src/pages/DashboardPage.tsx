@@ -532,9 +532,7 @@ function DashboardGroupRow({ group }: { group: RouteGroup }) {
   const tripType =
     group.trip_type === "multi_city"
       ? "Multi City"
-      : group.trip_type === "round_trip"
-        ? "Round Trip"
-        : "One Way";
+      : "Round Trip";
 
   async function handleDownload(event: MouseEvent) {
     event.stopPropagation();

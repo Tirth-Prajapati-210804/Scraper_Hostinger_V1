@@ -8,7 +8,7 @@ export const MOCK_GROUP = {
   origins: ["YVR", "YYZ"],
   nights: 12,
   days_ahead: 180,
-  trip_type: "one_way" as const,
+  trip_type: "round_trip" as const,
   sheet_name_map: {
     YVR: "YVR",
     YYZ: "YYZ",

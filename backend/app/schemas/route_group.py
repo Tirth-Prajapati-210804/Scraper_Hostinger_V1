@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 _IATA_PATTERN = r"^[A-Z0-9]{2,4}$"
 _CURRENCY_PATTERN = r"^[A-Z]{3}$"
-_ALLOWED_TRIP_TYPES = {"one_way", "round_trip", "multi_city"}
+_ALLOWED_TRIP_TYPES = {"round_trip", "multi_city"}
 _MARKET_PATTERN = re.compile(r"^[a-z]{2}$")
 
 
@@ -39,7 +39,7 @@ def _normalize_trip_type(value: object) -> str:
 
     if trip not in _ALLOWED_TRIP_TYPES:
         raise ValueError(
-            "trip_type must be one of: one_way, round_trip, multi_city"
+            "trip_type must be one of: round_trip, multi_city"
         )
 
     return trip
@@ -95,7 +95,7 @@ class RouteGroupCreate(BaseModel):
     max_leg_duration_minutes: int | None = Field(default=None, ge=30, le=2880)
     start_date: date | None = None
     end_date: date | None = None
-    trip_type: str = Field(default="one_way")
+    trip_type: str = Field(default="round_trip")
 
     @field_validator("name", "destination_label")
     @classmethod

@@ -28,7 +28,7 @@ async def test_scrapingbee_pool_falls_back_to_next_key(
         def is_configured(self) -> bool:
             return True
 
-        async def search_one_way(self, **_: object) -> list[ProviderResult]:
+        async def search_round_trip(self, **_: object) -> list[ProviderResult]:
             if self.api_key == "key-one":
                 raise ProviderQuotaExhaustedError("quota exhausted")
 
@@ -42,11 +42,8 @@ async def test_scrapingbee_pool_falls_back_to_next_key(
                 )
             ]
 
-        async def search_round_trip(self, **_: object) -> list[ProviderResult]:
-            return await self.search_one_way()
-
         async def search_multi_city(self, **_: object) -> list[ProviderResult]:
-            return await self.search_one_way()
+            return await self.search_round_trip()
 
         async def close(self) -> None:
             return None
@@ -57,10 +54,11 @@ async def test_scrapingbee_pool_falls_back_to_next_key(
         api_keys=["key-one", "key-two", "key-three"],
     )
 
-    results = await provider.search_one_way(
+    results = await provider.search_round_trip(
         origin="YYZ",
         destination="DPS",
         depart_date=date(2026, 6, 1),
+        return_date=date(2026, 6, 11),
     )
 
     assert len(results) == 1

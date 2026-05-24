@@ -34,7 +34,7 @@ async def test_delete_clears_collection_data_before_removing_group() -> None:
         same_airline_only=False,
         start_date=None,
         end_date=None,
-        trip_type="one_way",
+        trip_type="round_trip",
         user_id=None,
     )
 
@@ -79,7 +79,7 @@ async def test_update_clears_collection_data_when_route_identity_changes() -> No
         same_airline_only=False,
         start_date=None,
         end_date=None,
-        trip_type="one_way",
+        trip_type="round_trip",
         user_id=None,
     )
 
@@ -126,7 +126,7 @@ async def test_update_keeps_collection_data_when_identity_is_unchanged() -> None
         same_airline_only=False,
         start_date=None,
         end_date=None,
-        trip_type="one_way",
+        trip_type="round_trip",
         user_id=None,
     )
 
@@ -173,7 +173,7 @@ async def test_update_clears_collection_data_when_market_changes() -> None:
         same_airline_only=False,
         start_date=None,
         end_date=None,
-        trip_type="one_way",
+        trip_type="round_trip",
         user_id=None,
     )
 

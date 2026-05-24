@@ -32,11 +32,11 @@ class RouteGroup(Base):
     market: Mapped[str] = mapped_column(String(8), nullable=False, default="us")
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
     max_stops: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    same_airline_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    same_airline_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     max_leg_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    trip_type: Mapped[str] = mapped_column(String(20), nullable=False, default="one_way")
+    trip_type: Mapped[str] = mapped_column(String(20), nullable=False, default="round_trip")
     # Owner of this route group — NULL for legacy records created before multi-user support.
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

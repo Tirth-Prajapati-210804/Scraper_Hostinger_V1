@@ -26,7 +26,7 @@ def make_route_group(
     rg.nights = nights
     rg.sheet_name_map = sheet_name_map or {"YVR": "YVR"}
     rg.special_sheets = special_sheets or []
-    rg.trip_type = "one_way"
+    rg.trip_type = "round_trip"
     return rg
 
 

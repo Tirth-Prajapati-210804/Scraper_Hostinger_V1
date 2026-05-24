@@ -15,7 +15,9 @@ class RouteSegment:
 def iter_group_segments(group) -> list[RouteSegment]:
     segments: list[RouteSegment] = []
 
-    if (group.trip_type or "one_way") == "multi_city":
+    trip_type = str(getattr(group, "trip_type", "") or "round_trip").strip().lower()
+
+    if trip_type == "multi_city":
         return_origin = None
         if group.special_sheets:
             return_origin = str(group.special_sheets[0].get("origin") or "").strip().upper() or None
@@ -38,28 +40,8 @@ def iter_group_segments(group) -> list[RouteSegment]:
             RouteSegment(
                 origin=str(origin).strip().upper(),
                 destinations=[str(destination).strip().upper() for destination in (group.destinations or [])],
-                trip_type=group.trip_type or "one_way",
+                trip_type="round_trip",
                 nights=group.nights,
-            )
-        )
-
-    for sheet in group.special_sheets or []:
-        origin = str(sheet.get("origin") or "").strip().upper()
-        destinations = [
-            str(destination).strip().upper()
-            for destination in (sheet.get("destinations") or [])
-            if str(destination).strip()
-        ]
-
-        if not origin or not destinations:
-            continue
-
-        segments.append(
-            RouteSegment(
-                origin=origin,
-                destinations=destinations,
-                trip_type="one_way",
-                nights=None,
             )
         )
 

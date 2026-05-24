@@ -35,9 +35,9 @@ def make_result(
 def make_provider(name: str, results: list[ProviderResult]) -> MagicMock:
     provider = MagicMock()
     provider.name = name
-    provider.search_one_way = AsyncMock(return_value=results)
-    provider.search_one_way_diagnostic = None
+    provider.search_round_trip = AsyncMock(return_value=results)
     provider.search_round_trip_diagnostic = None
+    provider.search_multi_city = AsyncMock(return_value=results)
     provider.search_multi_city_diagnostic = None
     return provider
 
@@ -108,8 +108,8 @@ async def test_collect_single_date_one_provider_fails() -> None:
     p_good = make_provider("serpapi", [make_result(1500)])
     p_bad = MagicMock()
     p_bad.name = "serpapi_b"
-    p_bad.search_one_way = AsyncMock(side_effect=RuntimeError("API down"))
-    p_bad.search_one_way_diagnostic = None
+    p_bad.search_round_trip = AsyncMock(side_effect=RuntimeError("API down"))
+    p_bad.search_round_trip_diagnostic = None
 
     collector = PriceCollector(
         session_factory=make_session_factory(session),
@@ -135,8 +135,8 @@ async def test_collect_single_date_reports_provider_health_callbacks() -> None:
     p_good = make_provider("searchapi", [make_result(1500, provider="searchapi")])
     p_bad = MagicMock()
     p_bad.name = "searchapi_b"
-    p_bad.search_one_way = AsyncMock(side_effect=RuntimeError("API down"))
-    p_bad.search_one_way_diagnostic = None
+    p_bad.search_round_trip = AsyncMock(side_effect=RuntimeError("API down"))
+    p_bad.search_round_trip_diagnostic = None
 
     success_cb = MagicMock()
     failure_cb = MagicMock()
@@ -244,8 +244,8 @@ async def test_collect_single_date_records_parse_error_status() -> None:
 
     provider = MagicMock()
     provider.name = "searchapi"
-    provider.search_one_way = AsyncMock(side_effect=RuntimeError("invalid json from provider"))
-    provider.search_one_way_diagnostic = None
+    provider.search_round_trip = AsyncMock(side_effect=RuntimeError("invalid json from provider"))
+    provider.search_round_trip_diagnostic = None
 
     collector = PriceCollector(
         session_factory=make_session_factory(session),
@@ -269,8 +269,8 @@ async def test_collect_single_date_records_provider_error_status() -> None:
 
     provider = MagicMock()
     provider.name = "searchapi"
-    provider.search_one_way = AsyncMock(side_effect=RuntimeError("provider blew up"))
-    provider.search_one_way_diagnostic = None
+    provider.search_round_trip = AsyncMock(side_effect=RuntimeError("provider blew up"))
+    provider.search_round_trip_diagnostic = None
 
     collector = PriceCollector(
         session_factory=make_session_factory(session),
@@ -378,7 +378,7 @@ async def test_collect_route_batch_cooled_route_reports_skipped_progress() -> No
 
     assert stats == {"success": 0, "errors": 0, "skipped": 1}
     assert progress_calls == [("skipped", "YYZ", "NRT", DEPART, False)]
-    provider.search_one_way.assert_not_awaited()
+    provider.search_round_trip.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -409,7 +409,7 @@ async def test_collect_route_batch_no_results_do_not_cool_later_dates() -> None:
     )
 
     assert stats == {"success": 0, "errors": 0, "skipped": 5}
-    assert provider.search_one_way.await_count == 5
+    assert provider.search_round_trip.await_count == 5
     assert [call[0] for call in progress_calls] == ["skipped"] * 5
 
 
@@ -501,7 +501,6 @@ async def test_round_trip_calls_search_round_trip_with_return_date() -> None:
 
     provider = MagicMock()
     provider.name = "searchapi"
-    provider.search_one_way = AsyncMock(return_value=[])
     provider.search_round_trip = AsyncMock(
         return_value=[make_result(2400, provider="searchapi")]
     )
@@ -524,7 +523,6 @@ async def test_round_trip_calls_search_round_trip_with_return_date() -> None:
     )
 
     provider.search_round_trip.assert_awaited_once()
-    provider.search_one_way.assert_not_awaited()
     kwargs = provider.search_round_trip.call_args.kwargs
     assert kwargs["depart_date"] == DEPART
     assert kwargs["return_date"] == DEPART + timedelta(days=11)

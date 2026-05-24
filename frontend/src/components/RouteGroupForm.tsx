@@ -25,7 +25,7 @@ interface RouteGroupFormProps {
   initial?: RouteGroup | null;
 }
 
-type UiTripType = "roundtrip" | "oneway" | "multicity";
+type UiTripType = "roundtrip" | "multicity";
 
 interface ManualLeg {
   from: string[];
@@ -45,7 +45,6 @@ interface ManualState {
   startDate: string;
   endDate: string;
   stops: StopModeId;
-  sameAirlineOnly: boolean;
   maxLegDurationHours: string;
   isActive: boolean;
 }
@@ -83,7 +82,6 @@ const TRIP_TYPES: Array<{
   description: string;
 }> = [
   { id: "roundtrip", label: "Round Trip", description: "Outbound + auto-return" },
-  { id: "oneway", label: "One Way", description: "Single outbound search" },
   { id: "multicity", label: "Multi-city", description: "Open-jaw itinerary" },
 ];
 const MAX_LEG_DURATION_OPTIONS = [
@@ -97,13 +95,11 @@ const MAX_LEG_DURATION_OPTIONS = [
 
 function tripTypeToUi(type?: TripType | null): UiTripType {
   if (type === "multi_city") return "multicity";
-  if (type === "one_way") return "oneway";
   return "roundtrip";
 }
 
 function tripTypeToApi(type: UiTripType): TripType {
   if (type === "multicity") return "multi_city";
-  if (type === "oneway") return "one_way";
   return "round_trip";
 }
 
@@ -173,7 +169,6 @@ function buildInitialManualState(initial?: RouteGroup | null): ManualState {
     startDate: initial?.start_date ?? "",
     endDate: initial?.end_date ?? "",
     stops: stopModeToUi(initial?.max_stops),
-    sameAirlineOnly: true,
     maxLegDurationHours: initial?.max_leg_duration_minutes
       ? String(Math.round(initial.max_leg_duration_minutes / 60))
       : "",
@@ -608,7 +603,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
           onChange={(tripType) => setState((current) => ({ ...current, tripType }))}
         />
 
-        <div className={`grid gap-5 ${state.tripType === "oneway" ? "xl:grid-cols-1" : "xl:grid-cols-2"}`}>
+        <div className="grid gap-5 xl:grid-cols-2">
           <RoutePanel title="Outbound Leg">
             <AirportField
               label="From (Origin Airport)"
@@ -641,19 +636,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
             </div>
           </RoutePanel>
 
-          {state.tripType === "oneway" ? (
-            <RoutePanel title="Return Leg">
-              <div className="rounded-[20px] border border-dashed border-[#dbe4f1] bg-[#f8fbff] px-5 py-8 text-center">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-[#8ea0bd] shadow-[0_16px_38px_-28px_rgba(15,23,42,0.28)]">
-                  <ArrowLeftRight className="h-5 w-5" />
-                </div>
-                <h4 className="mt-4 text-[18px] font-semibold text-[#12203f]">No return leg</h4>
-                <p className="mt-2 text-[14px] leading-7 text-[#7b8aa4]">
-                  One-way searches only save the outbound route and ignore return configuration.
-                </p>
-              </div>
-            </RoutePanel>
-          ) : state.tripType === "roundtrip" ? (
+          {state.tripType === "roundtrip" ? (
             <RoutePanel title="Return Leg">
               <div className="space-y-4 rounded-[20px] border border-[#e3eaf4] bg-[#f8fbff] p-5">
                 <div className="grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">

@@ -1,4 +1,4 @@
-export type TripType = "one_way" | "round_trip" | "multi_city";
+export type TripType = "round_trip" | "multi_city";
 export type RouteMarket = string;
 
 export interface RouteGroup {

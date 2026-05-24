@@ -60,14 +60,6 @@ class Settings(BaseSettings):
     scrapingbee_premium_proxy: bool = False
     scrapingbee_stealth_proxy: bool = False
     scrapingbee_multi_city_debug: bool = False
-    kayak_api_key: str = ""
-    kayak_base_url: str = "https://sandbox-en-us.kayakaffiliates.com"
-    kayak_poll_timeout_seconds: int = 90
-    kayak_poll_interval_seconds: float = 2.0
-    kayak_user_agent: str = "flight-harvester/1.0"
-    kayak_original_client_ip: str = ""
-    searchapi_key: str = ""
-    searchapi_keys: str = ""
 
     # Scheduler
     scheduler_enabled: bool = True
@@ -99,7 +91,6 @@ class Settings(BaseSettings):
     @field_validator(
         "cors_origins",
         "allowed_hosts",
-        "searchapi_keys",
         "scrapingbee_api_keys",
         mode="before",
     )
@@ -112,15 +103,10 @@ class Settings(BaseSettings):
         return str(v)
 
     @field_validator(
-        "searchapi_key",
         "scrapingbee_api_key",
         "scrapingbee_base_url",
         "scrapingbee_country_code",
         "scrapingbee_user_agent",
-        "kayak_api_key",
-        "kayak_base_url",
-        "kayak_user_agent",
-        "kayak_original_client_ip",
         mode="before",
     )
     @classmethod
@@ -171,19 +157,6 @@ class Settings(BaseSettings):
 
     def get_cors_origin_regex(self) -> str | None:
         return self.cors_origin_regex or None
-
-    def get_searchapi_keys(self) -> list[str]:
-        explicit_pool = self._parse_csv_or_json(self.searchapi_keys)
-        legacy_field = self._parse_csv_or_json(self.searchapi_key)
-        configured = explicit_pool if explicit_pool else legacy_field
-
-        seen: set[str] = set()
-        keys: list[str] = []
-        for key in configured:
-            if key and key not in seen:
-                seen.add(key)
-                keys.append(key)
-        return keys
 
     def get_scrapingbee_keys(self) -> list[str]:
         explicit_pool = self._parse_csv_or_json(self.scrapingbee_api_keys)

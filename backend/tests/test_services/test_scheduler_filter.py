@@ -291,7 +291,7 @@ async def test_trigger_single_group_updates_live_progress(
     group.max_stops = None
     group.same_airline_only = False
     group.max_leg_duration_minutes = None
-    group.trip_type = "one_way"
+    group.trip_type = "round_trip"
     group.nights = 0
     group.start_date = None
     group.end_date = None

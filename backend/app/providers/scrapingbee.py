@@ -127,19 +127,11 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 }
 _FAST_MULTI_CITY_CARD_LIMIT = 30
 _DEEP_MULTI_CITY_CARD_LIMIT = 180
-_DEEP_RESULTS_JS_SCENARIO = {
-    "instructions": [
-        {"wait": 5000},
-        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.35);"},
-        {"wait": 2500},
-        {"evaluate": "window.scrollTo(0, document.body.scrollHeight * 0.7);"},
-        {"wait": 2500},
-        {"evaluate": "window.scrollTo(0, document.body.scrollHeight);"},
-        {"wait": 3000},
-    ]
-}
-_SAME_AIRLINE_INITIAL_WAIT_MS = 35_000
-_SAME_AIRLINE_RETRY_WAIT_MS = 40_000
+_RESULT_PRICE_SELECTOR = ".nrc6-price-section .e2GB-price-text"
+_SAME_AIRLINE_INITIAL_WAIT_MS = 5_000
+_SAME_AIRLINE_RETRY_WAIT_MS = 9_000
+
+
 def _clean_text(value: object) -> str:
     return str(value or "").strip()
 
@@ -205,55 +197,6 @@ class ScrapingBeeProvider:
 
     name = "scrapingbee"
 
-    _AI_EXTRACT_RULES = {
-        "offers": {
-            "description": "visible KAYAK flight offers on the page",
-            "type": "list",
-            "output": {
-                "price": {
-                    "description": "total itinerary price as a number without currency symbols",
-                    "type": "number",
-                },
-                "price_text": {
-                    "description": "exact displayed itinerary price text including currency symbol or code",
-                    "type": "string",
-                },
-                "airline": {
-                    "description": "airline name or airline combination shown for the itinerary",
-                    "type": "string",
-                },
-                "duration": {
-                    "description": "total itinerary duration in minutes if inferable, otherwise 0",
-                    "type": "number",
-                },
-                "duration_text": {
-                    "description": "displayed itinerary duration text such as 23h 10m",
-                    "type": "string",
-                },
-                "stops": {
-                    "description": "number of stops as an integer where nonstop is 0",
-                    "type": "number",
-                },
-                "link": {
-                    "description": "deal or booking link for the itinerary if visible",
-                    "type": "string",
-                },
-                "summary": {
-                    "description": "short itinerary summary including times, stops, and other visible details",
-                    "type": "string",
-                },
-            },
-        }
-    }
-
-    _JS_SCENARIO = {
-        "instructions": [
-            {"wait": 3000},
-            {"evaluate": "window.scrollTo(0, document.body.scrollHeight);"},
-            {"wait": 3000},
-        ]
-    }
-
     def __init__(
         self,
         api_key: str,
@@ -305,40 +248,6 @@ class ScrapingBeeProvider:
 
     async def close(self) -> None:
         await self._client.aclose()
-
-    def _parse_partial_payload(self, body: str) -> dict | None:
-        if '"offers"' not in body:
-            return None
-
-        offers_key = body.find('"offers"')
-        list_start = body.find("[", offers_key)
-        if list_start < 0:
-            return None
-
-        decoder = json.JSONDecoder()
-        cursor = list_start + 1
-        offers: list[dict[str, object]] = []
-
-        while cursor < len(body):
-            while cursor < len(body) and body[cursor] in " \r\n\t,":
-                cursor += 1
-
-            if cursor >= len(body) or body[cursor] == "]":
-                break
-
-            try:
-                parsed, next_cursor = decoder.raw_decode(body, cursor)
-            except json.JSONDecodeError:
-                break
-
-            if isinstance(parsed, dict):
-                offers.append(parsed)
-            cursor = next_cursor
-
-        if not offers:
-            return None
-
-        return {"offers": offers}
 
     def _market_country_code(
         self,
@@ -413,7 +322,8 @@ class ScrapingBeeProvider:
             "block_ads": "True",
             "device": "desktop",
             "timeout": min(self._timeout * 1000, 140_000),
-            "wait": 4000,
+            "wait": 0,
+            "wait_browser": "load",
             "window_width": 1600,
             "window_height": 2200,
         }
@@ -428,25 +338,6 @@ class ScrapingBeeProvider:
             params["premium_proxy"] = "True"
         if self._stealth_proxy:
             params["stealth_proxy"] = "True"
-        return params
-
-    def _base_params(
-        self,
-        target_url: str,
-        *,
-        ai_extract_rules: dict[str, object] | None = None,
-        js_scenario: dict[str, object] | None = None,
-        country_code: str | None = None,
-    ) -> dict[str, object]:
-        params = self._base_request_params(target_url, country_code=country_code)
-        params["ai_extract_rules"] = json.dumps(
-            ai_extract_rules or self._AI_EXTRACT_RULES,
-            separators=(",", ":"),
-        )
-        params["js_scenario"] = json.dumps(
-            js_scenario or self._JS_SCENARIO,
-            separators=(",", ":"),
-        )
         return params
 
     def _quota_blocked(self) -> bool:
@@ -498,45 +389,6 @@ class ScrapingBeeProvider:
                 raise ProviderQuotaExhaustedError(message)
             raise RuntimeError(message)
 
-    async def _get_payload(
-        self,
-        target_url: str,
-        *,
-        ai_extract_rules: dict[str, object] | None = None,
-        js_scenario: dict[str, object] | None = None,
-        country_code: str | None = None,
-    ) -> dict:
-        async with self._request_slot():
-            try:
-                response = await self._client.get(
-                    self._base_url,
-                    params=self._base_params(
-                        target_url,
-                        ai_extract_rules=ai_extract_rules,
-                        js_scenario=js_scenario,
-                        country_code=country_code,
-                    ),
-                )
-            except httpx.TimeoutException as exc:
-                raise RuntimeError("ScrapingBee request timed out.") from exc
-            except httpx.HTTPError as exc:
-                raise RuntimeError("ScrapingBee request failed.") from exc
-
-        self._raise_for_status(response)
-
-        try:
-            data = await asyncio.to_thread(response.json)
-        except Exception as exc:
-            partial = self._parse_partial_payload(response.text)
-            if partial is not None:
-                return partial
-            raise RuntimeError("ScrapingBee returned invalid JSON.") from exc
-
-        if not isinstance(data, dict):
-            raise RuntimeError("ScrapingBee returned an unexpected response body.")
-
-        return data
-
     async def _get_rendered_payload(
         self,
         target_url: str,
@@ -548,7 +400,6 @@ class ScrapingBeeProvider:
         params["json_response"] = "True"
         params["js_scenario"] = json.dumps(js_scenario, separators=(",", ":"))
         params["block_resources"] = "True"
-        params["wait"] = 2500
 
         async with self._request_slot(rendered=True):
             try:
@@ -595,78 +446,6 @@ class ScrapingBeeProvider:
             f"{depart_date.isoformat()}?sort=price_a"
         )
 
-    def _build_multi_city_js_scenario(
-        self,
-        legs: list[dict[str, object]],
-    ) -> dict[str, object]:
-        first = legs[0]
-        second = legs[1]
-        first_origin = str(first["departure_id"]).upper()
-        first_destination = str(first["arrival_id"]).upper()
-        second_origin = str(second["departure_id"]).upper()
-        second_destination = str(second["arrival_id"]).upper()
-        first_date = f"{first['outbound_date']:%B} {first['outbound_date'].day}, {first['outbound_date']:%Y}"
-        second_date = f"{second['outbound_date']:%B} {second['outbound_date'].day}, {second['outbound_date']:%Y}"
-
-        helper = (
-            "window.fh={"
-            "r:()=>{Array.from(document.querySelectorAll('[aria-label]'))"
-            ".filter(e=>(e.getAttribute('aria-label')||'').includes('Remove leg number 3 from your search'))"
-            ".forEach(n=>{let k=Object.keys(n).find(x=>x.startsWith('__reactProps$')),p=k&&n[k];"
-            "p&&p.onClick?p.onClick({currentTarget:n,target:n,preventDefault(){},stopPropagation(){}}):n.click()});return 1},"
-            "c:(s,i,v)=>{let n=document.querySelectorAll(s)[i],k=n&&Object.keys(n).find(x=>x.startsWith('__reactProps$')),p=k&&n[k];"
-            "if(!p||!p.onChange)return 0;"
-            "p.onChange({target:{value:v},currentTarget:n,preventDefault(){},stopPropagation(){}});return 1},"
-            "o:(s,i)=>{let n=document.querySelectorAll(s)[i],l=n&&document.getElementById(n.getAttribute('aria-controls'));"
-            "if(!l)return 0;"
-            "let m=Array.from(l.querySelectorAll('[role=option]')).find(e=>e.id!=='nearby');"
-            "if(!m)return 0;"
-            "let k=Object.keys(m).find(x=>x.startsWith('__reactProps$')),p=k&&m[k];"
-            "p&&p.onClick?p.onClick({currentTarget:m,target:m,preventDefault(){},stopPropagation(){}}):m.click();return 1},"
-            "d:i=>{let n=Array.from(document.querySelectorAll('[aria-label]'))"
-            ".filter(e=>(e.getAttribute('aria-label')||'').includes('Select start date from calendar input'))[i],"
-            "k=n&&Object.keys(n).find(x=>x.startsWith('__reactProps$')),p=k&&n[k];"
-            "if(!p||!p.onClick)return 0;"
-            "p.onClick({currentTarget:n,target:n,preventDefault(){},stopPropagation(){}});return 1},"
-            "p:l=>{let n=Array.from(document.querySelectorAll('[aria-label]')).find(e=>e.getAttribute('aria-label')===l),"
-            "k=n&&Object.keys(n).find(x=>x.startsWith('__reactProps$')),p=k&&n[k];"
-            "if(!n)return 0;"
-            "p&&p.onClick?p.onClick({currentTarget:n,target:n,preventDefault(){},stopPropagation(){}}):n.click();return 1},"
-            "s:()=>{let b=document.querySelector('button[aria-label=\"Search\"]'),k=b&&Object.keys(b).find(x=>x.startsWith('__reactProps$')),p=k&&b[k];"
-            "if(!p||!p.onClick)return 0;"
-            "p.onClick({currentTarget:b,target:b,preventDefault(){},stopPropagation(){}});return 1}"
-            "};1"
-        )
-
-        return {
-            "strict": False,
-            "instructions": [
-                {"evaluate": helper},
-                {"evaluate": "fh.r()"},
-                {"wait": 700},
-                {"evaluate": f'fh.c("input[data-test-origin]",0,"{first_origin}")'},
-                {"evaluate": f'fh.c("input[data-test-destination]",0,"{first_destination}")'},
-                {"evaluate": f'fh.c("input[data-test-origin]",1,"{second_origin}")'},
-                {"evaluate": f'fh.c("input[data-test-destination]",1,"{second_destination}")'},
-                {"wait": 1500},
-                {"evaluate": 'fh.o("input[data-test-origin]",0)'},
-                {"evaluate": 'fh.o("input[data-test-destination]",0)'},
-                {"evaluate": 'fh.o("input[data-test-origin]",1)'},
-                {"evaluate": 'fh.o("input[data-test-destination]",1)'},
-                {"wait": 1200},
-                {"evaluate": "fh.d(0)"},
-                {"wait": 700},
-                {"evaluate": f'fh.p("{first_date}")'},
-                {"wait": 700},
-                {"evaluate": "fh.d(1)"},
-                {"wait": 700},
-                {"evaluate": f'fh.p("{second_date}")'},
-                {"wait": 1200},
-                {"evaluate": "fh.s()"},
-                {"wait": 12_000},
-            ],
-        }
-
     def _build_multi_city_results_url(
         self,
         *,
@@ -688,273 +467,6 @@ class ScrapingBeeProvider:
             f"{inbound_date.isoformat()}?sort=price_a"
         )
 
-    def _build_multi_city_results_scenario(
-        self,
-        *,
-        deep: bool = False,
-        same_airline_only: bool = False,
-        same_airline_wait_ms: int | None = None,
-    ) -> dict[str, object]:
-        card_limit = _DEEP_MULTI_CITY_CARD_LIMIT if deep else _FAST_MULTI_CITY_CARD_LIMIT
-        effective_same_airline_wait_ms = (
-            same_airline_wait_ms
-            if same_airline_only and same_airline_wait_ms is not None
-            else _SAME_AIRLINE_INITIAL_WAIT_MS
-        )
-        helper_script = f"""
-(()=>{{
-const sameAirlineMode={'true' if same_airline_only else 'false'};
-const cardLimit={card_limit};
-const requiredHits=sameAirlineMode?3:2;
-const fh=window.__fhResults||(window.__fhResults={{}});
-fh.clean=v=>(v||'').toString().replace(/\\s+/g,' ').trim();
-fh.cleanLines=v=>(v||'').toString().replace(/\\u00a0/g,' ').replace(/\\r/g,'').split(/\\n+/).map(part=>fh.clean(part)).filter(Boolean);
-fh.visible=el=>{{if(!el)return false;const r=el.getBoundingClientRect();return r.width>0&&r.height>0&&window.getComputedStyle(el).visibility!=='hidden'&&window.getComputedStyle(el).display!=='none';}};
-fh.parsePrice=text=>{{const raw=fh.clean(text).replace(/,/g,'');const match=raw.match(/(?:[A-Z]{{0,3}}\\$|[$€£₹])\\s*([0-9]+(?:\\.[0-9]+)?)/i);return match?Number(match[1]):null;}};
-fh.clickCheapest=()=>{{
-  const pick=Array.from(document.querySelectorAll('button,a,[role="button"],div,span'))
-    .filter(el=>fh.visible(el)&&/^cheapest(?:\\s|$)/.test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()));
-  if(!pick.length)return false;
-  const target=pick[0].closest('button,a,[role="button"]')||pick[0];
-  target.click();
-  return true;
-}};
-fh.loadingActive=()=>Array.from(document.querySelectorAll('[role="progressbar"],progress,[aria-busy="true"],[class*="loading"],[class*="progress"]')).some(el=>fh.visible(el));
-fh.airlineFacetRoot=()=>{{
-  const candidates=Array.from(document.querySelectorAll('section,aside,div')).filter(el=>{{
-    if(!fh.visible(el))return false;
-    const text=el.innerText||'';
-    return /(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(text) && /(?:[A-Z]{{0,3}}\\$|[$€£₹])\\s*\\d/.test(text);
-  }});
-  if(!candidates.length)return null;
-  candidates.sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length);
-  return candidates[0];
-}};
-fh.airlineFacetOptions=()=>{{
-  const root=fh.airlineFacetRoot();
-  if(!root)return [];
-  const blocked=/^(select all|clear all|show \\d+ more airlines?|alliance|airports|times|take-off|landing|book now, pay later|transportation options)$/i;
-  const mixed=/(multiple airlines|multiple airline|mixed airlines|various airlines)/i;
-  const seen=new Map();
-  for(const el of Array.from(root.querySelectorAll('label,button,[role="button"],li,div,span'))){{
-    if(!fh.visible(el))continue;
-    const lines=fh.cleanLines(el.innerText);
-    if(!lines.length||lines.length>3)continue;
-    const rowText=lines.join(' | ');
-    const price=fh.parsePrice(rowText);
-    if(price===null)continue;
-    let name=lines.find(line=>fh.parsePrice(line)===null)||'';
-    name=fh.clean(name.replace(/\\b\\d+\\b/g,''));
-    if(!name||blocked.test(name)||mixed.test(name))continue;
-    const clickable=el.closest('label,button,[role="button"],li')||el;
-    const key=name.toLowerCase();
-    const existing=seen.get(key);
-    if(!existing||price<existing.price)seen.set(key,{{name,price,el:clickable,text:rowText}});
-  }}
-  return Array.from(seen.values()).sort((a,b)=>a.price-b.price).slice(0,4);
-}};
-fh.applyAirlineFacet=()=>{{
-  if(!sameAirlineMode)return false;
-  const options=fh.airlineFacetOptions();
-  window.__fhFacetState={{selected:'',options:options.map(option=>({{name:option.name,price:option.price,text:option.text}}))}};
-  if(!options.length)return false;
-  const target=options[0];
-  window.__fhFacetState.selected=target.name;
-  const checkbox=target.el.querySelector('input[type="checkbox"]');
-  if(checkbox && !checkbox.checked){{checkbox.click();return true;}}
-  target.el.click();
-  return true;
-}};
-fh.settle=()=>{{
-  const topPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text')).map(node=>fh.clean(node.innerText)).filter(Boolean).slice(0,6).join('|');
-  const cardPrices=Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text')).map(node=>fh.clean(node.innerText)).filter(Boolean).slice(0,6).join('|');
-  const countNode=Array.from(document.querySelectorAll('body *')).find(el=>{{
-    if(!fh.visible(el))return false;
-    const text=fh.clean(el.innerText);
-    return /\\b\\d+\\s+of\\s+\\d+\\s+flights\\b/i.test(text)||/\\b\\d+\\s+flights\\b/i.test(text);
-  }});
-  const countText=fh.clean(countNode?.innerText);
-  const summaryText=Array.from(document.querySelectorAll('button,a,[role="button"],div,span'))
-    .filter(fh.visible)
-    .map(el=>fh.clean(el.innerText||el.getAttribute('aria-label')))
-    .filter(text=>/^cheapest(?:\\s|$)|^best(?:\\s|$)|^quickest(?:\\s|$)/i.test(text))
-    .slice(0,3).join('|');
-  const facetState=window.__fhFacetState?.options||fh.airlineFacetOptions().map(option=>({{name:option.name,price:option.price}}));
-  const facetPrices=facetState.map(option=>`${{option.name}}:${{option.price}}`).slice(0,6).join('|');
-  const selectedFacet=fh.clean(window.__fhFacetState?.selected||'');
-  const cardCount=document.querySelectorAll('.nrc6-price-section .e2GB-price-text').length;
-  const loading=fh.loadingActive()?'1':'0';
-  const key=[loading,selectedFacet,countText,summaryText,topPrices,cardPrices,facetPrices,cardCount].join('||');
-  const state=window.__fhSettleState||{{key:'',hits:0}};
-  if(key&&key===state.key){{state.hits+=1;}}else{{state.key=key;state.hits=0;}}
-  state.loading=loading==='1';
-  window.__fhSettleState=state;
-  return loading==='0' && (!!summaryText || cardCount>0) && (!!cardPrices || !!topPrices) && state.hits>=requiredHits;
-}};
-fh.extract=()=>{{
-  const isCard=node=>!!node&&!!node.querySelector('.nrc6-price-section .e2GB-price-text')&&node.querySelectorAll('ol.hJSA-list > li').length>=2;
-  const raw=Array.from(document.querySelectorAll('div[aria-label^="Result item"],div[data-resultid],div.nrc6,div[class*="nrc6"]')).filter(isCard);
-  const roots=raw.filter((card,index)=>!raw.some((other,otherIndex)=>otherIndex!==index&&card.contains(other)&&isCard(other)));
-  const tabText=label=>(Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).find(el=>new RegExp('^'+label+'(?:\\\\s|$)').test(fh.clean(el.innerText||el.getAttribute('aria-label')).toLowerCase()))?.innerText||'').trim();
-  const facetOptions=(window.__fhFacetState?.options||fh.airlineFacetOptions().map(option=>({{name:option.name,price:option.price,text:option.text}})));
-  return JSON.stringify({{
-    card_count:roots.length,
-    captured_count:roots.slice(0,cardLimit).length,
-    cards:roots.slice(0,cardLimit).map(card=>({{
-      text:fh.clean(card.innerText),
-      price_text:fh.clean(card.querySelector('.nrc6-price-section .e2GB-price-text')?.innerText),
-      booking_href:fh.clean(card.querySelector('.nrc6-price-section a[href*="/book/"]')?.getAttribute('href')),
-      cabin:fh.clean(card.querySelector('.nrc6-price-section .Hy6H')?.innerText),
-      airline_text:fh.clean(card.querySelector('.J0g6-operator-text')?.innerText),
-      badges:Array.from(card.querySelectorAll('span,div,button')).map(node=>fh.clean(node.innerText)).filter(text=>/^(best|cheapest|quickest)$/i.test(text)).slice(0,3),
-      legs:Array.from(card.querySelectorAll('ol.hJSA-list > li')).map(li=>({{
-        text:fh.clean(li.innerText),
-        airline:fh.clean(li.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),
-        time_text:fh.clean(li.querySelector('.VY2U .vmXl')?.innerText),
-        route_text:fh.clean(li.querySelector('.VY2U [dir="ltr"]')?.innerText),
-        stops_text:fh.clean(li.querySelector('.JWEO .vmXl')?.innerText),
-        layover_text:fh.clean(li.querySelector('.JWEO .c_cgF')?.innerText),
-        duration_text:fh.clean(li.querySelector('.xdW8 .vmXl')?.innerText)
-      }})).filter(leg=>leg.text)
-    }})),
-    summary:{{cheapest:tabText('cheapest'),best:tabText('best'),quickest:tabText('quickest')}},
-    facet:{{selected:fh.clean(window.__fhFacetState?.selected||''),options:facetOptions}},
-    settled:!!(window.__fhSettleState&&window.__fhSettleState.hits>=requiredHits&&!window.__fhSettleState.loading),
-    same_airline_mode:sameAirlineMode
-  }});
-}};
-return true;
-}})()
-""".strip()
-        helper_script = """
-(()=>{{
-const m=__MODE__,l=__LIMIT__,h=m?3:2,w=window.__fhR||(window.__fhR={});
-w.t=v=>(v||'').toString().replace(/\\s+/g,' ').trim();
-w.n=v=>(v||'').toString().replace(/\\u00a0/g,' ').split(/\\n+/).map(w.t).filter(Boolean);
-w.v=e=>{{if(!e)return 0;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none';}};
-w.p=v=>{{const m=w.t(v).replace(/,/g,'').match(/(?:[A-Z]{{0,3}}\\$|[$â‚¬Â£â‚¹])\\s*([0-9]+(?:\\.[0-9]+)?)/i);return m?Number(m[1]):null;}};
-w.g=()=>Array.from(document.querySelectorAll('.nrc6-price-section .e2GB-price-text')).map(n=>w.t(n.innerText)).filter(Boolean).slice(0,6);
-__CLICK__
-w.b=()=>Array.from(document.querySelectorAll('[role="progressbar"],progress,[aria-busy="true"],[class*="loading"],[class*="progress"]')).some(w.v);
-w.r=()=>Array.from(document.querySelectorAll('section,aside,div')).filter(e=>w.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{{0,3}}\\$|[$â‚¬Â£â‚¹])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;
-w.o=()=>{{const r=w.r();if(!r)return[];const x=/^(select all|clear all|show \\d+ more airlines?|alliance|airports|times|take-off|landing|book now, pay later|transportation options)$/i,y=/(multiple airlines|multiple airline|mixed airlines|various airlines)/i,s=new Map();for(const e of Array.from(r.querySelectorAll('label,button,[role="button"],li,div,span'))){if(!w.v(e))continue;const a=w.n(e.innerText);if(!a.length||a.length>3)continue;const j=a.join('|'),p=w.p(j);if(p===null)continue;let n=a.find(z=>w.p(z)===null)||'';n=w.t(n.replace(/\\b\\d+\\b/g,''));if(!n||x.test(n)||y.test(n))continue;const c=e.closest('label,button,[role="button"],li')||e,k=n.toLowerCase(),u=s.get(k);if(!u||p<u.p)s.set(k,{{n,p,e:c}});}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4);}};
-w.f=()=>{{if(!m)return 0;const o=w.o();window.__fhF={{s:'',o:o.map(x=>({{n:x.n,p:x.p}}))}};if(!o.length)return 0;const t=o[0];window.__fhF.s=t.n;const c=t.e.querySelector('input[type="checkbox"]');if(c&&!c.checked){{c.click();return 1;}}t.e.click();return 1;}};
-w.s=()=>{{const p=w.g().join('|'),y=Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).filter(w.v).map(e=>w.t(e.innerText||e.getAttribute('aria-label'))).filter(v=>/^(cheapest|best|quickest)(\\s|$)/i.test(v)).slice(0,3).join('|'),o=(window.__fhF?.o||w.o().map(x=>({{n:x.n,p:x.p}}))).map(x=>`${{x.n}}:${{x.p}}`).join('|'),k=[w.b()?1:0,window.__fhF?.s||'',y,p,o].join('||'),st=window.__fhS||{{k:'',h:0}};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=w.b()?1:0;window.__fhS=st;return !st.b&&p&&st.h>=h;}};
-w.x=()=>{{const d=n=>n&&n.querySelector('.nrc6-price-section .e2GB-price-text')&&n.querySelectorAll('ol.hJSA-list>li').length>=2,r=Array.from(document.querySelectorAll('div[aria-label^="Result item"],div[data-resultid],div.nrc6,div[class*="nrc6"]')).filter(d),u=r.filter((c,i)=>!r.some((o,j)=>j!==i&&c.contains(o)&&d(o))),tt=q=>(Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).find(e=>new RegExp('^'+q+'(?:\\\\s|$)','i').test(w.t(e.innerText||e.getAttribute('aria-label'))))?.innerText||'').trim();return JSON.stringify({{n:u.length,m:u.slice(0,l).length,c:u.slice(0,l).map(c=>({{t:w.t(c.innerText),p:w.t(c.querySelector('.nrc6-price-section .e2GB-price-text')?.innerText),h:w.t(c.querySelector('.nrc6-price-section a[href*="/book/"]')?.getAttribute('href')),cb:w.t(c.querySelector('.nrc6-price-section .Hy6H')?.innerText),a:w.t(c.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(c.querySelectorAll('span,div,button')).map(n=>w.t(n.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(c.querySelectorAll('ol.hJSA-list>li')).map(i=>({{t:w.t(i.innerText),a:w.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:w.t(i.querySelector('.VY2U .vmXl')?.innerText),r:w.t(i.querySelector('.VY2U [dir="ltr"]')?.innerText),s:w.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:w.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:w.t(i.querySelector('.xdW8 .vmXl')?.innerText)}})).filter(i=>i.t)}})),s:{{c:tt('cheapest'),b:tt('best'),q:tt('quickest')}},f:{{s:w.t(window.__fhF?.s||''),o:window.__fhF?.o||w.o().map(x=>({{n:x.n,p:x.p}}))}},e:!!(window.__fhS&&window.__fhS.h>=h&&!window.__fhS.b),sm:m}});}};
-return true;
-})()
-""".replace("{{", "{").replace("}}", "}").replace("__MODE__", "true" if same_airline_only else "false").replace("__LIMIT__", str(card_limit)).replace("__CLICK__", "" if same_airline_only else """w.c=()=>{const e=Array.from(document.querySelectorAll('button,a,[role="button"],div,span')).find(n=>w.v(n)&&/^cheapest(?:\\s|$)/i.test(w.t(n.innerText||n.getAttribute('aria-label'))));if(!e)return 0;(e.closest('button,a,[role="button"]')||e).click();return 1;};""").strip()
-        click_cheapest_script = "window.__fhR.c()"
-        apply_airline_script = "window.__fhR.f()"
-        settle_script = "window.__fhR.s()"
-        script = "window.__fhR.x()"
-        if not deep:
-            instructions = [
-                {"evaluate": helper_script},
-                {"wait": effective_same_airline_wait_ms if same_airline_only else 5_000},
-            ]
-            if same_airline_only:
-                instructions.extend(
-                    [
-                        {"evaluate": apply_airline_script},
-                        {"wait": 1_200},
-                        {"evaluate": "window.scrollBy(0,1200)"},
-                        {"wait": 800},
-                        {"evaluate": settle_script},
-                        {"wait": 1_000},
-                        {"evaluate": settle_script},
-                        {"wait": 1_000},
-                        {"evaluate": settle_script},
-                        {"evaluate": script},
-                    ]
-                )
-            else:
-                instructions.extend(
-                    [
-                        {"evaluate": settle_script},
-                        {"wait": 1_000},
-                        {"evaluate": settle_script},
-                        {"wait": 1_000},
-                        {"evaluate": apply_airline_script},
-                        {"wait": 1_200},
-                        {"evaluate": click_cheapest_script},
-                        {"wait": 1_000},
-                        {"evaluate": "window.scrollBy(0,1200)"},
-                        {"wait": 800},
-                        {"evaluate": settle_script},
-                        {"wait": 1_000},
-                        {"evaluate": settle_script},
-                        {"wait": 1_000},
-                        {"evaluate": settle_script},
-                        {"wait": 1_000},
-                        {"evaluate": settle_script},
-                        {"evaluate": script},
-                    ]
-                )
-            return {
-                "strict": False,
-                "instructions": instructions,
-            }
-        instructions = [
-            {"evaluate": helper_script},
-            {"wait": effective_same_airline_wait_ms if same_airline_only else 6_500},
-        ]
-        if same_airline_only:
-            instructions.extend(
-                [
-                    {"evaluate": apply_airline_script},
-                    {"wait": 1_200},
-                    {"evaluate": "window.scrollBy(0,1800)"},
-                    {"wait": 800},
-                    {"evaluate": "window.scrollBy(0,2800)"},
-                    {"wait": 800},
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
-                    {"evaluate": settle_script},
-                    {"evaluate": script},
-                ]
-            )
-        else:
-            instructions.extend(
-                [
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
-                    {"evaluate": apply_airline_script},
-                    {"wait": 1_200},
-                    {"evaluate": click_cheapest_script},
-                    {"wait": 1_200},
-                    {"evaluate": "window.scrollBy(0,1200)"},
-                    {"wait": 800},
-                    {"evaluate": "window.scrollBy(0,1800)"},
-                    {"wait": 800},
-                    {"evaluate": click_cheapest_script},
-                    {"evaluate": "window.scrollBy(0,2400)"},
-                    {"wait": 800},
-                    {"evaluate": "window.scrollBy(0,2800)"},
-                    {"wait": 800},
-                    {"evaluate": "window.scrollBy(0,3200)"},
-                    {"wait": 800},
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
-                    {"evaluate": settle_script},
-                    {"wait": 1_000},
-                    {"evaluate": settle_script},
-                    {"evaluate": script},
-                ]
-            )
-        return {
-            "strict": False,
-            "instructions": instructions,
-        }
-
     def _build_results_scenario(
         self,
         *,
@@ -963,32 +475,61 @@ return true;
         minimum_leg_count: int = 1,
         same_airline_wait_ms: int | None = None,
     ) -> dict[str, object]:
-        scenario = self._build_multi_city_results_scenario(
-            deep=deep,
-            same_airline_only=same_airline_only,
-            same_airline_wait_ms=same_airline_wait_ms,
+        del same_airline_only
+        card_limit = _DEEP_MULTI_CITY_CARD_LIMIT if deep else _FAST_MULTI_CITY_CARD_LIMIT
+        effective_wait_ms = (
+            same_airline_wait_ms
+            if same_airline_wait_ms is not None
+            else _SAME_AIRLINE_INITIAL_WAIT_MS
         )
-        if minimum_leg_count == 2:
-            return scenario
 
-        instructions: list[dict[str, object]] = []
-        for instruction in scenario["instructions"]:
-            cloned = dict(instruction)
-            evaluate = cloned.get("evaluate")
-            if isinstance(evaluate, str):
-                evaluate = evaluate.replace(
-                    "querySelectorAll('ol.hJSA-list > li').length>=2",
-                    f"querySelectorAll('ol.hJSA-list > li').length>={minimum_leg_count}",
-                )
-                evaluate = evaluate.replace(
-                    "querySelectorAll('ol.hJSA-list>li').length>=2",
-                    f"querySelectorAll('ol.hJSA-list>li').length>={minimum_leg_count}",
-                )
-                cloned["evaluate"] = evaluate
-            instructions.append(cloned)
+        helper_script = (
+            "(()=>{const l=__LIMIT__,g=__MIN_LEGS__,p='__PRICE_SELECTOR__',c='div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]',b='button,a,[role=\"button\"],div,span',f=window.__fhCollector||(window.__fhCollector={});"
+            "f.t=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
+            "f.n=v=>(v||'').toString().replace(/\\u00a0/g,' ').split(/\\n+/).map(f.t).filter(Boolean);"
+            "f.v=e=>{if(!e)return 0;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none'};"
+            "f.p=v=>{const m=f.t(v).replace(/,/g,'').match(/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*([0-9]+(?:\\.[0-9]+)?)/i);return m?Number(m[1]):null};"
+            "f.o=()=>Array.from(document.querySelectorAll('section,aside,div')).filter(e=>f.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;"
+            "f.x=()=>{const r=f.o();if(!r)return[];const s=new Map();for(const e of Array.from(r.querySelectorAll('label,button,[role=\"button\"],li,div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),p=f.p(t);if(p===null)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n))continue;const k=n.toLowerCase(),u=s.get(k),q=e.closest('label,button,[role=\"button\"],li')||e;if(!u||p<u.p)s.set(k,{n,p,e:q})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
+            "f.a=()=>{const o=f.x();window.__fhFacet={s:'',o:o.map(v=>({n:v.n,p:v.p}))};if(!o.length)return 0;const t=o[0],h=t.e.querySelector('input[type=\"checkbox\"]');window.__fhFacet.s=t.n;if(h&&!h.checked){h.click();return 1}t.e.click();return 1};"
+            "f.l=()=>Array.from(document.querySelectorAll('[role=\"progressbar\"],progress,[aria-busy=\"true\"],[class*=\"loading\"],[class*=\"progress\"]')).some(f.v);"
+            "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll('ol.hJSA-list > li').length>=g).filter((n,i,a)=>!a.some((o,j)=>j!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll('ol.hJSA-list > li').length>=g));"
+            "f.y=()=>Array.from(document.querySelectorAll(b)).filter(f.v).map(e=>f.t(e.innerText||e.getAttribute('aria-label'))).filter(v=>/^(cheapest|best|quickest)(\\s|$)/i.test(v)).slice(0,3).join('|');"
+            "f.s=()=>{const z=Array.from(document.querySelectorAll(p)).map(n=>f.t(n.innerText)).filter(Boolean).slice(0,6).join('|'),m=(window.__fhFacet?.o||f.x().map(v=>({n:v.n,p:v.p}))).map(v=>`${v.n}:${v.p}`).join('|'),k=[f.l()?1:0,f.t(window.__fhFacet?.s||''),f.y(),z,m,f.r().length].join('||'),st=window.__fhSettle||{k:'',h:0};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=f.l()?1:0;window.__fhSettle=st;return !st.b&&(z||m)&&st.h>=3};"
+            "f.e=()=>{const d=n=>(Array.from(document.querySelectorAll(b)).find(e=>new RegExp('^'+n+'(?:\\\\s|$)','i').test(f.t(e.innerText||e.getAttribute('aria-label'))))?.innerText||'').trim(),r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll('ol.hJSA-list > li')).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),s:{c:d('cheapest'),b:d('best'),q:d('quickest')},f:{s:f.t(window.__fhFacet?.s||''),o:window.__fhFacet?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(window.__fhSettle&&window.__fhSettle.h>=3&&!window.__fhSettle.b),sm:true})};return true})()"
+        )
+        helper_script = (
+            helper_script.replace("__LIMIT__", str(card_limit))
+            .replace("__MIN_LEGS__", str(max(1, minimum_leg_count)))
+            .replace("__PRICE_SELECTOR__", _RESULT_PRICE_SELECTOR)
+        )
+
+        instructions: list[dict[str, object]] = [
+            {"evaluate": helper_script},
+            {"wait_for": _RESULT_PRICE_SELECTOR},
+            {"wait": effective_wait_ms},
+            {"evaluate": "window.__fhCollector.applyFacet()"},
+            {"wait": 1200},
+            {"scroll_y": 1200},
+            {"wait": 700},
+            {"evaluate": "window.__fhCollector.settle()"},
+            {"wait": 900},
+            {"evaluate": "window.__fhCollector.settle()"},
+            {"wait": 900},
+            {"evaluate": "window.__fhCollector.settle()"},
+        ]
+        if deep:
+            instructions.extend(
+                [
+                    {"scroll_y": 2000},
+                    {"wait": 700},
+                    {"evaluate": "window.__fhCollector.settle()"},
+                ]
+            )
+        instructions.append({"evaluate": "window.__fhCollector.extract()"})
 
         return {
-            "strict": bool(scenario.get("strict", False)),
+            "strict": False,
             "instructions": instructions,
         }
 
@@ -1596,7 +1137,7 @@ return true;
             )
 
             raw_data = results[-1].raw_data
-            if trip_type != "one_way":
+            if trip_type in {"round_trip", "multi_city"}:
                 outbound_airline = _clean_text(normalized_legs[0].get("airline")) or (
                     airline_parts[0] if airline_parts else display_airline
                 )
@@ -1685,7 +1226,7 @@ return true;
                 "leg_durations": [duration_minutes],
                 "stop_result_label": self._stop_label_for_count(stop_count),
             }
-            if trip_type != "one_way":
+            if trip_type in {"round_trip", "multi_city"}:
                 outbound_airline = airline_parts[0] if airline_parts else airline
                 return_airline = airline_parts[1] if len(airline_parts) > 1 else outbound_airline
                 raw_data["outbound_airline"] = outbound_airline
@@ -1705,111 +1246,6 @@ return true;
             )
 
         return sorted(results, key=lambda item: item.price)
-
-    async def _search_one_way_once(
-        self,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        *,
-        market: str | None = None,
-        currency: str = "USD",
-        deep: bool = False,
-        same_airline_only: bool = False,
-    ) -> list[ProviderResult]:
-        if self._quota_blocked():
-            raise ProviderQuotaExhaustedError("ScrapingBee quota cooldown active.")
-
-        market_country_code = self._market_country_code(currency, market)
-        target_url = self._build_search_url(
-            origin=origin,
-            destination=destination,
-            depart_date=depart_date,
-            market=market,
-            currency=currency,
-        )
-        del same_airline_only
-        payload = await self._get_payload(
-            target_url,
-            country_code=market_country_code,
-            js_scenario=_DEEP_RESULTS_JS_SCENARIO if deep else None,
-        )
-        results = self._normalize_flights(
-            payload,
-            currency=currency,
-            deep_link=target_url,
-            trip_type="one_way",
-            market_country_code=market_country_code,
-        )
-        log.info(
-            "scrapingbee_results",
-            trip_type="one_way",
-            origin=origin,
-            destination=destination,
-            date=depart_date.isoformat(),
-            count=len(results),
-            currency=currency,
-        )
-        return results
-
-    async def _search_round_trip_once(
-        self,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        return_date: date,
-        *,
-        market: str | None = None,
-        currency: str = "USD",
-        deep: bool = False,
-        same_airline_only: bool = False,
-    ) -> list[ProviderResult]:
-        if self._quota_blocked():
-            raise ProviderQuotaExhaustedError("ScrapingBee quota cooldown active.")
-
-        market_country_code = self._market_country_code(currency, market)
-        target_url = self._build_search_url(
-            origin=origin,
-            destination=destination,
-            depart_date=depart_date,
-            return_date=return_date,
-            market=market,
-            currency=currency,
-        )
-        if same_airline_only:
-            rendered, _, results, _, _ = await self._render_results_attempt(
-                target_url=target_url,
-                country_code=market_country_code,
-                currency=currency,
-                trip_type="round_trip",
-                minimum_leg_count=2,
-                deep=deep,
-                same_airline_only=True,
-            )
-        else:
-            payload = await self._get_payload(
-                target_url,
-                country_code=market_country_code,
-                js_scenario=_DEEP_RESULTS_JS_SCENARIO if deep else None,
-            )
-            results = self._normalize_flights(
-                payload,
-                currency=currency,
-                deep_link=target_url,
-                trip_type="round_trip",
-                market_country_code=market_country_code,
-            )
-        log.info(
-            "scrapingbee_results",
-            trip_type="round_trip",
-            origin=origin,
-            destination=destination,
-            depart_date=depart_date.isoformat(),
-            return_date=return_date.isoformat(),
-            count=len(results),
-            currency=currency,
-        )
-        return results
 
     async def _render_results_attempt(
         self,
@@ -1856,7 +1292,8 @@ return true;
         same_airline_only: bool,
         minimum_leg_count: int,
     ) -> ProviderSearchOutcome:
-        initial_deep = same_airline_only
+        same_airline_only = True
+        initial_deep = True
         rendered, summary_prices, results, card_count, _ = await self._render_results_attempt(
             target_url=target_url,
             country_code=market_country_code,
@@ -1869,74 +1306,33 @@ return true;
         eligible_results = self._filter_results_by_stops(results, max_stops)
         used_strong_retry = False
 
-        if same_airline_only:
-            same_airline_results = self._same_airline_results_only(eligible_results)
-            if same_airline_results:
-                eligible_results = same_airline_results
-            elif not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
-                retry_rendered, retry_summary_prices, retry_results, retry_card_count, _ = await self._render_results_attempt(
-                    target_url=target_url,
-                    country_code=market_country_code,
-                    currency=requested_currency,
-                    trip_type=trip_type,
-                    minimum_leg_count=minimum_leg_count,
-                    deep=True,
-                    same_airline_only=True,
-                    same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+        same_airline_results = self._same_airline_results_only(eligible_results)
+        if same_airline_results:
+            eligible_results = same_airline_results
+        elif not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            retry_rendered, retry_summary_prices, retry_results, retry_card_count, _ = await self._render_results_attempt(
+                target_url=target_url,
+                country_code=market_country_code,
+                currency=requested_currency,
+                trip_type=trip_type,
+                minimum_leg_count=minimum_leg_count,
+                deep=True,
+                same_airline_only=True,
+                same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+            )
+            if retry_results or retry_card_count > 0 or self._rendered_payload_has_summary_prices(retry_rendered):
+                rendered = retry_rendered
+                summary_prices = retry_summary_prices
+                results = retry_results
+                card_count = retry_card_count
+                eligible_results = self._same_airline_results_only(
+                    self._filter_results_by_stops(retry_results, max_stops)
                 )
-                if retry_results or retry_card_count > 0 or self._rendered_payload_has_summary_prices(retry_rendered):
-                    rendered = retry_rendered
-                    summary_prices = retry_summary_prices
-                    results = retry_results
-                    card_count = retry_card_count
-                    eligible_results = self._same_airline_results_only(
-                        self._filter_results_by_stops(retry_results, max_stops)
-                    )
-                    used_strong_retry = True
-                else:
-                    eligible_results = []
+                used_strong_retry = True
             else:
-                # Do not fall back to the generic rendered scenario here.
-                # That request shape is larger and can exceed ScrapingBee's
-                # request-line limit for same-airline searches.
                 eligible_results = []
         else:
-            if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
-                retry_rendered, retry_summary_prices, retry_results, retry_card_count, _ = await self._render_results_attempt(
-                    target_url=target_url,
-                    country_code=market_country_code,
-                    currency=requested_currency,
-                    trip_type=trip_type,
-                    minimum_leg_count=minimum_leg_count,
-                    deep=True,
-                    same_airline_only=False,
-                )
-                if retry_results or retry_card_count > 0 or self._rendered_payload_has_summary_prices(retry_rendered):
-                    rendered = retry_rendered
-                    summary_prices = retry_summary_prices
-                    results = retry_results
-                    eligible_results = self._filter_results_by_stops(retry_results, max_stops)
-                    used_strong_retry = True
-
-            summary_lowest = self._summary_lowest_price(summary_prices)
-            eligible_lowest = min((result.price for result in eligible_results), default=None)
-            if summary_lowest is not None and (eligible_lowest is None or summary_lowest + 1 < eligible_lowest):
-                retry_rendered, retry_summary_prices, retry_results, _, _ = await self._render_results_attempt(
-                    target_url=target_url,
-                    country_code=market_country_code,
-                    currency=requested_currency,
-                    trip_type=trip_type,
-                    minimum_leg_count=minimum_leg_count,
-                    deep=True,
-                    same_airline_only=False,
-                )
-                retry_eligible = self._filter_results_by_stops(retry_results, max_stops)
-                if retry_eligible or retry_results:
-                    rendered = retry_rendered
-                    summary_prices = retry_summary_prices
-                    results = retry_results
-                    eligible_results = retry_eligible
-                    used_strong_retry = True
+            eligible_results = []
 
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
@@ -1945,17 +1341,14 @@ return true;
         visible_results_found = card_count > 0 or facet_option_count > 0
         summary_price_found = bool(summary_prices) or facet_option_count > 0
 
-        if same_airline_only:
-            if eligible_results:
-                result_reason = "success"
-            elif results or visible_results_found:
-                result_reason = "filtered_out"
-            elif summary_price_found:
-                result_reason = "extract_failed"
-            else:
-                result_reason = "page_empty"
+        if eligible_results:
+            result_reason = "success"
+        elif results or visible_results_found:
+            result_reason = "filtered_out"
+        elif summary_price_found:
+            result_reason = "extract_failed"
         else:
-            result_reason = "success" if eligible_results else ("extract_failed" if (visible_results_found or summary_price_found) else "page_empty")
+            result_reason = "page_empty"
 
         diagnostics = self._diagnostics_for_results(
             results=results,
@@ -1964,7 +1357,7 @@ return true;
             result_reason=result_reason,
             visible_results_found=visible_results_found,
             summary_price_found=summary_price_found,
-            used_strong_retry=used_strong_retry or (same_airline_only and bool(selected_facet)),
+            used_strong_retry=used_strong_retry or bool(selected_facet),
         )
         diagnostics.raw_offers_found = len(results)
         diagnostics.eligible_offers_found = len(eligible_results)
@@ -1979,6 +1372,7 @@ return true;
         max_stops: int | None = None,
         same_airline_only: bool = False,
     ) -> tuple[list[ProviderResult], ProviderSearchDiagnostics]:
+        same_airline_only = True
         if self._quota_blocked():
             raise ProviderQuotaExhaustedError("ScrapingBee quota cooldown active.")
 
@@ -2015,110 +1409,48 @@ return true;
         card_count = 0
         captured_count = 0
 
-        async def _render_attempt(
-            *,
-            facet_primary: bool,
-            same_airline_wait_ms: int | None = None,
-        ) -> tuple[dict, dict[str, str], list[ProviderResult], int, int]:
-            attempt_rendered = await self._get_rendered_payload(
-                target_url,
-                js_scenario=self._build_multi_city_results_scenario(
-                    deep=True,
-                    same_airline_only=facet_primary,
-                    same_airline_wait_ms=same_airline_wait_ms,
-                ),
-                country_code=market_country_code,
-            )
-            attempt_summary_prices = self._multi_city_summary_prices(attempt_rendered)
-            attempt_results, attempt_card_count, attempt_captured_count = await self._parse_multi_city_rendered_payload(
-                attempt_rendered,
-                currency=currency,
-                deep_link=target_url,
-                market_country_code=market_country_code,
-            )
-            return (
-                attempt_rendered,
-                attempt_summary_prices,
-                attempt_results,
-                attempt_card_count,
-                attempt_captured_count,
-            )
-
-        rendered, summary_prices, results, card_count, captured_count = await _render_attempt(
-            facet_primary=same_airline_only
+        rendered, summary_prices, results, card_count, captured_count = await self._render_results_attempt(
+            target_url=target_url,
+            country_code=market_country_code,
+            currency=currency,
+            trip_type="multi_city",
+            minimum_leg_count=2,
+            deep=used_deep_pass,
+            same_airline_only=same_airline_only,
         )
         eligible_results = self._filter_results_by_stops(results, max_stops)
 
-        if same_airline_only:
-            # Keep same-airline searches on the facet-primary rendered path.
-            # The generic deep fallback is larger and can exceed ScrapingBee's
-            # request-line cap on live traffic. If the first facet-primary pass
-            # comes back empty, retry the same safe request shape with a slightly
-            # longer settle before failing the collection.
-            same_airline_results = self._same_airline_results_only(eligible_results)
-            if same_airline_results:
-                eligible_results = same_airline_results
-            elif not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
-                retry_rendered = await self._get_rendered_payload(
-                    target_url,
-                    js_scenario=self._build_multi_city_results_scenario(
-                        deep=True,
-                        same_airline_only=True,
-                        same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
-                    ),
-                    country_code=market_country_code,
+        same_airline_results = self._same_airline_results_only(eligible_results)
+        if same_airline_results:
+            eligible_results = same_airline_results
+        elif not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            retry_rendered, retry_summary_prices, retry_results, retry_card_count, retry_captured_count = await self._render_results_attempt(
+                target_url=target_url,
+                country_code=market_country_code,
+                currency=currency,
+                trip_type="multi_city",
+                minimum_leg_count=2,
+                deep=True,
+                same_airline_only=True,
+                same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+            )
+            if (
+                retry_results
+                or retry_card_count > 0
+                or self._rendered_payload_has_summary_prices(retry_rendered)
+            ):
+                rendered = retry_rendered
+                summary_prices = retry_summary_prices
+                results = retry_results
+                card_count = retry_card_count
+                captured_count = retry_captured_count
+                eligible_results = self._same_airline_results_only(
+                    self._filter_results_by_stops(retry_results, max_stops)
                 )
-                retry_summary_prices = self._multi_city_summary_prices(retry_rendered)
-                retry_results, retry_card_count, retry_captured_count = await self._parse_multi_city_rendered_payload(
-                    retry_rendered,
-                    currency=currency,
-                    deep_link=target_url,
-                    market_country_code=market_country_code,
-                )
-                if (
-                    retry_results
-                    or retry_card_count > 0
-                    or self._rendered_payload_has_summary_prices(retry_rendered)
-                ):
-                    rendered = retry_rendered
-                    summary_prices = retry_summary_prices
-                    results = retry_results
-                    card_count = retry_card_count
-                    captured_count = retry_captured_count
-                    eligible_results = self._same_airline_results_only(
-                        self._filter_results_by_stops(retry_results, max_stops)
-                    )
-                else:
-                    eligible_results = []
             else:
                 eligible_results = []
         else:
-            for deep_attempt in range(2):
-                if results or card_count > 0 or self._rendered_payload_has_summary_prices(rendered):
-                    break
-                if deep_attempt == 0:
-                    rendered, summary_prices, results, card_count, captured_count = await _render_attempt(
-                        facet_primary=False
-                    )
-                    eligible_results = self._filter_results_by_stops(results, max_stops)
-
-            summary_lowest = self._summary_lowest_price(summary_prices)
-            eligible_lowest = min((result.price for result in eligible_results), default=None)
-            if (
-                summary_lowest is not None
-                and (eligible_lowest is None or summary_lowest + 1 < eligible_lowest)
-            ):
-                retry_rendered, retry_summary_prices, retry_results, retry_card_count, retry_captured_count = await _render_attempt(
-                    facet_primary=False
-                )
-                retry_eligible = self._filter_results_by_stops(retry_results, max_stops)
-                if retry_eligible or retry_results:
-                    rendered = retry_rendered
-                    summary_prices = retry_summary_prices
-                    results = retry_results
-                    card_count = retry_card_count
-                    captured_count = retry_captured_count
-                    eligible_results = retry_eligible
+            eligible_results = []
 
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
@@ -2159,18 +1491,14 @@ return true;
         selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
         visible_results_found = card_count > 0 or facet_option_count > 0
         summary_price_found = bool(summary_prices) or facet_option_count > 0
-        if same_airline_only:
-            same_airline_results = self._same_airline_results_only(eligible_results)
-            if same_airline_results:
-                result_reason = "success"
-            elif eligible_results or results:
-                result_reason = "filtered_out"
-            elif visible_results_found or summary_price_found:
-                result_reason = "extract_failed"
-            else:
-                result_reason = "page_empty"
+        if eligible_results:
+            result_reason = "success"
+        elif eligible_results or results:
+            result_reason = "filtered_out"
+        elif visible_results_found or summary_price_found:
+            result_reason = "extract_failed"
         else:
-            result_reason = "page_empty" if not eligible_results else "success"
+            result_reason = "page_empty"
 
         diagnostics = self._diagnostics_for_results(
             results=results,
@@ -2179,54 +1507,11 @@ return true;
             result_reason=result_reason,
             visible_results_found=visible_results_found,
             summary_price_found=summary_price_found,
-            used_strong_retry=same_airline_only and bool(selected_facet),
+            used_strong_retry=bool(selected_facet),
         )
         diagnostics.raw_offers_found = len(results)
         diagnostics.eligible_offers_found = len(eligible_results)
         return eligible_results, diagnostics
-
-    async def search_one_way_diagnostic(
-        self,
-        *,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        market: str | None = None,
-        currency: str = "USD",
-        max_stops: int | None = None,
-        same_airline_only: bool = False,
-    ) -> ProviderSearchOutcome:
-        del max_stops, same_airline_only
-
-        results = await self._search_one_way_once(
-            origin=origin,
-            destination=destination,
-            depart_date=depart_date,
-            market=market,
-            currency=currency,
-        )
-        used_strong_retry = False
-        if not results:
-            retry_results = await self._search_one_way_once(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                market=market,
-                currency=currency,
-                deep=True,
-            )
-            if retry_results:
-                results = retry_results
-                used_strong_retry = True
-
-        diagnostics = self._diagnostics_for_results(
-            results=results,
-            requested_market=market,
-            requested_currency=currency,
-            result_reason="page_empty" if not results else "success",
-            used_strong_retry=used_strong_retry,
-        )
-        return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
 
     async def search_round_trip_diagnostic(
         self,
@@ -2240,39 +1525,7 @@ return true;
         max_stops: int | None = None,
         same_airline_only: bool = False,
     ) -> ProviderSearchOutcome:
-        if not same_airline_only:
-            results = await self._search_round_trip_once(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                return_date=return_date,
-                market=market,
-                currency=currency,
-            )
-            used_strong_retry = False
-            if not results:
-                retry_results = await self._search_round_trip_once(
-                    origin=origin,
-                    destination=destination,
-                    depart_date=depart_date,
-                    return_date=return_date,
-                    market=market,
-                    currency=currency,
-                    deep=True,
-                )
-                if retry_results:
-                    results = retry_results
-                    used_strong_retry = True
-
-            diagnostics = self._diagnostics_for_results(
-                results=results,
-                requested_market=market,
-                requested_currency=currency,
-                result_reason="page_empty" if not results else "success",
-                used_strong_retry=used_strong_retry,
-            )
-            return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
-
+        del same_airline_only
         market_country_code = self._market_country_code(currency, market)
         target_url = self._build_search_url(
             origin=origin,
@@ -2302,12 +1555,13 @@ return true;
         max_stops: int | None = None,
         same_airline_only: bool = False,
     ) -> ProviderSearchOutcome:
+        del same_airline_only
         results, diagnostics = await self._search_multi_city_once(
             legs=legs,
             market=market,
             currency=currency,
             max_stops=max_stops,
-            same_airline_only=same_airline_only,
+            same_airline_only=True,
         )
         return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
 
@@ -2319,41 +1573,6 @@ return true;
                 ProviderAuthError,
             ),
         )
-
-    async def search_one_way(
-        self,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        adults: int = 1,
-        cabin: str = "economy",
-        market: str | None = None,
-        currency: str = "USD",
-        max_stops: int | None = None,
-        same_airline_only: bool = False,
-    ) -> list[ProviderResult]:
-        del adults, cabin
-
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(self._max_retries),
-            wait=wait_exponential_jitter(initial=2, max=12),
-            retry=retry_if_exception_type(RuntimeError)
-            & retry_if_exception(self._should_retry),
-            reraise=True,
-        ):
-            with attempt:
-                outcome = await self.search_one_way_diagnostic(
-                    origin=origin,
-                    destination=destination,
-                    depart_date=depart_date,
-                    market=market,
-                    currency=currency,
-                    max_stops=max_stops,
-                    same_airline_only=same_airline_only,
-                )
-                return self._filter_results_by_stops(outcome.results, max_stops)
-
-        return []
 
     async def search_round_trip(
         self,
@@ -2369,6 +1588,7 @@ return true;
         same_airline_only: bool = False,
     ) -> list[ProviderResult]:
         del adults, cabin
+        same_airline_only = True
 
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(self._max_retries),
@@ -2403,6 +1623,7 @@ return true;
         same_airline_only: bool = False,
     ) -> list[ProviderResult]:
         del adults, cabin
+        same_airline_only = True
 
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(self._max_retries),
@@ -2480,29 +1701,6 @@ class ScrapingBeePoolProvider:
         outcome = await self._search_outcome_with_failover(search_fn)
         return outcome.results
 
-    async def search_one_way_diagnostic(
-        self,
-        *,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        market: str | None = None,
-        currency: str = "USD",
-        max_stops: int | None = None,
-        same_airline_only: bool = False,
-    ) -> ProviderSearchOutcome:
-        return await self._search_outcome_with_failover(
-            lambda provider: provider.search_one_way_diagnostic(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                market=market,
-                currency=currency,
-                max_stops=max_stops,
-                same_airline_only=same_airline_only,
-            )
-        )
-
     async def search_round_trip_diagnostic(
         self,
         *,
@@ -2524,7 +1722,7 @@ class ScrapingBeePoolProvider:
                 market=market,
                 currency=currency,
                 max_stops=max_stops,
-                same_airline_only=same_airline_only,
+                same_airline_only=True,
             )
         )
 
@@ -2543,33 +1741,7 @@ class ScrapingBeePoolProvider:
                 market=market,
                 currency=currency,
                 max_stops=max_stops,
-                same_airline_only=same_airline_only,
-            )
-        )
-
-    async def search_one_way(
-        self,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        adults: int = 1,
-        cabin: str = "economy",
-        market: str | None = None,
-        currency: str = "USD",
-        max_stops: int | None = None,
-        same_airline_only: bool = False,
-    ) -> list[ProviderResult]:
-        return await self._search_with_failover(
-            lambda provider: provider.search_one_way(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                adults=adults,
-                cabin=cabin,
-                market=market,
-                currency=currency,
-                max_stops=max_stops,
-                same_airline_only=same_airline_only,
+                same_airline_only=True,
             )
         )
 
@@ -2597,7 +1769,7 @@ class ScrapingBeePoolProvider:
                 market=market,
                 currency=currency,
                 max_stops=max_stops,
-                same_airline_only=same_airline_only,
+                same_airline_only=True,
             )
         )
 
@@ -2619,7 +1791,7 @@ class ScrapingBeePoolProvider:
                 market=market,
                 currency=currency,
                 max_stops=max_stops,
-                same_airline_only=same_airline_only,
+                same_airline_only=True,
             )
         )
 

@@ -59,17 +59,6 @@ class FlightProvider(Protocol):
 
     name: str
 
-    async def search_one_way(
-        self,
-        origin: str,
-        destination: str,
-        depart_date: date,
-        adults: int = 1,
-        cabin: str = "economy",
-        currency: str = "USD",
-        max_stops: int | None = None,
-    ) -> list[ProviderResult]: ...
-
     async def search_round_trip(
         self,
         origin: str,

@@ -2,9 +2,9 @@
 Live verification for the ScrapingBee provider.
 
 Run this after creating a ScrapingBee account and copying your API key.
-It exercises one-way, round-trip, and open-jaw (multi-city) searches through
-the app's real ScrapingBee provider implementation and prints the parsed
-results.
+It exercises round-trip and open-jaw (multi-city) same-airline searches
+through the app's real ScrapingBee provider implementation and prints the
+parsed results.
 
 Usage (from the backend/ directory):
 
@@ -24,7 +24,7 @@ Optional overrides:
 Exit codes:
     0  - everything worked and parsed results returned
     1  - missing key or unrecoverable error
-    2  - request succeeded but no results were returned for any scenario
+    2  - request succeeded but no results were returned for either scenario
 """
 
 from __future__ import annotations
@@ -74,16 +74,7 @@ async def main() -> int:
     print("=" * 64)
 
     try:
-        print(f"\n[1/3] ONE WAY  {origin} -> {destination}  on {depart.isoformat()}")
-        one_way = await provider.search_one_way(
-            origin=origin,
-            destination=destination,
-            depart_date=depart,
-            currency=currency,
-        )
-        _print_results(one_way)
-
-        print(f"\n[2/3] ROUND TRIP  {origin} -> {destination} -> {origin}")
+        print(f"\n[1/2] ROUND TRIP  {origin} -> {destination} -> {origin}")
         print(f"      depart {depart.isoformat()} / return {return_date.isoformat()}")
         round_trip = await provider.search_round_trip(
             origin=origin,
@@ -94,7 +85,7 @@ async def main() -> int:
         )
         _print_results(round_trip)
 
-        print(f"\n[3/3] OPEN JAW  {origin} -> {destination}  /  {open_jaw_return_origin} -> {origin}")
+        print(f"\n[2/2] OPEN JAW  {origin} -> {destination}  /  {open_jaw_return_origin} -> {origin}")
         print(f"      outbound {depart.isoformat()} / return {return_date.isoformat()}")
         open_jaw = await provider.search_multi_city(
             legs=[
@@ -113,9 +104,9 @@ async def main() -> int:
         )
         _print_results(open_jaw)
 
-        empty_count = sum(1 for r in (one_way, round_trip, open_jaw) if not r)
-        if empty_count == 3:
-            print("\nAll three searches returned no data.")
+        empty_count = sum(1 for r in (round_trip, open_jaw) if not r)
+        if empty_count == 2:
+            print("\nBoth searches returned no data.")
             print("Try a busier route, a closer departure date, or premium proxy mode.")
             return 2
 

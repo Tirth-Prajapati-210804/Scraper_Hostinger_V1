@@ -150,12 +150,11 @@ class PriceCollector:
         provider: FlightProvider,
         *,
         market: str | None,
-        same_airline_only: bool = False,
     ) -> dict[str, object]:
         kwargs: dict[str, object] = {}
         if market and getattr(provider, "name", "") == "scrapingbee":
             kwargs["market"] = market
-        if same_airline_only and getattr(provider, "name", "") == "scrapingbee":
+        if getattr(provider, "name", "") == "scrapingbee":
             kwargs["same_airline_only"] = True
         return kwargs
 
@@ -257,9 +256,6 @@ class PriceCollector:
         return filtered
 
     def _result_leg_stops(self, result: ProviderResult, trip_type: str) -> list[int]:
-        if trip_type == "one_way":
-            return [result.stops]
-
         raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
         leg_stops = raw_data.get("leg_stops")
         if isinstance(leg_stops, list):
@@ -308,7 +304,7 @@ class PriceCollector:
             if durations:
                 return durations
 
-        if trip_type != "multi_city" and result.duration_minutes and result.duration_minutes > 0:
+        if trip_type == "round_trip" and result.duration_minutes and result.duration_minutes > 0:
             return [int(result.duration_minutes)]
 
         return []
@@ -403,7 +399,6 @@ class PriceCollector:
                     **self._provider_search_kwargs(
                         provider,
                         market=market,
-                        same_airline_only=same_airline_only,
                     ),
                 )
             results = await provider.search_multi_city(
@@ -413,10 +408,9 @@ class PriceCollector:
                 **self._provider_search_kwargs(
                     provider,
                     market=market,
-                    same_airline_only=same_airline_only,
                 ),
             )
-        elif trip_type == "round_trip":
+        else:
             method = getattr(provider, "search_round_trip_diagnostic", None)
             if callable(method):
                 return await method(
@@ -429,7 +423,6 @@ class PriceCollector:
                     **self._provider_search_kwargs(
                         provider,
                         market=market,
-                        same_airline_only=same_airline_only,
                     ),
                 )
             results = await provider.search_round_trip(
@@ -442,34 +435,6 @@ class PriceCollector:
                 **self._provider_search_kwargs(
                     provider,
                     market=market,
-                    same_airline_only=same_airline_only,
-                ),
-            )
-        else:
-            method = getattr(provider, "search_one_way_diagnostic", None)
-            if callable(method):
-                return await method(
-                    origin=origin,
-                    destination=destination,
-                    depart_date=depart_date,
-                    currency=currency,
-                    max_stops=requested_stop_mode,
-                    **self._provider_search_kwargs(
-                        provider,
-                        market=market,
-                        same_airline_only=same_airline_only,
-                    ),
-                )
-            results = await provider.search_one_way(
-                origin=origin,
-                destination=destination,
-                depart_date=depart_date,
-                currency=currency,
-                max_stops=requested_stop_mode,
-                **self._provider_search_kwargs(
-                    provider,
-                    market=market,
-                    same_airline_only=same_airline_only,
                 ),
             )
 
@@ -499,10 +464,10 @@ class PriceCollector:
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
-        trip_type: str = "one_way",
+        trip_type: str = "round_trip",
         nights: int | None = None,
         return_origin: str | None = None,
-        same_airline_only: bool = False,
+        same_airline_only: bool = True,
         max_leg_duration_minutes: int | None = None,
     ) -> CollectionResult:
 
@@ -512,13 +477,15 @@ class PriceCollector:
         errors: dict[str, str] = {}
         return_date: date | None = None
         requested_stop_mode = self._normalize_stop_mode(max_stops)
+        effective_trip_type = "multi_city" if trip_type == "multi_city" else "round_trip"
+        same_airline_only = True
 
         async with self.session_factory() as session:
             for provider in self.providers:
                 start = time.monotonic()
 
                 try:
-                    if trip_type == "multi_city":
+                    if effective_trip_type == "multi_city":
                         stay_nights = nights or 1
                         if not return_origin:
                             raise RuntimeError("multi_city collection requires a return origin.")
@@ -526,24 +493,7 @@ class PriceCollector:
                         return_date = _derive_return_date(depart_date, stay_nights)
                         outcome = await self._search_with_diagnostics(
                             provider,
-                            trip_type=trip_type,
-                            origin=origin,
-                            destination=destination,
-                            depart_date=depart_date,
-                            currency=currency,
-                            requested_stop_mode=requested_stop_mode,
-                            market=market,
-                            nights=stay_nights,
-                            return_origin=return_origin,
-                            return_date=return_date,
-                            same_airline_only=same_airline_only,
-                        )
-                    elif trip_type == "round_trip":
-                        stay_nights = nights or 3
-                        return_date = _derive_return_date(depart_date, stay_nights)
-                        outcome = await self._search_with_diagnostics(
-                            provider,
-                            trip_type=trip_type,
+                            trip_type=effective_trip_type,
                             origin=origin,
                             destination=destination,
                             depart_date=depart_date,
@@ -556,30 +506,31 @@ class PriceCollector:
                             same_airline_only=same_airline_only,
                         )
                     else:
-                        return_date = None
+                        stay_nights = nights or 3
+                        return_date = _derive_return_date(depart_date, stay_nights)
                         outcome = await self._search_with_diagnostics(
                             provider,
-                            trip_type=trip_type,
+                            trip_type=effective_trip_type,
                             origin=origin,
                             destination=destination,
                             depart_date=depart_date,
                             currency=currency,
                             requested_stop_mode=requested_stop_mode,
                             market=market,
-                            nights=nights,
+                            nights=stay_nights,
                             return_origin=return_origin,
-                            return_date=None,
+                            return_date=return_date,
                             same_airline_only=same_airline_only,
                         )
 
                     raw_results = list(outcome.results)
                     diagnostics = outcome.diagnostics
-                    after_stop = self._exact_stop_results_only(raw_results, requested_stop_mode, trip_type)
+                    after_stop = self._exact_stop_results_only(raw_results, requested_stop_mode, effective_trip_type)
                     filtered_by_stop_count = max(0, len(raw_results) - len(after_stop))
                     after_duration = self._duration_results_only(
                         after_stop,
                         max_leg_duration_minutes,
-                        trip_type,
+                        effective_trip_type,
                     )
                     filtered_by_duration = max(0, len(after_stop) - len(after_duration))
                     final_results = after_duration
@@ -712,9 +663,9 @@ class PriceCollector:
             destination=destination,
             depart_date=depart_date,
             cheapest=cheapest,
-            return_date=return_date if trip_type == "multi_city" else None,
+            return_date=return_date if effective_trip_type == "multi_city" else None,
             stop_label=(
-                self._result_stop_label(cheapest, trip_type)
+                self._result_stop_label(cheapest, effective_trip_type)
                 if cheapest
                 else None
             ),
@@ -739,10 +690,10 @@ class PriceCollector:
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
-        trip_type: str = "one_way",
+        trip_type: str = "round_trip",
         nights: int | None = None,
         return_origin: str | None = None,
-        same_airline_only: bool = False,
+        same_airline_only: bool = True,
         max_leg_duration_minutes: int | None = None,
         is_retry: bool = False,
     ) -> dict[str, int]:
@@ -949,7 +900,7 @@ class PriceCollector:
                     result,
                     str(result.raw_data.get("trip_type"))
                     if isinstance(result.raw_data, dict) and result.raw_data.get("trip_type")
-                    else "one_way",
+                    else "round_trip",
                 ),
                 "duration_minutes": result.duration_minutes,
             },
@@ -998,7 +949,7 @@ class PriceCollector:
                         result,
                         str(result.raw_data.get("trip_type"))
                         if isinstance(result.raw_data, dict) and result.raw_data.get("trip_type")
-                        else "one_way",
+                        else "round_trip",
                     ),
                     duration_minutes=result.duration_minutes,
                     itinerary_data=result.raw_data if isinstance(result.raw_data, dict) else None,
