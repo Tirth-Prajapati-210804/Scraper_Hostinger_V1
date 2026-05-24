@@ -9,6 +9,7 @@ import pytest
 from app.providers.base import ProviderResult
 from app.providers.scrapingbee import (
     _RESULT_PRICE_SELECTOR,
+    _SAME_AIRLINE_INITIAL_WAIT_MS,
     ScrapingBeeProvider,
 )
 
@@ -36,6 +37,7 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     helper_script = instructions[0]["evaluate"]
 
     assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
+    assert instructions[2] == {"wait": _SAME_AIRLINE_INITIAL_WAIT_MS}
     assert "f.applyFacet=f.a" in helper_script
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
