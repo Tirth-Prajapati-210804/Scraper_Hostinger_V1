@@ -637,6 +637,7 @@ class ScrapingBeeProvider:
             for leg in legs:
                 if isinstance(leg, dict):
                     raw_values.append(leg.get("airline"))
+                    raw_values.append(leg.get("route_text"))
 
         raw_values.append(raw_data.get("outbound_airline"))
         raw_values.append(raw_data.get("return_airline"))

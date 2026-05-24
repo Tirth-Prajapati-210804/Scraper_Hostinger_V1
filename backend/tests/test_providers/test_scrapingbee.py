@@ -126,6 +126,53 @@ def test_same_airline_filter_keeps_single_airline_aliases_only() -> None:
     assert filtered[0].airline == "Air Canada"
 
 
+def test_same_airline_filter_rejects_mixed_leg_operator_text() -> None:
+    provider = make_provider()
+    results = [
+        ProviderResult(
+            price=1218,
+            currency="USD",
+            airline="Air Canada",
+            deep_link="https://example.com/mixed",
+            raw_data={
+                "legs": [
+                    {
+                        "airline": "Air Canada",
+                        "route_text": "Air Canada, SWISS",
+                    },
+                    {
+                        "airline": "Air Canada",
+                        "route_text": "Air Canada",
+                    },
+                ],
+            },
+        ),
+        ProviderResult(
+            price=1260,
+            currency="USD",
+            airline="British Airways",
+            deep_link="https://example.com/same",
+            raw_data={
+                "legs": [
+                    {
+                        "airline": "British Airways",
+                        "route_text": "British Airways",
+                    },
+                    {
+                        "airline": "British Airways",
+                        "route_text": "British Airways",
+                    },
+                ],
+            },
+        ),
+    ]
+
+    filtered = provider._same_airline_results_only(results)
+
+    assert len(filtered) == 1
+    assert filtered[0].airline == "British Airways"
+
+
 @pytest.mark.asyncio
 async def test_round_trip_diagnostic_forces_same_airline_without_unbound_local() -> None:
     provider = make_provider()
