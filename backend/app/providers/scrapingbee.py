@@ -1525,7 +1525,7 @@ class ScrapingBeeProvider:
         max_stops: int | None = None,
         same_airline_only: bool = False,
     ) -> ProviderSearchOutcome:
-        del same_airline_only
+        same_airline_only = True
         market_country_code = self._market_country_code(currency, market)
         target_url = self._build_search_url(
             origin=origin,

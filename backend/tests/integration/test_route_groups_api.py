@@ -112,7 +112,7 @@ async def test_create_route_group(auth_client):
     assert data["destinations"] == ["SGN", "HAN"]
     assert data["origins"] == ["YVR", "YYZ"]
     assert data["is_active"] is True
-    assert data["same_airline_only"] is False
+    assert data["same_airline_only"] is True
     assert "id" in data
 
 

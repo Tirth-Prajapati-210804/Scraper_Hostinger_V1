@@ -4,6 +4,8 @@ import json
 from datetime import date
 from urllib.parse import urlencode
 
+import pytest
+
 from app.providers.base import ProviderResult
 from app.providers.scrapingbee import (
     _RESULT_PRICE_SELECTOR,
@@ -118,3 +120,29 @@ def test_same_airline_filter_keeps_single_airline_aliases_only() -> None:
 
     assert len(filtered) == 1
     assert filtered[0].airline == "Air Canada"
+
+
+@pytest.mark.asyncio
+async def test_round_trip_diagnostic_forces_same_airline_without_unbound_local() -> None:
+    provider = make_provider()
+    captured: dict[str, object] = {}
+
+    async def fake_search_rendered_itinerary_diagnostic(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    provider._search_rendered_itinerary_diagnostic = fake_search_rendered_itinerary_diagnostic
+
+    await provider.search_round_trip_diagnostic(
+        origin="MIA",
+        destination="MLA",
+        depart_date=date(2026, 6, 5),
+        return_date=date(2026, 6, 18),
+        market="us",
+        currency="USD",
+        same_airline_only=False,
+    )
+
+    assert captured["trip_type"] == "round_trip"
+    assert captured["same_airline_only"] is True
+    assert captured["minimum_leg_count"] == 2
