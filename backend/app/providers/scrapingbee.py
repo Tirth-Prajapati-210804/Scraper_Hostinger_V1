@@ -496,7 +496,7 @@ class ScrapingBeeProvider:
             "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll('ol.hJSA-list > li').length>=g).filter((n,i,a)=>!a.some((o,j)=>j!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll('ol.hJSA-list > li').length>=g));"
             "f.y=()=>Array.from(document.querySelectorAll(b)).filter(f.v).map(e=>f.t(e.innerText||e.getAttribute('aria-label'))).filter(v=>/^(cheapest|best|quickest)(\\s|$)/i.test(v)).slice(0,3).join('|');"
             "f.s=()=>{const z=Array.from(document.querySelectorAll(p)).map(n=>f.t(n.innerText)).filter(Boolean).slice(0,6).join('|'),m=(window.__fhFacet?.o||f.x().map(v=>({n:v.n,p:v.p}))).map(v=>`${v.n}:${v.p}`).join('|'),k=[f.l()?1:0,f.t(window.__fhFacet?.s||''),f.y(),z,m,f.r().length].join('||'),st=window.__fhSettle||{k:'',h:0};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=f.l()?1:0;window.__fhSettle=st;return !st.b&&(z||m)&&st.h>=3};"
-            "f.e=()=>{const d=n=>(Array.from(document.querySelectorAll(b)).find(e=>new RegExp('^'+n+'(?:\\\\s|$)','i').test(f.t(e.innerText||e.getAttribute('aria-label'))))?.innerText||'').trim(),r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll('ol.hJSA-list > li')).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),s:{c:d('cheapest'),b:d('best'),q:d('quickest')},f:{s:f.t(window.__fhFacet?.s||''),o:window.__fhFacet?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(window.__fhSettle&&window.__fhSettle.h>=3&&!window.__fhSettle.b),sm:true})};f.applyFacet=f.a;f.settle=f.s;f.extract=f.e;return true})()"
+            "f.e=()=>{const d=n=>(Array.from(document.querySelectorAll(b)).find(e=>new RegExp('^'+n+'(?:\\\\s|$)','i').test(f.t(e.innerText||e.getAttribute('aria-label'))))?.innerText||'').trim(),r=f.r(),ip=window.__fhPriceSnap||[];return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map((n,i)=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),ip:f.t(ip[i]),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll('ol.hJSA-list > li')).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),s:{c:d('cheapest'),b:d('best'),q:d('quickest')},f:{s:f.t(window.__fhFacet?.s||''),o:window.__fhFacet?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(window.__fhSettle&&window.__fhSettle.h>=3&&!window.__fhSettle.b),sm:true})};f.applyFacet=f.a;f.settle=f.s;f.extract=f.e;return true})()"
         )
         helper_script = (
             helper_script.replace("__LIMIT__", str(card_limit))
@@ -526,6 +526,18 @@ class ScrapingBeeProvider:
                     {"evaluate": "window.__fhCollector.settle()"},
                 ]
             )
+        instructions.extend(
+            [
+                {
+                    "evaluate": (
+                        "window.__fhPriceSnap=Array.from(document.querySelectorAll("
+                        f"{json.dumps(_RESULT_PRICE_SELECTOR)}"
+                        ")).map(n=>window.__fhCollector.t(n.innerText)).filter(Boolean)"
+                    )
+                },
+                {"wait": 1600},
+            ]
+        )
         instructions.append({"evaluate": "window.__fhCollector.extract()"})
 
         return {
@@ -747,6 +759,7 @@ class ScrapingBeeProvider:
                         {
                             "text": card.get("t", ""),
                             "price_text": card.get("p", ""),
+                            "initial_price_text": card.get("ip", ""),
                             "booking_href": card.get("h", ""),
                             "cabin": card.get("cb", ""),
                             "airline_text": card.get("a", ""),
@@ -1026,6 +1039,7 @@ class ScrapingBeeProvider:
             price = self._parse_price(card.get("price_text")) or self._parse_price(card.get("text"))
             if price is None:
                 continue
+            initial_price = self._parse_price(card.get("initial_price_text"))
 
             legs = card.get("legs")
             if not isinstance(legs, list) or len(legs) < expected_leg_count:
@@ -1121,6 +1135,13 @@ class ScrapingBeeProvider:
                             if isinstance(leg.get("duration_text"), str) and leg["duration_text"]
                         ),
                         "price_text": _clean_text(card.get("price_text")),
+                        "initial_price_text": _clean_text(card.get("initial_price_text")),
+                        "final_price_text": _clean_text(card.get("price_text")),
+                        "initial_price": initial_price,
+                        "final_price": price,
+                        "price_adjusted_after_settle": (
+                            initial_price is not None and initial_price != price
+                        ),
                         "summary": card_text,
                         "cabin": _clean_text(card.get("cabin")),
                         "badges": badges,

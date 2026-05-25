@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from io import BytesIO
+import re
 from statistics import mean
 
 from openpyxl import Workbook
@@ -14,6 +15,7 @@ from app.models.route_group import RouteGroup
 
 log = get_logger(__name__)
 _MISSING_VALUE = "N-A"
+_INVALID_SHEET_TITLE_RE = re.compile(r"[\[\]:*?/\\]")
 
 _MAIN_HEADERS = [
     "Date",
@@ -165,6 +167,23 @@ def _set_date_cell(ws, *, row: int, column: int, value: object):
     return cell
 
 
+def _safe_sheet_title(wb: Workbook, value: object, *, fallback: str = "Sheet") -> str:
+    base = _INVALID_SHEET_TITLE_RE.sub("-", str(value or "").strip()).strip("' ")
+    if not base:
+        base = fallback
+    base = base[:31]
+    if base not in wb.sheetnames:
+        return base
+
+    suffix = 2
+    while True:
+        suffix_text = f"-{suffix}"
+        candidate = f"{base[:31 - len(suffix_text)]}{suffix_text}"
+        if candidate not in wb.sheetnames:
+            return candidate
+        suffix += 1
+
+
 def _export_dates(route_group: RouteGroup, fallback_dates: list[date]) -> list[date]:
     unique_fallback = sorted({d for d in fallback_dates if isinstance(d, date)})
     configured_start = getattr(route_group, "start_date", None)
@@ -234,7 +253,7 @@ def export_route_group(
     }
 
     for origin, sheet_name in sheet_name_map.items():
-        ws = wb.create_sheet(title=sheet_name[:31])
+        ws = wb.create_sheet(title=_safe_sheet_title(wb, sheet_name, fallback=origin))
         _write_header_row(ws, _MAIN_HEADERS)
 
         for row_idx, d in enumerate(all_dates, start=2):
@@ -280,13 +299,13 @@ def export_route_group(
     # --------------------------------------------------
 
     for sheet in route_group.special_sheets or []:
-        sheet_name = (sheet.get("name") or "Journey")[:31]
+        sheet_name = sheet.get("name") or "Journey"
         sheet_origin = (sheet.get("origin") or "").upper()
         sheet_dest_label = sheet.get("destination_label") or sheet_origin
         sheet_dests = [d.upper() for d in (sheet.get("destinations") or [])]
         columns = int(sheet.get("columns") or 4)
 
-        ws = wb.create_sheet(title=sheet_name)
+        ws = wb.create_sheet(title=_safe_sheet_title(wb, sheet_name, fallback="Journey"))
 
         if columns >= 6:
             _write_header_row(ws, _MAIN_HEADERS)
@@ -480,25 +499,12 @@ def _export_multi_city_route_group(
     for origin, _destination in rows_by_route:
         origin_destination_counts[origin] = origin_destination_counts.get(origin, 0) + 1
 
-    used_sheet_names: set[str] = set()
-
     def build_sheet_name(origin: str, destination: str) -> str:
         base_name = sheet_name_map.get(origin, origin)
         if origin_destination_counts.get(origin, 0) > 1:
             base_name = f"{base_name}-{destination}"
 
-        sheet_name = base_name[:31]
-        if sheet_name not in used_sheet_names:
-            used_sheet_names.add(sheet_name)
-            return sheet_name
-
-        suffix = 2
-        while True:
-            candidate = f"{base_name[:28]}-{suffix}"[:31]
-            if candidate not in used_sheet_names:
-                used_sheet_names.add(candidate)
-                return candidate
-            suffix += 1
+        return _safe_sheet_title(wb, base_name, fallback=f"{origin}-{destination}")
 
     for (origin, destination), rows in sorted(rows_by_route.items()):
         ws = wb.create_sheet(title=build_sheet_name(origin, destination))

@@ -60,6 +60,14 @@ def test_export_creates_one_sheet_per_origin() -> None:
     assert "Toronto" in wb.sheetnames
 
 
+def test_export_sanitizes_invalid_and_duplicate_sheet_names() -> None:
+    rg = make_route_group(sheet_name_map={"YVR": "A/B", "YYZ": "A:B"})
+    results = [make_result(origin="YVR"), make_result(origin="YYZ")]
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, results)))
+    assert "A-B" in wb.sheetnames
+    assert "A-B-2" in wb.sheetnames
+
+
 def test_export_has_correct_headers() -> None:
     rg = make_route_group()
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [make_result()])))
@@ -205,3 +213,18 @@ def test_multi_city_export_creates_one_sheet_per_route() -> None:
     assert wb["YOW-LGW"].cell(2, 4).value == "LGW"
     assert wb["YOW-LHR"].cell(2, 1).number_format == "DD-MM-YYYY"
     assert wb["YOW-LHR"].cell(2, 2).number_format == "DD-MM-YYYY"
+
+
+def test_multi_city_export_sanitizes_invalid_sheet_names() -> None:
+    rg = make_route_group(sheet_name_map={"YOW": "YOW/Canada"})
+    rg.trip_type = "multi_city"
+    rg.origins = ["YOW"]
+    result = make_result(origin="YOW", destination="TIA", price=671.0, airline="Air France")
+    result.itinerary_data = {
+        "return_date": "2026-06-13",
+        "return_origin": "SPU",
+    }
+
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
+
+    assert "YOW-Canada" in wb.sheetnames

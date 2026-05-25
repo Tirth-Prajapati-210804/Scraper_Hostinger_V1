@@ -42,6 +42,12 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
     assert any(
+        "window.__fhPriceSnap" in str(instruction.get("evaluate", ""))
+        for instruction in instructions
+        if isinstance(instruction, dict)
+    )
+    assert {"wait": 1600} in instructions
+    assert any(
         instruction.get("evaluate") == "window.__fhCollector.applyFacet()"
         for instruction in instructions
         if isinstance(instruction, dict)
@@ -173,6 +179,47 @@ def test_same_airline_filter_rejects_mixed_leg_operator_text() -> None:
 
     assert len(filtered) == 1
     assert filtered[0].airline == "British Airways"
+
+
+def test_rendered_card_normalization_records_final_settled_price() -> None:
+    provider = make_provider()
+    results = provider._normalize_rendered_cards(
+        {
+            "cards": [
+                {
+                    "text": "Air France $676",
+                    "price_text": "$676",
+                    "initial_price_text": "$677",
+                    "airline_text": "Air France",
+                    "legs": [
+                        {
+                            "airline": "Air France",
+                            "route_text": "Air France",
+                            "stops_text": "1 stop",
+                            "duration_text": "10h 00m",
+                        },
+                        {
+                            "airline": "Air France",
+                            "route_text": "Air France",
+                            "stops_text": "1 stop",
+                            "duration_text": "11h 00m",
+                        },
+                    ],
+                }
+            ]
+        },
+        currency="USD",
+        deep_link="https://www.kayak.com/flights/EWR-MLA/2027-03-12/2027-03-20",
+        trip_type="round_trip",
+        market_country_code="us",
+        expected_leg_count=2,
+    )
+
+    assert len(results) == 1
+    assert results[0].price == 676
+    assert results[0].raw_data["initial_price"] == 677
+    assert results[0].raw_data["final_price"] == 676
+    assert results[0].raw_data["price_adjusted_after_settle"] is True
 
 
 @pytest.mark.asyncio
