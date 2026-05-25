@@ -861,13 +861,12 @@ class FlightScheduler:
         result = await session.execute(
             text(
                 """
-                SELECT depart_date, COUNT(DISTINCT destination)
+                SELECT depart_date, destination
                 FROM daily_cheapest_prices
                 WHERE route_group_id = :route_group_id
                 AND origin = :origin
                 AND destination = ANY(:destinations)
                 AND depart_date = ANY(:dates)
-                GROUP BY depart_date
                 """
             ),
             {
@@ -878,10 +877,43 @@ class FlightScheduler:
             },
         )
 
-        done_by_date = {row[0]: row[1] for row in result.fetchall()}
+        done_by_date: dict[date, set[str]] = {}
+        for depart_date, destination in result.fetchall():
+            done_by_date.setdefault(depart_date, set()).add(destination)
         target = len(destinations)
 
-        return [d for d in dates if done_by_date.get(d, 0) < target]
+        no_fare_skip_hours = int(
+            getattr(self.settings, "scrape_no_fare_skip_hours", 168) or 0
+        )
+        if no_fare_skip_hours > 0:
+            no_fare_result = await session.execute(
+                text(
+                    """
+                    SELECT depart_date, destination
+                    FROM scrape_logs
+                    WHERE route_group_id = :route_group_id
+                      AND origin = :origin
+                      AND destination = ANY(:destinations)
+                      AND depart_date = ANY(:dates)
+                      AND status = 'no_results'
+                      AND result_reason = 'filtered_out'
+                      AND raw_offers_found > 0
+                      AND eligible_offers_found = 0
+                      AND created_at >= now() - make_interval(hours => :skip_hours)
+                    """
+                ),
+                {
+                    "route_group_id": str(route_group_id),
+                    "origin": origin,
+                    "destinations": list(destinations),
+                    "dates": list(dates),
+                    "skip_hours": no_fare_skip_hours,
+                },
+            )
+            for depart_date, destination in no_fare_result.fetchall():
+                done_by_date.setdefault(depart_date, set()).add(destination)
+
+        return [d for d in dates if len(done_by_date.get(d, set())) < target]
 
     # --------------------------------------------------
     # LOCKS

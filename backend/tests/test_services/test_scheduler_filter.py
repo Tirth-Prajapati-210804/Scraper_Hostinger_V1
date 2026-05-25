@@ -22,6 +22,7 @@ def make_scheduler() -> FlightScheduler:
     settings.telegram_bot_token = ""
     settings.telegram_chat_id = ""
     settings.sentry_dsn = ""
+    settings.scrape_no_fare_skip_hours = 0
     return FlightScheduler(
         settings=settings,
         session_factory=MagicMock(),
@@ -43,7 +44,7 @@ async def test_partial_destination_not_excluded() -> None:
     """Date with only 1 of 2 destinations collected must NOT be filtered out."""
     scheduler = make_scheduler()
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=make_execute_result([(D1, 1)]))
+    session.execute = AsyncMock(return_value=make_execute_result([(D1, "SGN")]))
 
     remaining = await scheduler._filter_already_scraped(
         session, ROUTE_ID, "YYZ", ["SGN", "HAN"], [D1, D2]
@@ -58,7 +59,7 @@ async def test_all_destinations_excludes_date() -> None:
     """Date with all destinations collected IS excluded."""
     scheduler = make_scheduler()
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=make_execute_result([(D1, 2)]))
+    session.execute = AsyncMock(return_value=make_execute_result([(D1, "SGN"), (D1, "HAN")]))
 
     remaining = await scheduler._filter_already_scraped(
         session, ROUTE_ID, "YYZ", ["SGN", "HAN"], [D1, D2]
@@ -74,7 +75,7 @@ async def test_all_dates_fully_scraped_returns_empty() -> None:
     scheduler = make_scheduler()
     session = AsyncMock()
     session.execute = AsyncMock(
-        return_value=make_execute_result([(D1, 1), (D2, 1)])
+        return_value=make_execute_result([(D1, "SGN"), (D2, "SGN")])
     )
 
     remaining = await scheduler._filter_already_scraped(
@@ -97,6 +98,63 @@ async def test_no_scrapes_returns_all_dates() -> None:
     )
 
     assert remaining == dates
+
+
+@pytest.mark.asyncio
+async def test_recent_confirmed_no_fare_excludes_date() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_no_fare_skip_hours = 168
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            make_execute_result([]),
+            make_execute_result([(D1, "MLA")]),
+        ]
+    )
+
+    remaining = await scheduler._filter_already_scraped(
+        session, ROUTE_ID, "DEN", ["MLA"], [D1, D2]
+    )
+
+    assert D1 not in remaining
+    assert D2 in remaining
+    assert session.execute.await_count == 2
+    no_fare_params = session.execute.await_args_list[1].args[1]
+    assert no_fare_params["skip_hours"] == 168
+
+
+@pytest.mark.asyncio
+async def test_no_fare_skip_does_not_double_count_same_destination() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_no_fare_skip_hours = 168
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            make_execute_result([(D1, "MLA")]),
+            make_execute_result([(D1, "MLA")]),
+        ]
+    )
+
+    remaining = await scheduler._filter_already_scraped(
+        session, ROUTE_ID, "DEN", ["MLA", "FCO"], [D1]
+    )
+
+    assert remaining == [D1]
+
+
+@pytest.mark.asyncio
+async def test_no_fare_skip_can_be_disabled() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_no_fare_skip_hours = 0
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=make_execute_result([]))
+
+    remaining = await scheduler._filter_already_scraped(
+        session, ROUTE_ID, "DEN", ["MLA"], [D1]
+    )
+
+    assert remaining == [D1]
+    assert session.execute.await_count == 1
 
 
 @pytest.mark.asyncio
