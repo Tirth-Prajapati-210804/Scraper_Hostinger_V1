@@ -525,6 +525,7 @@ class PriceCollector:
 
                     raw_results = list(outcome.results)
                     diagnostics = outcome.diagnostics
+                    provider_raw_offers_found = diagnostics.raw_offers_found
                     after_stop = self._exact_stop_results_only(raw_results, requested_stop_mode, effective_trip_type)
                     filtered_by_stop_count = max(0, len(raw_results) - len(after_stop))
                     after_duration = self._duration_results_only(
@@ -570,7 +571,7 @@ class PriceCollector:
                         )
 
                     diagnostics.result_reason = result_reason
-                    diagnostics.raw_offers_found = len(raw_results)
+                    diagnostics.raw_offers_found = max(provider_raw_offers_found, len(raw_results))
                     diagnostics.eligible_offers_found = len(final_results)
                     diagnostics.requested_market = market
                     diagnostics.requested_currency = currency
@@ -592,7 +593,7 @@ class PriceCollector:
                             status="success" if final_results else "no_results",
                             offers_found=len(final_results),
                             result_reason=result_reason,
-                            raw_offers_found=len(raw_results),
+                            raw_offers_found=diagnostics.raw_offers_found,
                             eligible_offers_found=len(final_results),
                             filtered_by_stop_count=filtered_by_stop_count,
                             filtered_by_same_airline=filtered_by_same_airline,

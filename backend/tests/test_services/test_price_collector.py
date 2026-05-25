@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.providers.base import ProviderResult
+from app.providers.base import ProviderSearchDiagnostics, ProviderSearchOutcome, ProviderResult
 from app.services.price_collector import CollectionResult, PriceCollector
 
 
@@ -201,6 +201,52 @@ async def test_collect_single_date_records_filtered_out_reason_for_direct_mode()
     assert result.cheapest is None
     scrape_logs = [call.args[0] for call in session.add.call_args_list if call.args]
     assert any(getattr(log, "result_reason", None) == "filtered_out" for log in scrape_logs)
+
+
+@pytest.mark.asyncio
+async def test_collect_single_date_preserves_provider_raw_offer_count() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "scrapingbee"
+    provider.search_round_trip_diagnostic = AsyncMock(
+        return_value=ProviderSearchOutcome(
+            results=[],
+            diagnostics=ProviderSearchDiagnostics(
+                result_reason="filtered_out",
+                raw_offers_found=37,
+                eligible_offers_found=0,
+                visible_results_found=True,
+                summary_price_found=True,
+            ),
+        )
+    )
+
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+
+    result = await collector.collect_single_date(
+        "DEN",
+        "MLA",
+        DEPART,
+        ROUTE_ID,
+        currency="USD",
+        market="us",
+        max_stops=1,
+    )
+
+    assert result.cheapest is None
+    scrape_logs = [call.args[0] for call in session.add.call_args_list if call.args]
+    assert any(
+        getattr(log, "result_reason", None) == "filtered_out"
+        and getattr(log, "raw_offers_found", None) == 37
+        for log in scrape_logs
+    )
 
 
 @pytest.mark.asyncio
