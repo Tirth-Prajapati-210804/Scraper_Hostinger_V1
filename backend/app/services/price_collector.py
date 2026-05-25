@@ -33,6 +33,13 @@ _GENERIC_MULTI_AIRLINE_LABELS = {
     "mixed airlines",
     "various airlines",
 }
+_SPONSORED_RESULT_RE = re.compile(r"(?i)(?:^|\s)(?:sponsored|advertisement)(?:\s|$)")
+_AD_LABEL_RE = re.compile(r"(?i)(?:^|\s)ad(?:\s|$)")
+_AIRPORT_CODE_RE = re.compile(r"\b[A-Z0-9]{3,4}\b")
+_AIRPORT_ROUTE_RE = re.compile(
+    r"\b[A-Z0-9]{3,4}\b\s*(?:-|->|to|\u2013|\u2014)\s*\b[A-Z0-9]{3,4}\b",
+    re.IGNORECASE,
+)
 
 
 def _derive_return_date(depart_date: date, nights: int) -> date:
@@ -204,9 +211,24 @@ class PriceCollector:
             parts = [cleaned]
         return parts
 
+    def _tokenize_aux_airline_text(self, value: object) -> list[str]:
+        if not isinstance(value, str):
+            return []
+        cleaned = value.strip()
+        if not cleaned:
+            return []
+        if cleaned.casefold() in _GENERIC_MULTI_AIRLINE_LABELS:
+            return ["__multiple__"]
+        if _AIRPORT_ROUTE_RE.search(cleaned):
+            return []
+        if not re.search(r"[,;|]", cleaned):
+            return []
+        return self._tokenize_airline_value(cleaned)
+
     def _result_airline_names(self, result: ProviderResult) -> list[str]:
         raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
         raw_values: list[object] = []
+        aux_values: list[object] = []
 
         airline_names = raw_data.get("airline_names")
         if isinstance(airline_names, list):
@@ -217,6 +239,7 @@ class PriceCollector:
             for leg in legs:
                 if isinstance(leg, dict):
                     raw_values.append(leg.get("airline"))
+                    aux_values.append(leg.get("route_text"))
 
         raw_values.append(raw_data.get("outbound_airline"))
         raw_values.append(raw_data.get("return_airline"))
@@ -227,6 +250,14 @@ class PriceCollector:
         names: list[str] = []
         for raw_value in raw_values:
             for token in self._tokenize_airline_value(raw_value):
+                if token == "__multiple__":
+                    names.append(token)
+                    continue
+                normalized = normalize_airline(token).strip()
+                if normalized and normalized != "-":
+                    names.append(normalized)
+        for aux_value in aux_values:
+            for token in self._tokenize_aux_airline_text(aux_value):
                 if token == "__multiple__":
                     names.append(token)
                     continue
@@ -254,6 +285,85 @@ class PriceCollector:
             result.airline = airline_names[0]
             filtered.append(result)
         return filtered
+
+    def _looks_like_sponsored_result(self, result: ProviderResult) -> bool:
+        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+        texts: list[object] = [
+            result.airline,
+            raw_data.get("summary"),
+            raw_data.get("cabin"),
+        ]
+        badges = raw_data.get("badges")
+        if isinstance(badges, list):
+            texts.extend(badges)
+        for text in texts:
+            if not isinstance(text, str):
+                continue
+            if _AD_LABEL_RE.search(text) or _SPONSORED_RESULT_RE.search(text):
+                return True
+        return False
+
+    def _non_sponsored_results_only(self, results: list[ProviderResult]) -> list[ProviderResult]:
+        return [result for result in results if not self._looks_like_sponsored_result(result)]
+
+    def _route_codes_from_text(self, value: object) -> tuple[str, str] | None:
+        if not isinstance(value, str) or not _AIRPORT_ROUTE_RE.search(value):
+            return None
+        codes = _AIRPORT_CODE_RE.findall(value.upper())
+        if len(codes) < 2:
+            return None
+        return codes[0], codes[-1]
+
+    def _result_matches_expected_route(
+        self,
+        result: ProviderResult,
+        expected_legs: list[tuple[str, str]],
+    ) -> bool:
+        raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
+        legs = raw_data.get("legs")
+        if not isinstance(legs, list) or len(legs) < len(expected_legs):
+            return True
+
+        for leg, (expected_origin, expected_destination) in zip(legs, expected_legs, strict=False):
+            if not isinstance(leg, dict):
+                continue
+            observed: tuple[str, str] | None = None
+            for field in ("route_text", "text"):
+                observed = self._route_codes_from_text(leg.get(field))
+                if observed:
+                    break
+            if observed is None:
+                continue
+            if observed != (expected_origin.upper(), expected_destination.upper()):
+                return False
+        return True
+
+    def _route_valid_results_only(
+        self,
+        results: list[ProviderResult],
+        *,
+        origin: str,
+        destination: str,
+        trip_type: str,
+        return_origin: str | None,
+    ) -> list[ProviderResult]:
+        if trip_type == "multi_city":
+            if not return_origin:
+                return results
+            expected_legs = [
+                (origin.upper(), destination.upper()),
+                (return_origin.upper(), origin.upper()),
+            ]
+        else:
+            expected_legs = [
+                (origin.upper(), destination.upper()),
+                (destination.upper(), origin.upper()),
+            ]
+        return [
+            result
+            for result in results
+            if self._result_matches_expected_route(result, expected_legs)
+        ]
 
     def _result_leg_stops(self, result: ProviderResult, trip_type: str) -> list[int]:
         raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
@@ -534,7 +644,15 @@ class PriceCollector:
                         effective_trip_type,
                     )
                     filtered_by_duration = max(0, len(after_stop) - len(after_duration))
-                    final_results = after_duration
+                    after_non_sponsored = self._non_sponsored_results_only(after_duration)
+                    after_route = self._route_valid_results_only(
+                        after_non_sponsored,
+                        origin=origin,
+                        destination=destination,
+                        trip_type=effective_trip_type,
+                        return_origin=return_origin,
+                    )
+                    final_results = after_route
                     filtered_by_same_airline = 0
 
                     if same_airline_only:
@@ -655,6 +773,14 @@ class PriceCollector:
                     destination,
                     depart_date,
                     all_results,
+                )
+            elif route_group_id is not None and self._should_clear_saved_results(provider_diagnostics):
+                await self._clear_saved_results(
+                    session,
+                    route_group_id,
+                    origin,
+                    destination,
+                    depart_date,
                 )
 
             await session.commit()
@@ -827,6 +953,51 @@ class PriceCollector:
     # --------------------------------------------------
     # DB HELPERS
     # --------------------------------------------------
+
+    def _should_clear_saved_results(
+        self,
+        provider_diagnostics: dict[str, ProviderSearchDiagnostics],
+    ) -> bool:
+        for diagnostics in provider_diagnostics.values():
+            reason = (diagnostics.result_reason or "").strip().lower()
+            if reason in {"filtered_out", "market_mismatch"} and diagnostics.raw_offers_found > 0:
+                return True
+        return False
+
+    async def _clear_saved_results(
+        self,
+        session: AsyncSession,
+        route_group_id: UUID,
+        origin: str,
+        destination: str,
+        depart_date: date,
+    ) -> None:
+        params = {
+            "route_group_id": str(route_group_id),
+            "origin": origin,
+            "destination": destination,
+            "depart_date": depart_date,
+        }
+        await session.execute(
+            text("""
+                DELETE FROM daily_cheapest_prices
+                WHERE route_group_id = :route_group_id
+                  AND origin = :origin
+                  AND destination = :destination
+                  AND depart_date = :depart_date
+            """),
+            params,
+        )
+        await session.execute(
+            text("""
+                DELETE FROM all_flight_results
+                WHERE route_group_id = :route_group_id
+                  AND origin = :origin
+                  AND destination = :destination
+                  AND depart_date = :depart_date
+            """),
+            params,
+        )
 
     async def _upsert_cheapest(
         self,

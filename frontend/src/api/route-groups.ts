@@ -46,6 +46,7 @@ export async function getRouteGroupProgress(
 export async function downloadExport(id: string): Promise<Blob> {
   const res = await api.get(`/api/v1/route-groups/${id}/export`, {
     responseType: "blob",
+    timeout: 120_000,
   });
   return res.data;
 }
@@ -59,5 +60,5 @@ export function saveBlobAsFile(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
