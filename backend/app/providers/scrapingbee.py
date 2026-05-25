@@ -858,6 +858,62 @@ class ScrapingBeeProvider:
         option_count = sum(1 for option in options if isinstance(option, dict))
         return selected, option_count
 
+    def _facet_option_prices(self, rendered: dict) -> list[float]:
+        payload = self._extract_rendered_cards_payload(rendered)
+        if payload is None:
+            return []
+        facet = payload.get("facet")
+        if not isinstance(facet, dict):
+            return []
+        options = facet.get("options")
+        if not isinstance(options, list):
+            return []
+
+        prices: list[float] = []
+        for option in options:
+            if not isinstance(option, dict):
+                continue
+            raw_price = option.get("price")
+            price: float | None
+            if isinstance(raw_price, (int, float)) and raw_price > 0:
+                price = float(raw_price)
+            else:
+                price = self._parse_price(raw_price)
+            if price is not None and price > 0:
+                prices.append(price)
+        return prices
+
+    def _cheapest_result_price(self, results: list[ProviderResult]) -> float | None:
+        prices = [float(result.price) for result in results if result.price is not None]
+        return min(prices) if prices else None
+
+    def _should_probe_alternate_airline_facets(
+        self,
+        *,
+        rendered: dict,
+        eligible_results: list[ProviderResult],
+        facet_option_count: int,
+    ) -> bool:
+        if not eligible_results or facet_option_count <= 1:
+            return False
+
+        current_price = self._cheapest_result_price(eligible_results)
+        facet_prices = self._facet_option_prices(rendered)
+        if current_price is None or not facet_prices:
+            return False
+
+        facet_floor = min(facet_prices)
+        if facet_floor <= 0:
+            return False
+
+        clearly_high = current_price >= facet_floor * 1.20 and current_price >= facet_floor + 150
+        sparse_and_high = (
+            len(eligible_results) <= 2
+            and current_price >= 1500
+            and current_price >= facet_floor + 75
+        )
+        return clearly_high or sparse_and_high
+
     def _summary_lowest_price(self, summary_prices: dict[str, str]) -> float | None:
         prices = [
             price
@@ -1345,6 +1401,7 @@ class ScrapingBeeProvider:
         eligible_results: list[ProviderResult],
         raw_offers_found: int,
         facet_option_count: int,
+        force: bool = False,
     ) -> tuple[
         dict,
         dict[str, str],
@@ -1355,7 +1412,7 @@ class ScrapingBeeProvider:
         int,
         bool,
     ]:
-        if eligible_results:
+        if eligible_results and not force:
             return (
                 rendered,
                 summary_prices,
@@ -1381,6 +1438,14 @@ class ScrapingBeeProvider:
             )
 
         used_alternate_facet = False
+        best_rendered = rendered
+        best_summary_prices = summary_prices
+        best_results = results
+        best_card_count = card_count
+        best_captured_count = captured_count
+        best_eligible_results = eligible_results
+        best_price = self._cheapest_result_price(eligible_results)
+
         for facet_index in range(1, max_attempts):
             (
                 retry_rendered,
@@ -1407,6 +1472,19 @@ class ScrapingBeeProvider:
                 max_stops,
             )
             if retry_eligible_results:
+                if force:
+                    retry_price = self._cheapest_result_price(retry_eligible_results)
+                    if retry_price is not None and (
+                        best_price is None or retry_price < best_price
+                    ):
+                        best_rendered = retry_rendered
+                        best_summary_prices = retry_summary_prices
+                        best_results = retry_results
+                        best_card_count = retry_card_count
+                        best_captured_count = retry_captured_count
+                        best_eligible_results = retry_eligible_results
+                        best_price = retry_price
+                    continue
                 return (
                     retry_rendered,
                     retry_summary_prices,
@@ -1419,12 +1497,12 @@ class ScrapingBeeProvider:
                 )
 
         return (
-            rendered,
-            summary_prices,
-            results,
-            card_count,
-            captured_count,
-            eligible_results,
+            best_rendered,
+            best_summary_prices,
+            best_results,
+            best_card_count,
+            best_captured_count,
+            best_eligible_results,
             raw_offers_found,
             used_alternate_facet,
         )
@@ -1459,7 +1537,16 @@ class ScrapingBeeProvider:
         used_alternate_facet = False
         selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
 
-        if not eligible_results and (
+        should_probe_alternate_facet = self._should_probe_alternate_airline_facets(
+            rendered=rendered,
+            eligible_results=eligible_results,
+            facet_option_count=facet_option_count,
+        )
+
+        if (
+            should_probe_alternate_facet
+            or not eligible_results
+        ) and (
             results
             or card_count > 0
             or self._rendered_payload_has_summary_prices(rendered)
@@ -1490,6 +1577,7 @@ class ScrapingBeeProvider:
                 eligible_results=eligible_results,
                 raw_offers_found=raw_offers_found,
                 facet_option_count=facet_option_count,
+                force=should_probe_alternate_facet,
             )
 
         if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
@@ -1514,7 +1602,12 @@ class ScrapingBeeProvider:
                 eligible_results = self._eligible_same_airline_results(retry_results, max_stops)
                 used_strong_retry = True
                 selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
-                if not eligible_results:
+                should_probe_retry_alternate_facet = self._should_probe_alternate_airline_facets(
+                    rendered=rendered,
+                    eligible_results=eligible_results,
+                    facet_option_count=facet_option_count,
+                )
+                if not eligible_results or should_probe_retry_alternate_facet:
                     (
                         rendered,
                         summary_prices,
@@ -1542,6 +1635,7 @@ class ScrapingBeeProvider:
                         eligible_results=eligible_results,
                         raw_offers_found=raw_offers_found,
                         facet_option_count=facet_option_count,
+                        force=should_probe_retry_alternate_facet,
                     )
                     used_alternate_facet = used_alternate_facet or retry_used_alternate_facet
             else:
@@ -1637,7 +1731,16 @@ class ScrapingBeeProvider:
         used_alternate_facet = False
         selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
 
-        if not eligible_results and (
+        should_probe_alternate_facet = self._should_probe_alternate_airline_facets(
+            rendered=rendered,
+            eligible_results=eligible_results,
+            facet_option_count=facet_option_count,
+        )
+
+        if (
+            should_probe_alternate_facet
+            or not eligible_results
+        ) and (
             results
             or card_count > 0
             or self._rendered_payload_has_summary_prices(rendered)
@@ -1668,6 +1771,7 @@ class ScrapingBeeProvider:
                 eligible_results=eligible_results,
                 raw_offers_found=raw_offers_found,
                 facet_option_count=facet_option_count,
+                force=should_probe_alternate_facet,
             )
 
         if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
@@ -1695,7 +1799,12 @@ class ScrapingBeeProvider:
                 captured_count = retry_captured_count
                 eligible_results = self._eligible_same_airline_results(retry_results, max_stops)
                 selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
-                if not eligible_results:
+                should_probe_retry_alternate_facet = self._should_probe_alternate_airline_facets(
+                    rendered=rendered,
+                    eligible_results=eligible_results,
+                    facet_option_count=facet_option_count,
+                )
+                if not eligible_results or should_probe_retry_alternate_facet:
                     (
                         rendered,
                         summary_prices,
@@ -1723,6 +1832,7 @@ class ScrapingBeeProvider:
                         eligible_results=eligible_results,
                         raw_offers_found=raw_offers_found,
                         facet_option_count=facet_option_count,
+                        force=should_probe_retry_alternate_facet,
                     )
                     used_alternate_facet = used_alternate_facet or retry_used_alternate_facet
             else:

@@ -351,6 +351,79 @@ async def test_round_trip_diagnostic_tries_next_airline_facet_when_first_fails_s
 
 
 @pytest.mark.asyncio
+async def test_round_trip_diagnostic_tries_next_airline_facet_when_first_price_is_suspiciously_high() -> None:
+    provider = make_provider()
+    calls: list[int] = []
+    rendered = {
+        "evaluate_results": [
+            json.dumps(
+                {
+                    "c": [],
+                    "f": {
+                        "s": "Airline A",
+                        "o": [
+                            {"n": "Airline A", "p": 900},
+                            {"n": "Airline B", "p": 950},
+                        ],
+                    },
+                }
+            )
+        ]
+    }
+
+    first_result = ProviderResult(
+        price=2500,
+        currency="USD",
+        airline="Airline A",
+        deep_link="https://example.com/a",
+        raw_data={
+            "legs": [
+                {"airline": "Airline A", "route_text": "Airline A"},
+                {"airline": "Airline A", "route_text": "Airline A"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+    second_result = ProviderResult(
+        price=950,
+        currency="USD",
+        airline="Airline B",
+        deep_link="https://example.com/b",
+        raw_data={
+            "legs": [
+                {"airline": "Airline B", "route_text": "Airline B"},
+                {"airline": "Airline B", "route_text": "Airline B"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+
+    async def fake_render_results_attempt(**kwargs):
+        calls.append(int(kwargs.get("airline_facet_index", 0)))
+        if len(calls) == 1:
+            return rendered, {}, [first_result], 1, 1
+        return rendered, {}, [second_result], 1, 1
+
+    provider._render_results_attempt = fake_render_results_attempt
+
+    outcome = await provider._search_rendered_itinerary_diagnostic(
+        trip_type="round_trip",
+        target_url="https://www.kayak.com/flights/LAS-MLA/2027-03-22/2027-03-30",
+        requested_market="us",
+        requested_currency="USD",
+        market_country_code="us",
+        max_stops=1,
+        same_airline_only=True,
+        minimum_leg_count=2,
+    )
+
+    assert calls == [0, 1]
+    assert [result.price for result in outcome.results] == [950]
+    assert outcome.diagnostics.raw_offers_found == 1
+    assert outcome.diagnostics.eligible_offers_found == 1
+
+
+@pytest.mark.asyncio
 async def test_multi_city_diagnostic_tries_next_airline_facet_when_first_fails_stops() -> None:
     provider = make_provider()
     calls: list[int] = []
@@ -427,5 +500,86 @@ async def test_multi_city_diagnostic_tries_next_airline_facet_when_first_fails_s
 
     assert calls == [0, 1]
     assert [result.price for result in results] == [760]
+    assert diagnostics.raw_offers_found == 1
+    assert diagnostics.eligible_offers_found == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_city_diagnostic_tries_next_airline_facet_when_first_price_is_suspiciously_high() -> None:
+    provider = make_provider()
+    calls: list[int] = []
+    rendered = {
+        "evaluate_results": [
+            json.dumps(
+                {
+                    "c": [],
+                    "f": {
+                        "s": "Airline A",
+                        "o": [
+                            {"n": "Airline A", "p": 900},
+                            {"n": "Airline B", "p": 950},
+                        ],
+                    },
+                }
+            )
+        ]
+    }
+
+    first_result = ProviderResult(
+        price=2500,
+        currency="USD",
+        airline="Airline A",
+        deep_link="https://example.com/a",
+        raw_data={
+            "legs": [
+                {"airline": "Airline A", "route_text": "Airline A"},
+                {"airline": "Airline A", "route_text": "Airline A"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+    second_result = ProviderResult(
+        price=950,
+        currency="USD",
+        airline="Airline B",
+        deep_link="https://example.com/b",
+        raw_data={
+            "legs": [
+                {"airline": "Airline B", "route_text": "Airline B"},
+                {"airline": "Airline B", "route_text": "Airline B"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+
+    async def fake_render_results_attempt(**kwargs):
+        calls.append(int(kwargs.get("airline_facet_index", 0)))
+        if len(calls) == 1:
+            return rendered, {}, [first_result], 1, 1
+        return rendered, {}, [second_result], 1, 1
+
+    provider._render_results_attempt = fake_render_results_attempt
+
+    results, diagnostics = await provider._search_multi_city_once(
+        legs=[
+            {
+                "departure_id": "LAS",
+                "arrival_id": "MLA",
+                "outbound_date": date(2027, 3, 22),
+            },
+            {
+                "departure_id": "SPU",
+                "arrival_id": "LAS",
+                "outbound_date": date(2027, 3, 30),
+            },
+        ],
+        market="us",
+        currency="USD",
+        max_stops=1,
+        same_airline_only=True,
+    )
+
+    assert calls == [0, 1]
+    assert [result.price for result in results] == [950]
     assert diagnostics.raw_offers_found == 1
     assert diagnostics.eligible_offers_found == 1
