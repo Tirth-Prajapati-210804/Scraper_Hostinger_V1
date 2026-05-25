@@ -846,6 +846,8 @@ class FlightScheduler:
         origin,
         destinations,
         dates,
+        *,
+        respect_no_fare_skip: bool = True,
     ):
         """Return dates that still need work (not all destinations collected).
 
@@ -885,7 +887,7 @@ class FlightScheduler:
         no_fare_skip_hours = int(
             getattr(self.settings, "scrape_no_fare_skip_hours", 168) or 0
         )
-        if no_fare_skip_hours > 0:
+        if respect_no_fare_skip and no_fare_skip_hours > 0:
             no_fare_result = await session.execute(
                 text(
                     """
@@ -1040,6 +1042,7 @@ class FlightScheduler:
                             origin=segment.origin,
                             destinations=segment.destinations,
                             dates=dates,
+                            respect_no_fare_skip=False,
                         )
 
                         if not remaining:
