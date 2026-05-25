@@ -98,7 +98,7 @@ def test_scrapingbee_multi_city_debug_parses_bool() -> None:
     assert settings.scrapingbee_multi_city_debug is True
 
 
-def test_no_fare_skip_window_defaults_to_one_week() -> None:
+def test_no_fare_skip_window_defaults_to_two_days() -> None:
     settings = _settings()
 
-    assert settings.scrape_no_fare_skip_hours == 168
+    assert settings.scrape_no_fare_skip_hours == 48

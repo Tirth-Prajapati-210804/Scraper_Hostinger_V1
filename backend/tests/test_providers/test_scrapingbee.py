@@ -13,10 +13,12 @@ from app.providers.scrapingbee import (
     ScrapingBeeProvider,
 )
 
+REALISTIC_SCRAPINGBEE_KEY = "x" * 88
 
-def make_provider() -> ScrapingBeeProvider:
+
+def make_provider(api_key: str = "test-key") -> ScrapingBeeProvider:
     return ScrapingBeeProvider(
-        api_key="test-key",
+        api_key=api_key,
         timeout=90,
         max_retries=1,
         concurrency_limit=2,
@@ -39,24 +41,49 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
     assert instructions[2] == {"wait": _SAME_AIRLINE_INITIAL_WAIT_MS}
     assert "f.applyFacet=f.a" in helper_script
+    assert "f.w=x=>" in helper_script
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
-    assert any(
-        "window.__fhPriceSnap" in str(instruction.get("evaluate", ""))
-        for instruction in instructions
-        if isinstance(instruction, dict)
-    )
+    assert "o[0]||o[0]" in helper_script
     assert {"wait": 1600} in instructions
     assert any(
-        instruction.get("evaluate") == "window.__fhCollector.applyFacet()"
+        instruction.get("evaluate") == "window.FH.applyFacet()"
         for instruction in instructions
         if isinstance(instruction, dict)
     )
-    assert instructions[-1] == {"evaluate": "window.__fhCollector.extract()"}
+    assert instructions[-1] == {"evaluate": "window.FH.extract()"}
+
+
+def test_rendered_results_scenario_can_select_later_airline_facet() -> None:
+    provider = make_provider()
+
+    scenario = provider._build_results_scenario(
+        deep=True,
+        same_airline_only=True,
+        minimum_leg_count=2,
+        airline_facet_index=2,
+    )
+
+    helper_script = scenario["instructions"][0]["evaluate"]
+    assert "o[2]||o[0]" in helper_script
+
+
+def test_rendered_results_scenario_can_apply_stop_prefilter() -> None:
+    provider = make_provider()
+
+    scenario = provider._build_results_scenario(
+        deep=True,
+        same_airline_only=True,
+        minimum_leg_count=2,
+        max_stops=1,
+    )
+
+    instructions = scenario["instructions"]
+    assert {"evaluate": "window.FH.w(1)"} in instructions
 
 
 def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:
-    provider = make_provider()
+    provider = make_provider(REALISTIC_SCRAPINGBEE_KEY)
     target_url = provider._build_search_url(
         origin="MIA",
         destination="MLA",
@@ -72,6 +99,7 @@ def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:
             deep=True,
             same_airline_only=True,
             minimum_leg_count=2,
+            max_stops=1,
         ),
         separators=(",", ":"),
     )
@@ -83,7 +111,7 @@ def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:
 
 
 def test_multi_city_rendered_request_stays_under_request_line_cap() -> None:
-    provider = make_provider()
+    provider = make_provider(REALISTIC_SCRAPINGBEE_KEY)
     target_url = provider._build_multi_city_results_url(
         outbound_origin="YYZ",
         outbound_destination="TIA",
@@ -101,6 +129,7 @@ def test_multi_city_rendered_request_stays_under_request_line_cap() -> None:
             deep=True,
             same_airline_only=True,
             minimum_leg_count=2,
+            max_stops=1,
         ),
         separators=(",", ":"),
     )
@@ -246,3 +275,157 @@ async def test_round_trip_diagnostic_forces_same_airline_without_unbound_local()
     assert captured["trip_type"] == "round_trip"
     assert captured["same_airline_only"] is True
     assert captured["minimum_leg_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_round_trip_diagnostic_tries_next_airline_facet_when_first_fails_stops() -> None:
+    provider = make_provider()
+    calls: list[int] = []
+    rendered = {
+        "evaluate_results": [
+            json.dumps(
+                {
+                    "c": [],
+                    "f": {
+                        "s": "Airline A",
+                        "o": [
+                            {"n": "Airline A", "p": 700},
+                            {"n": "Airline B", "p": 760},
+                        ],
+                    },
+                }
+            )
+        ]
+    }
+
+    first_result = ProviderResult(
+        price=700,
+        currency="USD",
+        airline="Airline A",
+        deep_link="https://example.com/a",
+        raw_data={
+            "legs": [
+                {"airline": "Airline A", "route_text": "Airline A"},
+                {"airline": "Airline A", "route_text": "Airline A"},
+            ],
+            "leg_stops": [2, 2],
+        },
+    )
+    second_result = ProviderResult(
+        price=760,
+        currency="USD",
+        airline="Airline B",
+        deep_link="https://example.com/b",
+        raw_data={
+            "legs": [
+                {"airline": "Airline B", "route_text": "Airline B"},
+                {"airline": "Airline B", "route_text": "Airline B"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+
+    async def fake_render_results_attempt(**kwargs):
+        calls.append(int(kwargs.get("airline_facet_index", 0)))
+        if len(calls) == 1:
+            return rendered, {}, [first_result], 1, 1
+        return rendered, {}, [second_result], 1, 1
+
+    provider._render_results_attempt = fake_render_results_attempt
+
+    outcome = await provider._search_rendered_itinerary_diagnostic(
+        trip_type="round_trip",
+        target_url="https://www.kayak.com/flights/DEN-MLA/2027-02-20/2027-03-01",
+        requested_market="us",
+        requested_currency="USD",
+        market_country_code="us",
+        max_stops=1,
+        same_airline_only=True,
+        minimum_leg_count=2,
+    )
+
+    assert calls == [0, 1]
+    assert [result.price for result in outcome.results] == [760]
+    assert outcome.diagnostics.raw_offers_found == 1
+    assert outcome.diagnostics.eligible_offers_found == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_city_diagnostic_tries_next_airline_facet_when_first_fails_stops() -> None:
+    provider = make_provider()
+    calls: list[int] = []
+    rendered = {
+        "evaluate_results": [
+            json.dumps(
+                {
+                    "c": [],
+                    "f": {
+                        "s": "Airline A",
+                        "o": [
+                            {"n": "Airline A", "p": 700},
+                            {"n": "Airline B", "p": 760},
+                        ],
+                    },
+                }
+            )
+        ]
+    }
+
+    first_result = ProviderResult(
+        price=700,
+        currency="USD",
+        airline="Airline A",
+        deep_link="https://example.com/a",
+        raw_data={
+            "legs": [
+                {"airline": "Airline A", "route_text": "Airline A"},
+                {"airline": "Airline A", "route_text": "Airline A"},
+            ],
+            "leg_stops": [2, 2],
+        },
+    )
+    second_result = ProviderResult(
+        price=760,
+        currency="USD",
+        airline="Airline B",
+        deep_link="https://example.com/b",
+        raw_data={
+            "legs": [
+                {"airline": "Airline B", "route_text": "Airline B"},
+                {"airline": "Airline B", "route_text": "Airline B"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+
+    async def fake_render_results_attempt(**kwargs):
+        calls.append(int(kwargs.get("airline_facet_index", 0)))
+        if len(calls) == 1:
+            return rendered, {}, [first_result], 1, 1
+        return rendered, {}, [second_result], 1, 1
+
+    provider._render_results_attempt = fake_render_results_attempt
+
+    results, diagnostics = await provider._search_multi_city_once(
+        legs=[
+            {
+                "departure_id": "DEN",
+                "arrival_id": "MLA",
+                "outbound_date": date(2027, 2, 20),
+            },
+            {
+                "departure_id": "SPU",
+                "arrival_id": "DEN",
+                "outbound_date": date(2027, 3, 1),
+            },
+        ],
+        market="us",
+        currency="USD",
+        max_stops=1,
+        same_airline_only=True,
+    )
+
+    assert calls == [0, 1]
+    assert [result.price for result in results] == [760]
+    assert diagnostics.raw_offers_found == 1
+    assert diagnostics.eligible_offers_found == 1

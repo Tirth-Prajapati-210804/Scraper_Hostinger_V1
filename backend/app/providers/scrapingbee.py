@@ -127,6 +127,7 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 }
 _FAST_MULTI_CITY_CARD_LIMIT = 30
 _DEEP_MULTI_CITY_CARD_LIMIT = 180
+_MAX_AIRLINE_FACET_ATTEMPTS = 4
 _RESULT_PRICE_SELECTOR = ".nrc6-price-section .e2GB-price-text"
 _SAME_AIRLINE_INITIAL_WAIT_MS = 5_000
 _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
@@ -474,9 +475,13 @@ class ScrapingBeeProvider:
         same_airline_only: bool = False,
         minimum_leg_count: int = 1,
         same_airline_wait_ms: int | None = None,
+        airline_facet_index: int = 0,
+        max_stops: int | None = None,
     ) -> dict[str, object]:
         del same_airline_only
         card_limit = _DEEP_MULTI_CITY_CARD_LIMIT if deep else _FAST_MULTI_CITY_CARD_LIMIT
+        facet_index = max(0, min(int(airline_facet_index), _MAX_AIRLINE_FACET_ATTEMPTS - 1))
+        stop_limit = str(max_stops) if max_stops is not None and max_stops <= 1 else "null"
         effective_wait_ms = (
             same_airline_wait_ms
             if same_airline_wait_ms is not None
@@ -484,23 +489,24 @@ class ScrapingBeeProvider:
         )
 
         helper_script = (
-            "(()=>{const l=__LIMIT__,g=__MIN_LEGS__,p='__PRICE_SELECTOR__',c='div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]',b='button,a,[role=\"button\"],div,span',f=window.__fhCollector||(window.__fhCollector={});"
+            "(()=>{const l=__LIMIT__,g=__MIN_LEGS__,p='__PRICE_SELECTOR__',c='div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]',b='button,a,[role=\"button\"],div,span',f=window.FH||(window.FH={});"
             "f.t=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
             "f.n=v=>(v||'').toString().replace(/\\u00a0/g,' ').split(/\\n+/).map(f.t).filter(Boolean);"
             "f.v=e=>{if(!e)return 0;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none'};"
             "f.p=v=>{const m=f.t(v).replace(/,/g,'').match(/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*([0-9]+(?:\\.[0-9]+)?)/i);return m?Number(m[1]):null};"
             "f.o=()=>Array.from(document.querySelectorAll('section,aside,div')).filter(e=>f.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;"
             "f.x=()=>{const r=f.o();if(!r)return[];const s=new Map();for(const e of Array.from(r.querySelectorAll('label,button,[role=\"button\"],li,div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),p=f.p(t);if(p===null)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n))continue;const k=n.toLowerCase(),u=s.get(k),q=e.closest('label,button,[role=\"button\"],li')||e;if(!u||p<u.p)s.set(k,{n,p,e:q})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
-            "f.a=()=>{const o=f.x();window.__fhFacet={s:'',o:o.map(v=>({n:v.n,p:v.p}))};if(!o.length)return 0;const t=o[0],h=t.e.querySelector('input[type=\"checkbox\"]');window.__fhFacet.s=t.n;if(h&&!h.checked){h.click();return 1}t.e.click();return 1};"
+            "f.w=x=>{if(x==null||x>1)return 0;const r=Array.from(document.querySelectorAll('section,aside,div')).filter(e=>f.v(e)&&/(^|\\n)\\s*Stops\\s*($|\\n)/i.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0];if(!r)return 0;let n=0,m=x<1?/^nonstop\\b/i:/^(nonstop|1 stop)\\b/i;for(const e of Array.from(r.querySelectorAll('label,button,[role=\"button\"],li'))){const t=f.t(e.innerText),h=e.querySelector('input[type=\"checkbox\"]');if(!t||h?.disabled)continue;const y=m.test(t);if((h&&h.checked&&!y)||(y&&(!h||!h.checked))){e.click();n++}}return n};"
+            "f.a=()=>{const o=f.x();f.g={s:'',o:o.map(v=>({n:v.n,p:v.p}))};if(!o.length)return 0;const t=o[__FACET_INDEX__]||o[0],h=t.e.querySelector('input[type=\"checkbox\"]');f.g.s=t.n;if(h&&!h.checked){h.click();return 1}t.e.click();return 1};"
             "f.l=()=>Array.from(document.querySelectorAll('[role=\"progressbar\"],progress,[aria-busy=\"true\"],[class*=\"loading\"],[class*=\"progress\"]')).some(f.v);"
             "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll('ol.hJSA-list > li').length>=g).filter((n,i,a)=>!a.some((o,j)=>j!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll('ol.hJSA-list > li').length>=g));"
-            "f.y=()=>Array.from(document.querySelectorAll(b)).filter(f.v).map(e=>f.t(e.innerText||e.getAttribute('aria-label'))).filter(v=>/^(cheapest|best|quickest)(\\s|$)/i.test(v)).slice(0,3).join('|');"
-            "f.s=()=>{const z=Array.from(document.querySelectorAll(p)).map(n=>f.t(n.innerText)).filter(Boolean).slice(0,6).join('|'),m=(window.__fhFacet?.o||f.x().map(v=>({n:v.n,p:v.p}))).map(v=>`${v.n}:${v.p}`).join('|'),k=[f.l()?1:0,f.t(window.__fhFacet?.s||''),f.y(),z,m,f.r().length].join('||'),st=window.__fhSettle||{k:'',h:0};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=f.l()?1:0;window.__fhSettle=st;return !st.b&&(z||m)&&st.h>=3};"
-            "f.e=()=>{const d=n=>(Array.from(document.querySelectorAll(b)).find(e=>new RegExp('^'+n+'(?:\\\\s|$)','i').test(f.t(e.innerText||e.getAttribute('aria-label'))))?.innerText||'').trim(),r=f.r(),ip=window.__fhPriceSnap||[];return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map((n,i)=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),ip:f.t(ip[i]),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll('ol.hJSA-list > li')).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),s:{c:d('cheapest'),b:d('best'),q:d('quickest')},f:{s:f.t(window.__fhFacet?.s||''),o:window.__fhFacet?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(window.__fhSettle&&window.__fhSettle.h>=3&&!window.__fhSettle.b),sm:true})};f.applyFacet=f.a;f.settle=f.s;f.extract=f.e;return true})()"
+            "f.s=()=>{const z=Array.from(document.querySelectorAll(p)).map(n=>f.t(n.innerText)).filter(Boolean).slice(0,6).join('|'),m=(f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))).map(v=>`${v.n}:${v.p}`).join('|'),k=[f.l()?1:0,f.t(f.g?.s||''),z,m,f.r().length].join('||'),st=f.u||{k:'',h:0};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=f.l()?1:0;f.u=st;return !st.b&&(z||m)&&st.h>=3};"
+            "f.e=()=>{const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll('ol.hJSA-list > li')).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:f.t(f.g?.s||''),o:f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(f.u&&f.u.h>=3&&!f.u.b),sm:true})};f.applyFacet=f.a;f.settle=f.s;f.extract=f.e;return true})()"
         )
         helper_script = (
             helper_script.replace("__LIMIT__", str(card_limit))
             .replace("__MIN_LEGS__", str(max(1, minimum_leg_count)))
+            .replace("__FACET_INDEX__", str(facet_index))
             .replace("__PRICE_SELECTOR__", _RESULT_PRICE_SELECTOR)
         )
 
@@ -508,37 +514,41 @@ class ScrapingBeeProvider:
             {"evaluate": helper_script},
             {"wait_for": _RESULT_PRICE_SELECTOR},
             {"wait": effective_wait_ms},
-            {"evaluate": "window.__fhCollector.applyFacet()"},
-            {"wait": 1200},
-            {"scroll_y": 1200},
-            {"wait": 700},
-            {"evaluate": "window.__fhCollector.settle()"},
-            {"wait": 900},
-            {"evaluate": "window.__fhCollector.settle()"},
-            {"wait": 900},
-            {"evaluate": "window.__fhCollector.settle()"},
         ]
+        if max_stops is not None and max_stops <= 1:
+            instructions.extend(
+                [
+                    {"evaluate": f"window.FH.w({stop_limit})"},
+                    {"wait": 700},
+                ]
+            )
+        instructions.extend(
+            [
+                {"evaluate": "window.FH.applyFacet()"},
+                {"wait": 1200},
+                {"scroll_y": 1200},
+                {"wait": 700},
+                {"evaluate": "window.FH.settle()"},
+                {"wait": 900},
+                {"evaluate": "window.FH.settle()"},
+                {"wait": 900},
+                {"evaluate": "window.FH.settle()"},
+            ]
+        )
         if deep:
             instructions.extend(
                 [
                     {"scroll_y": 2000},
                     {"wait": 700},
-                    {"evaluate": "window.__fhCollector.settle()"},
+                    {"evaluate": "window.FH.settle()"},
                 ]
             )
         instructions.extend(
             [
-                {
-                    "evaluate": (
-                        "window.__fhPriceSnap=Array.from(document.querySelectorAll("
-                        f"{json.dumps(_RESULT_PRICE_SELECTOR)}"
-                        ")).map(n=>window.__fhCollector.t(n.innerText)).filter(Boolean)"
-                    )
-                },
                 {"wait": 1600},
             ]
         )
-        instructions.append({"evaluate": "window.__fhCollector.extract()"})
+        instructions.append({"evaluate": "window.FH.extract()"})
 
         return {
             "strict": False,
@@ -680,6 +690,15 @@ class ScrapingBeeProvider:
                 result.airline = airline_names[0]
             filtered.append(result)
         return filtered
+
+    def _eligible_same_airline_results(
+        self,
+        results: list[ProviderResult],
+        max_stops: int | None,
+    ) -> list[ProviderResult]:
+        return self._same_airline_results_only(
+            self._filter_results_by_stops(results, max_stops)
+        )
 
     def _diagnostics_for_results(
         self,
@@ -1279,7 +1298,9 @@ class ScrapingBeeProvider:
         minimum_leg_count: int,
         deep: bool,
         same_airline_only: bool,
+        max_stops: int | None = None,
         same_airline_wait_ms: int | None = None,
+        airline_facet_index: int = 0,
     ) -> tuple[dict, dict[str, str], list[ProviderResult], int, int]:
         rendered = await self._get_rendered_payload(
             target_url,
@@ -1288,6 +1309,8 @@ class ScrapingBeeProvider:
                 same_airline_only=same_airline_only,
                 minimum_leg_count=minimum_leg_count,
                 same_airline_wait_ms=same_airline_wait_ms,
+                airline_facet_index=airline_facet_index,
+                max_stops=max_stops,
             ),
             country_code=country_code,
         )
@@ -1301,6 +1324,110 @@ class ScrapingBeeProvider:
             expected_leg_count=minimum_leg_count,
         )
         return rendered, summary_prices, results, card_count, captured_count
+
+    async def _try_alternate_airline_facets(
+        self,
+        *,
+        target_url: str,
+        country_code: str,
+        currency: str,
+        trip_type: str,
+        minimum_leg_count: int,
+        max_stops: int | None,
+        deep: bool,
+        same_airline_only: bool,
+        same_airline_wait_ms: int | None = None,
+        rendered: dict,
+        summary_prices: dict[str, str],
+        results: list[ProviderResult],
+        card_count: int,
+        captured_count: int,
+        eligible_results: list[ProviderResult],
+        raw_offers_found: int,
+        facet_option_count: int,
+    ) -> tuple[
+        dict,
+        dict[str, str],
+        list[ProviderResult],
+        int,
+        int,
+        list[ProviderResult],
+        int,
+        bool,
+    ]:
+        if eligible_results:
+            return (
+                rendered,
+                summary_prices,
+                results,
+                card_count,
+                captured_count,
+                eligible_results,
+                raw_offers_found,
+                False,
+            )
+
+        max_attempts = min(facet_option_count, _MAX_AIRLINE_FACET_ATTEMPTS)
+        if max_attempts <= 1:
+            return (
+                rendered,
+                summary_prices,
+                results,
+                card_count,
+                captured_count,
+                eligible_results,
+                raw_offers_found,
+                False,
+            )
+
+        used_alternate_facet = False
+        for facet_index in range(1, max_attempts):
+            (
+                retry_rendered,
+                retry_summary_prices,
+                retry_results,
+                retry_card_count,
+                retry_captured_count,
+            ) = await self._render_results_attempt(
+                target_url=target_url,
+                country_code=country_code,
+                currency=currency,
+                trip_type=trip_type,
+                minimum_leg_count=minimum_leg_count,
+                deep=deep,
+                same_airline_only=same_airline_only,
+                max_stops=max_stops,
+                same_airline_wait_ms=same_airline_wait_ms,
+                airline_facet_index=facet_index,
+            )
+            raw_offers_found = max(raw_offers_found, len(retry_results))
+            used_alternate_facet = True
+            retry_eligible_results = self._eligible_same_airline_results(
+                retry_results,
+                max_stops,
+            )
+            if retry_eligible_results:
+                return (
+                    retry_rendered,
+                    retry_summary_prices,
+                    retry_results,
+                    retry_card_count,
+                    retry_captured_count,
+                    retry_eligible_results,
+                    raw_offers_found,
+                    used_alternate_facet,
+                )
+
+        return (
+            rendered,
+            summary_prices,
+            results,
+            card_count,
+            captured_count,
+            eligible_results,
+            raw_offers_found,
+            used_alternate_facet,
+        )
 
     async def _search_rendered_itinerary_diagnostic(
         self,
@@ -1316,7 +1443,7 @@ class ScrapingBeeProvider:
     ) -> ProviderSearchOutcome:
         same_airline_only = True
         initial_deep = True
-        rendered, summary_prices, results, card_count, _ = await self._render_results_attempt(
+        rendered, summary_prices, results, card_count, captured_count = await self._render_results_attempt(
             target_url=target_url,
             country_code=market_country_code,
             currency=requested_currency,
@@ -1324,15 +1451,49 @@ class ScrapingBeeProvider:
             minimum_leg_count=minimum_leg_count,
             deep=initial_deep,
             same_airline_only=same_airline_only,
+            max_stops=max_stops,
         )
-        eligible_results = self._filter_results_by_stops(results, max_stops)
+        eligible_results = self._eligible_same_airline_results(results, max_stops)
+        raw_offers_found = len(results)
         used_strong_retry = False
+        used_alternate_facet = False
+        selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
 
-        same_airline_results = self._same_airline_results_only(eligible_results)
-        if same_airline_results:
-            eligible_results = same_airline_results
-        elif not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
-            retry_rendered, retry_summary_prices, retry_results, retry_card_count, _ = await self._render_results_attempt(
+        if not eligible_results and (
+            results
+            or card_count > 0
+            or self._rendered_payload_has_summary_prices(rendered)
+        ):
+            (
+                rendered,
+                summary_prices,
+                results,
+                card_count,
+                captured_count,
+                eligible_results,
+                raw_offers_found,
+                used_alternate_facet,
+            ) = await self._try_alternate_airline_facets(
+                target_url=target_url,
+                country_code=market_country_code,
+                currency=requested_currency,
+                trip_type=trip_type,
+                minimum_leg_count=minimum_leg_count,
+                max_stops=max_stops,
+                deep=initial_deep,
+                same_airline_only=same_airline_only,
+                rendered=rendered,
+                summary_prices=summary_prices,
+                results=results,
+                card_count=card_count,
+                captured_count=captured_count,
+                eligible_results=eligible_results,
+                raw_offers_found=raw_offers_found,
+                facet_option_count=facet_option_count,
+            )
+
+        if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            retry_rendered, retry_summary_prices, retry_results, retry_card_count, retry_captured_count = await self._render_results_attempt(
                 target_url=target_url,
                 country_code=market_country_code,
                 currency=requested_currency,
@@ -1340,21 +1501,51 @@ class ScrapingBeeProvider:
                 minimum_leg_count=minimum_leg_count,
                 deep=True,
                 same_airline_only=True,
+                max_stops=max_stops,
                 same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
             )
+            raw_offers_found = max(raw_offers_found, len(retry_results))
             if retry_results or retry_card_count > 0 or self._rendered_payload_has_summary_prices(retry_rendered):
                 rendered = retry_rendered
                 summary_prices = retry_summary_prices
                 results = retry_results
                 card_count = retry_card_count
-                eligible_results = self._same_airline_results_only(
-                    self._filter_results_by_stops(retry_results, max_stops)
-                )
+                captured_count = retry_captured_count
+                eligible_results = self._eligible_same_airline_results(retry_results, max_stops)
                 used_strong_retry = True
+                selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
+                if not eligible_results:
+                    (
+                        rendered,
+                        summary_prices,
+                        results,
+                        card_count,
+                        captured_count,
+                        eligible_results,
+                        raw_offers_found,
+                        retry_used_alternate_facet,
+                    ) = await self._try_alternate_airline_facets(
+                        target_url=target_url,
+                        country_code=market_country_code,
+                        currency=requested_currency,
+                        trip_type=trip_type,
+                        minimum_leg_count=minimum_leg_count,
+                        max_stops=max_stops,
+                        deep=True,
+                        same_airline_only=same_airline_only,
+                        same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+                        rendered=rendered,
+                        summary_prices=summary_prices,
+                        results=results,
+                        card_count=card_count,
+                        captured_count=captured_count,
+                        eligible_results=eligible_results,
+                        raw_offers_found=raw_offers_found,
+                        facet_option_count=facet_option_count,
+                    )
+                    used_alternate_facet = used_alternate_facet or retry_used_alternate_facet
             else:
                 eligible_results = []
-        else:
-            eligible_results = []
 
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
@@ -1379,9 +1570,9 @@ class ScrapingBeeProvider:
             result_reason=result_reason,
             visible_results_found=visible_results_found,
             summary_price_found=summary_price_found,
-            used_strong_retry=used_strong_retry or bool(selected_facet),
+            used_strong_retry=used_strong_retry or used_alternate_facet or bool(selected_facet),
         )
-        diagnostics.raw_offers_found = len(results)
+        diagnostics.raw_offers_found = raw_offers_found
         diagnostics.eligible_offers_found = len(eligible_results)
         return ProviderSearchOutcome(results=eligible_results, diagnostics=diagnostics)
 
@@ -1439,13 +1630,47 @@ class ScrapingBeeProvider:
             minimum_leg_count=2,
             deep=used_deep_pass,
             same_airline_only=same_airline_only,
+            max_stops=max_stops,
         )
-        eligible_results = self._filter_results_by_stops(results, max_stops)
+        eligible_results = self._eligible_same_airline_results(results, max_stops)
+        raw_offers_found = len(results)
+        used_alternate_facet = False
+        selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
 
-        same_airline_results = self._same_airline_results_only(eligible_results)
-        if same_airline_results:
-            eligible_results = same_airline_results
-        elif not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+        if not eligible_results and (
+            results
+            or card_count > 0
+            or self._rendered_payload_has_summary_prices(rendered)
+        ):
+            (
+                rendered,
+                summary_prices,
+                results,
+                card_count,
+                captured_count,
+                eligible_results,
+                raw_offers_found,
+                used_alternate_facet,
+            ) = await self._try_alternate_airline_facets(
+                target_url=target_url,
+                country_code=market_country_code,
+                currency=currency,
+                trip_type="multi_city",
+                minimum_leg_count=2,
+                max_stops=max_stops,
+                deep=used_deep_pass,
+                same_airline_only=same_airline_only,
+                rendered=rendered,
+                summary_prices=summary_prices,
+                results=results,
+                card_count=card_count,
+                captured_count=captured_count,
+                eligible_results=eligible_results,
+                raw_offers_found=raw_offers_found,
+                facet_option_count=facet_option_count,
+            )
+
+        if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             retry_rendered, retry_summary_prices, retry_results, retry_card_count, retry_captured_count = await self._render_results_attempt(
                 target_url=target_url,
                 country_code=market_country_code,
@@ -1454,8 +1679,10 @@ class ScrapingBeeProvider:
                 minimum_leg_count=2,
                 deep=True,
                 same_airline_only=True,
+                max_stops=max_stops,
                 same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
             )
+            raw_offers_found = max(raw_offers_found, len(retry_results))
             if (
                 retry_results
                 or retry_card_count > 0
@@ -1466,13 +1693,40 @@ class ScrapingBeeProvider:
                 results = retry_results
                 card_count = retry_card_count
                 captured_count = retry_captured_count
-                eligible_results = self._same_airline_results_only(
-                    self._filter_results_by_stops(retry_results, max_stops)
-                )
+                eligible_results = self._eligible_same_airline_results(retry_results, max_stops)
+                selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
+                if not eligible_results:
+                    (
+                        rendered,
+                        summary_prices,
+                        results,
+                        card_count,
+                        captured_count,
+                        eligible_results,
+                        raw_offers_found,
+                        retry_used_alternate_facet,
+                    ) = await self._try_alternate_airline_facets(
+                        target_url=target_url,
+                        country_code=market_country_code,
+                        currency=currency,
+                        trip_type="multi_city",
+                        minimum_leg_count=2,
+                        max_stops=max_stops,
+                        deep=True,
+                        same_airline_only=same_airline_only,
+                        same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+                        rendered=rendered,
+                        summary_prices=summary_prices,
+                        results=results,
+                        card_count=card_count,
+                        captured_count=captured_count,
+                        eligible_results=eligible_results,
+                        raw_offers_found=raw_offers_found,
+                        facet_option_count=facet_option_count,
+                    )
+                    used_alternate_facet = used_alternate_facet or retry_used_alternate_facet
             else:
                 eligible_results = []
-        else:
-            eligible_results = []
 
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
@@ -1529,9 +1783,9 @@ class ScrapingBeeProvider:
             result_reason=result_reason,
             visible_results_found=visible_results_found,
             summary_price_found=summary_price_found,
-            used_strong_retry=bool(selected_facet),
+            used_strong_retry=used_alternate_facet or bool(selected_facet),
         )
-        diagnostics.raw_offers_found = len(results)
+        diagnostics.raw_offers_found = raw_offers_found
         diagnostics.eligible_offers_found = len(eligible_results)
         return eligible_results, diagnostics
 
