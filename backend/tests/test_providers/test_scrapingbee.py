@@ -210,6 +210,38 @@ def test_same_airline_filter_rejects_mixed_leg_operator_text() -> None:
     assert filtered[0].airline == "British Airways"
 
 
+def test_same_airline_filter_ignores_airport_pair_route_text() -> None:
+    provider = make_provider()
+    results = [
+        ProviderResult(
+            price=901,
+            currency="USD",
+            airline="Condor",
+            deep_link="https://example.com/condor",
+            raw_data={
+                "airline_names": ["Condor"],
+                "legs": [
+                    {
+                        "airline": "Condor",
+                        "route_text": "YYZ-BER",
+                    },
+                    {
+                        "airline": "Condor",
+                        "route_text": "BUD-YYZ",
+                    },
+                ],
+                "outbound_airline": "Condor",
+                "return_airline": "Condor",
+            },
+        ),
+    ]
+
+    filtered = provider._same_airline_results_only(results)
+
+    assert len(filtered) == 1
+    assert filtered[0].airline == "Condor"
+
+
 def test_rendered_card_normalization_records_final_settled_price() -> None:
     provider = make_provider()
     results = provider._normalize_rendered_cards(

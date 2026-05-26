@@ -646,6 +646,17 @@ class ScrapingBeeProvider:
             return None
         return normalized.casefold()
 
+    def _route_text_carries_airline_signal(self, value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        cleaned = value.strip()
+        if not cleaned:
+            return False
+        lowered = cleaned.casefold()
+        if lowered in {"multiple airlines", "mixed airlines", "various airlines"}:
+            return True
+        return any(separator in cleaned for separator in (",", "/", ";", "|"))
+
     def _result_airline_names(self, result: ProviderResult) -> list[str]:
         raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
         raw_values: list[object] = []
@@ -659,7 +670,9 @@ class ScrapingBeeProvider:
             for leg in legs:
                 if isinstance(leg, dict):
                     raw_values.append(leg.get("airline"))
-                    raw_values.append(leg.get("route_text"))
+                    route_text = leg.get("route_text")
+                    if self._route_text_carries_airline_signal(route_text):
+                        raw_values.append(route_text)
 
         raw_values.append(raw_data.get("outbound_airline"))
         raw_values.append(raw_data.get("return_airline"))
