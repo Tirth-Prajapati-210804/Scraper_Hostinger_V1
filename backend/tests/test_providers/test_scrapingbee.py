@@ -42,6 +42,7 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     assert instructions[2] == {"wait": _SAME_AIRLINE_INITIAL_WAIT_MS}
     assert "f.applyFacet=f.a" in helper_script
     assert "f.clickCheapest=f.c" in helper_script
+    assert "^clear all$" in helper_script
     assert "f.w=x=>" in helper_script
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
