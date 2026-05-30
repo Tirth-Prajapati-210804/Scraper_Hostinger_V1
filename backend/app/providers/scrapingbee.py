@@ -976,13 +976,14 @@ class ScrapingBeeProvider:
         if facet_floor <= 0:
             return False
 
+        any_cheaper_facet = current_price > facet_floor
         clearly_high = current_price >= facet_floor * 1.20 and current_price >= facet_floor + 150
         sparse_and_high = (
             len(eligible_results) <= 2
             and current_price >= 1500
             and current_price >= facet_floor + 75
         )
-        return clearly_high or sparse_and_high
+        return any_cheaper_facet or clearly_high or sparse_and_high
 
     def _summary_lowest_price(self, summary_prices: dict[str, str]) -> float | None:
         prices = [
@@ -1542,7 +1543,15 @@ class ScrapingBeeProvider:
         best_eligible_results = eligible_results
         best_price = self._cheapest_result_price(eligible_results)
 
-        for facet_index in range(1, max_attempts):
+        if force:
+            _, selected_facet_index = self._selected_facet_price(rendered)
+            facet_indexes = [
+                index for index in range(max_attempts) if index != selected_facet_index
+            ]
+        else:
+            facet_indexes = range(1, max_attempts)
+
+        for facet_index in facet_indexes:
             (
                 retry_rendered,
                 retry_summary_prices,

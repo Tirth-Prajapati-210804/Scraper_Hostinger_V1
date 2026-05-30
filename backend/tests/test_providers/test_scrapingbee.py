@@ -627,6 +627,79 @@ async def test_round_trip_diagnostic_tries_next_airline_facet_when_first_price_i
 
 
 @pytest.mark.asyncio
+async def test_round_trip_diagnostic_tries_cheaper_facet_even_when_difference_is_small() -> None:
+    provider = make_provider()
+    calls: list[int] = []
+    rendered = {
+        "evaluate_results": [
+            json.dumps(
+                {
+                    "c": [],
+                    "f": {
+                        "s": "Lufthansa",
+                        "o": [
+                            {"n": "Air Canada", "p": 1006},
+                            {"n": "Lufthansa", "p": 1007},
+                        ],
+                    },
+                }
+            )
+        ]
+    }
+
+    lufthansa_result = ProviderResult(
+        price=1007,
+        currency="CAD",
+        airline="Lufthansa",
+        deep_link="https://example.com/lh",
+        raw_data={
+            "legs": [
+                {"airline": "Lufthansa", "route_text": "Lufthansa"},
+                {"airline": "Lufthansa", "route_text": "Lufthansa"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+    air_canada_result = ProviderResult(
+        price=1006,
+        currency="CAD",
+        airline="Air Canada",
+        deep_link="https://example.com/ac",
+        raw_data={
+            "legs": [
+                {"airline": "Air Canada", "route_text": "Air Canada"},
+                {"airline": "Air Canada", "route_text": "Air Canada"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+
+    async def fake_render_results_attempt(**kwargs):
+        calls.append(int(kwargs.get("airline_facet_index", 0)))
+        if len(calls) == 1:
+            return rendered, {}, [lufthansa_result], 1, 1
+        return rendered, {}, [air_canada_result], 1, 1
+
+    provider._render_results_attempt = fake_render_results_attempt
+
+    outcome = await provider._search_rendered_itinerary_diagnostic(
+        trip_type="round_trip",
+        target_url="https://www.ca.kayak.com/flights/YWG-EDI/2026-07-26/2026-08-05",
+        requested_market="ca",
+        requested_currency="CAD",
+        market_country_code="ca",
+        max_stops=1,
+        same_airline_only=True,
+        minimum_leg_count=2,
+    )
+
+    assert calls == [0, 0]
+    assert [result.price for result in outcome.results] == [1006]
+    assert outcome.diagnostics.raw_offers_found == 1
+    assert outcome.diagnostics.eligible_offers_found == 1
+
+
+@pytest.mark.asyncio
 async def test_round_trip_diagnostic_rejects_stale_card_above_selected_facet_floor() -> None:
     provider = make_provider()
     calls: list[int] = []
