@@ -223,8 +223,9 @@ class ScrapingBeeProvider:
         self._premium_proxy = premium_proxy
         self._stealth_proxy = stealth_proxy
         self._multi_city_debug = multi_city_debug
+        client_timeout = max(float(self._timeout) + 15.0, float(self._timeout))
         self._client = httpx.AsyncClient(
-            timeout=self._timeout,
+            timeout=httpx.Timeout(client_timeout, connect=min(20.0, client_timeout)),
             headers={
                 "Accept": "application/json",
                 "User-Agent": user_agent.strip() or "flight-harvester/1.0",
@@ -1594,6 +1595,23 @@ class ScrapingBeeProvider:
             )
 
         if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
+            visible_results_found = facet_option_count > 0
+            summary_price_found = facet_option_count > 0
+            diagnostics = self._diagnostics_for_results(
+                results=results,
+                requested_market=requested_market,
+                requested_currency=requested_currency,
+                result_reason="extract_failed" if visible_results_found or summary_price_found else "page_empty",
+                visible_results_found=visible_results_found,
+                summary_price_found=summary_price_found,
+                used_strong_retry=used_alternate_facet or bool(selected_facet),
+            )
+            diagnostics.raw_offers_found = raw_offers_found
+            diagnostics.eligible_offers_found = 0
+            return ProviderSearchOutcome(results=[], diagnostics=diagnostics)
+
+        if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             retry_rendered, retry_summary_prices, retry_results, retry_card_count, retry_captured_count = await self._render_results_attempt(
                 target_url=target_url,
                 country_code=market_country_code,
@@ -1653,9 +1671,6 @@ class ScrapingBeeProvider:
                     used_alternate_facet = used_alternate_facet or retry_used_alternate_facet
             else:
                 eligible_results = []
-
-        if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
-            raise ValueError("KAYAK rendered page did not expose extractable result cards.")
 
         selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
         visible_results_found = card_count > 0 or facet_option_count > 0
@@ -1786,6 +1801,23 @@ class ScrapingBeeProvider:
                 facet_option_count=facet_option_count,
                 force=should_probe_alternate_facet,
             )
+
+        if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
+            visible_results_found = facet_option_count > 0
+            summary_price_found = facet_option_count > 0
+            diagnostics = self._diagnostics_for_results(
+                results=results,
+                requested_market=market,
+                requested_currency=currency,
+                result_reason="extract_failed" if visible_results_found or summary_price_found else "page_empty",
+                visible_results_found=visible_results_found,
+                summary_price_found=summary_price_found,
+                used_strong_retry=used_alternate_facet or bool(selected_facet),
+            )
+            diagnostics.raw_offers_found = raw_offers_found
+            diagnostics.eligible_offers_found = 0
+            return [], diagnostics
 
         if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
             retry_rendered, retry_summary_prices, retry_results, retry_card_count, retry_captured_count = await self._render_results_attempt(

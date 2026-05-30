@@ -768,6 +768,12 @@ class PriceCollector:
                             self.on_item_progress("success", origin, dest, depart_date, is_retry)
                         return "success"
 
+                    if result.errors and not result.provider_diagnostics:
+                        self._mark_route_failure(route_key)
+                        if self.on_item_progress:
+                            self.on_item_progress("error", origin, dest, depart_date, is_retry)
+                        return "error"
+
                     if self.on_item_progress:
                         self.on_item_progress("skipped", origin, dest, depart_date, is_retry)
                     return "skipped"

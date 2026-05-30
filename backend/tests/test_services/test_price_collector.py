@@ -396,6 +396,40 @@ async def test_collect_route_batch_reports_started_before_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_collect_route_batch_provider_error_is_not_skipped() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "scrapingbee"
+    provider.search_round_trip = AsyncMock(side_effect=RuntimeError("ScrapingBee request timed out."))
+    provider.search_round_trip_diagnostic = None
+
+    progress_calls: list[tuple[str, str, str, date, bool]] = []
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+        on_item_progress=lambda status, origin, destination, depart_date, is_retry: progress_calls.append(
+            (status, origin, destination, depart_date, is_retry)
+        ),
+    )
+    collector._upsert_cheapest = AsyncMock()
+
+    stats = await collector.collect_route_batch(
+        origin="YYZ",
+        destinations=["NRT"],
+        dates=[DEPART],
+        route_group_id=ROUTE_ID,
+        batch_size=1,
+        delay_seconds=0,
+    )
+
+    assert stats == {"success": 0, "errors": 1, "skipped": 0}
+    assert progress_calls == [("error", "YYZ", "NRT", DEPART, False)]
+
+
+@pytest.mark.asyncio
 async def test_collect_route_batch_cooled_route_reports_skipped_progress() -> None:
     session = AsyncMock()
     session.add = MagicMock()

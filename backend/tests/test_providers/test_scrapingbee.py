@@ -110,6 +110,23 @@ def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:
     assert len(urlencode(params)) < 8190
 
 
+def test_http_client_timeout_has_margin_over_scrapingbee_timeout() -> None:
+    provider = make_provider()
+    target_url = provider._build_search_url(
+        origin="MIA",
+        destination="MLA",
+        depart_date=date(2026, 6, 5),
+        return_date=date(2026, 6, 18),
+        market="us",
+        currency="USD",
+    )
+
+    params = provider._base_request_params(target_url, country_code="us")
+
+    assert params["timeout"] == 90_000
+    assert provider._client.timeout.read == 105.0
+
+
 def test_multi_city_rendered_request_stays_under_request_line_cap() -> None:
     provider = make_provider(REALISTIC_SCRAPINGBEE_KEY)
     target_url = provider._build_multi_city_results_url(
@@ -307,6 +324,72 @@ async def test_round_trip_diagnostic_forces_same_airline_without_unbound_local()
     assert captured["trip_type"] == "round_trip"
     assert captured["same_airline_only"] is True
     assert captured["minimum_leg_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_round_trip_diagnostic_marks_empty_render_without_retry() -> None:
+    provider = make_provider()
+    calls = 0
+
+    async def fake_render_results_attempt(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {}, {}, [], 0, 0
+
+    provider._render_results_attempt = fake_render_results_attempt
+
+    outcome = await provider.search_round_trip_diagnostic(
+        origin="YYZ",
+        destination="EDI",
+        depart_date=date(2027, 5, 21),
+        return_date=date(2027, 5, 30),
+        market="ca",
+        currency="CAD",
+        max_stops=1,
+    )
+
+    assert calls == 1
+    assert outcome.results == []
+    assert outcome.diagnostics.result_reason == "page_empty"
+    assert outcome.diagnostics.raw_offers_found == 0
+    assert outcome.diagnostics.eligible_offers_found == 0
+
+
+@pytest.mark.asyncio
+async def test_multi_city_diagnostic_marks_empty_render_without_retry() -> None:
+    provider = make_provider()
+    calls = 0
+
+    async def fake_render_results_attempt(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {}, {}, [], 0, 0
+
+    provider._render_results_attempt = fake_render_results_attempt
+
+    results, diagnostics = await provider._search_multi_city_once(
+        legs=[
+            {
+                "departure_id": "YYZ",
+                "arrival_id": "BER",
+                "outbound_date": date(2026, 6, 1),
+            },
+            {
+                "departure_id": "BUD",
+                "arrival_id": "YYZ",
+                "outbound_date": date(2026, 6, 12),
+            },
+        ],
+        market="us",
+        currency="USD",
+        max_stops=1,
+    )
+
+    assert calls == 1
+    assert results == []
+    assert diagnostics.result_reason == "page_empty"
+    assert diagnostics.raw_offers_found == 0
+    assert diagnostics.eligible_offers_found == 0
 
 
 @pytest.mark.asyncio
