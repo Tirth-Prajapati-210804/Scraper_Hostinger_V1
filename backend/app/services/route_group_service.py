@@ -18,6 +18,7 @@ from app.schemas.route_group import (
 )
 from app.utils.route_segments import iter_group_segments
 
+_KAYAK_MAX_FINAL_TRAVEL_DAYS = 365
 _NON_ERROR_STATUSES = {"success", "no_results"}
 _ERROR_PRIORITY = (
     "quota_exhausted",
@@ -269,7 +270,17 @@ def _group_dates(group: RouteGroup) -> list[date]:
         return []
     total_days = min((end - start).days + 1, 730)
 
-    return [start + timedelta(days=i) for i in range(total_days)]
+    try:
+        final_travel_offset_days = max(1, int(group.nights or 1) + 1)
+    except (TypeError, ValueError):
+        final_travel_offset_days = 2
+    max_final_date = today + timedelta(days=_KAYAK_MAX_FINAL_TRAVEL_DAYS)
+
+    return [
+        depart_date
+        for i in range(total_days)
+        if (depart_date := start + timedelta(days=i)) + timedelta(days=final_travel_offset_days) <= max_final_date
+    ]
 
 
 async def _compute_scrape_health(

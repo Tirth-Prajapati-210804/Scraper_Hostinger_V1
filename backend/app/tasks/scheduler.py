@@ -523,6 +523,10 @@ class FlightScheduler:
         if self._stop_requested:
             return stats
 
+        remaining = self._filter_dates_within_kayak_horizon(remaining, segment)
+        if not remaining:
+            return stats
+
         self._progress["current_origin"] = segment.origin
         self._progress["current_destination"] = ""
         self._progress["current_date"] = ""
@@ -702,6 +706,10 @@ class FlightScheduler:
                             dates=dates,
                         )
 
+                        if not remaining:
+                            continue
+
+                        remaining = self._filter_dates_within_kayak_horizon(remaining, segment)
                         if not remaining:
                             continue
 
@@ -885,6 +893,41 @@ class FlightScheduler:
     # --------------------------------------------------
     # DATES
     # --------------------------------------------------
+
+    def _kayak_max_final_travel_date(self, today: date | None = None) -> date | None:
+        raw_max_days = getattr(self.settings, "kayak_max_final_travel_days", 365)
+        try:
+            max_days = int(raw_max_days or 0) if isinstance(raw_max_days, (int, float, str)) else 365
+        except (TypeError, ValueError):
+            max_days = 365
+        if max_days <= 0:
+            return None
+        return (today or date.today()) + timedelta(days=max_days)
+
+    def _trip_final_travel_offset_days(self, segment: object) -> int:
+        try:
+            nights = int(getattr(segment, "nights", None) or 1)
+        except (TypeError, ValueError):
+            nights = 1
+        return max(1, nights + 1)
+
+    def _filter_dates_within_kayak_horizon(
+        self,
+        dates: list[date],
+        segment: object,
+        *,
+        today: date | None = None,
+    ) -> list[date]:
+        max_final_date = self._kayak_max_final_travel_date(today)
+        if max_final_date is None:
+            return list(dates)
+
+        final_offset_days = self._trip_final_travel_offset_days(segment)
+        return [
+            depart_date
+            for depart_date in dates
+            if depart_date + timedelta(days=final_offset_days) <= max_final_date
+        ]
 
     def _group_dates(self, group: RouteGroup) -> list[date]:
         today = date.today()
@@ -1115,6 +1158,10 @@ class FlightScheduler:
                             dates=dates,
                         )
 
+                        if not remaining:
+                            continue
+
+                        remaining = self._filter_dates_within_kayak_horizon(remaining, segment)
                         if not remaining:
                             continue
 

@@ -13,6 +13,7 @@ def make_scheduler() -> FlightScheduler:
     settings.telegram_bot_token = ""
     settings.telegram_chat_id = ""
     settings.sentry_dsn = ""
+    settings.kayak_max_final_travel_days = 365
     return FlightScheduler(
         settings=settings,
         session_factory=MagicMock(),
@@ -30,6 +31,12 @@ def make_group(
     group.start_date = start_date
     group.end_date = end_date
     return group
+
+
+def make_segment(nights: int = 9) -> MagicMock:
+    segment = MagicMock()
+    segment.nights = nights
+    return segment
 
 
 def test_group_dates_normal_range() -> None:
@@ -106,3 +113,33 @@ def test_group_dates_returns_empty_when_explicit_end_is_in_past() -> None:
         end_date=date.today() - timedelta(days=1),
     )
     assert scheduler._group_dates(group) == []
+
+
+def test_kayak_horizon_filters_by_final_travel_date() -> None:
+    scheduler = make_scheduler()
+    today = date(2026, 5, 30)
+    dates = [
+        date(2027, 5, 20),
+        date(2027, 5, 21),
+        date(2027, 5, 22),
+    ]
+
+    filtered = scheduler._filter_dates_within_kayak_horizon(
+        dates,
+        make_segment(nights=9),
+        today=today,
+    )
+
+    assert filtered == [date(2027, 5, 20)]
+
+
+def test_kayak_horizon_can_be_disabled() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.kayak_max_final_travel_days = 0
+    dates = [date(2027, 5, 21), date(2027, 5, 22)]
+
+    assert scheduler._filter_dates_within_kayak_horizon(
+        dates,
+        make_segment(nights=9),
+        today=date(2026, 5, 30),
+    ) == dates
