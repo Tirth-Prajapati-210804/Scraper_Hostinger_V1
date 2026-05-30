@@ -60,6 +60,8 @@ class FlightScheduler:
         self._active_checks: set[tuple[str, str, str]] = set()
         self._retry_started = 0
         self._retry_done = 0
+        self._retry_errors = 0
+        self._auto_pause_reason: dict[str, object] | None = None
         self._planned_checks_total = 0
 
         self._progress: dict = {
@@ -73,6 +75,7 @@ class FlightScheduler:
             "active_searches": 0,
             "retries_started": 0,
             "retries_done": 0,
+            "retries_failed": 0,
             "prices_total": 0,
             "prices_started": 0,
             "prices_done": 0,
@@ -104,6 +107,8 @@ class FlightScheduler:
         self._active_checks = set()
         self._retry_started = 0
         self._retry_done = 0
+        self._retry_errors = 0
+        self._auto_pause_reason = None
         self._planned_checks_total = 0
         self._progress = {
             "routes_total": 0,
@@ -116,6 +121,7 @@ class FlightScheduler:
             "active_searches": 0,
             "retries_started": 0,
             "retries_done": 0,
+            "retries_failed": 0,
             "prices_total": 0,
             "prices_started": 0,
             "prices_done": 0,
@@ -143,6 +149,7 @@ class FlightScheduler:
         self._progress["active_searches"] = len(self._active_checks)
         self._progress["retries_started"] = self._retry_started
         self._progress["retries_done"] = self._retry_done
+        self._progress["retries_failed"] = self._retry_errors
 
         # Preserve the old shape as aliases while the frontend transitions.
         self._progress["prices_total"] = self._planned_checks_total
@@ -198,6 +205,8 @@ class FlightScheduler:
 
         if is_retry:
             self._retry_done += 1
+            if status == "error":
+                self._record_retry_error(origin, destination, depart_date)
         elif key not in self._check_states:
             self._check_states[key] = status
 
@@ -205,6 +214,57 @@ class FlightScheduler:
 
     def request_stop(self) -> None:
         self._stop_requested = True
+
+    def _retry_failure_pause_threshold(self) -> int:
+        try:
+            return int(getattr(self.settings, "scrape_retry_failure_pause_threshold", 2) or 0)
+        except (TypeError, ValueError):
+            return 2
+
+    def _record_retry_error(self, origin: str, destination: str, depart_date: date) -> None:
+        self._retry_errors += 1
+        threshold = self._retry_failure_pause_threshold()
+        if threshold <= 0 or self._retry_errors < threshold or self._stop_requested:
+            return
+
+        self._auto_pause_reason = {
+            "code": "provider_retry_limit_reached",
+            "detail": (
+                f"Collection paused after {self._retry_errors} retry failure(s). "
+                "Provider is likely timing out or unavailable; stopping prevents more credit burn."
+            ),
+            "origin": origin,
+            "destination": destination,
+            "depart_date": depart_date.isoformat(),
+            "threshold": threshold,
+        }
+        self._stop_requested = True
+        log.warning(
+            "collection_auto_paused_after_retry_failures",
+            retry_errors=self._retry_errors,
+            threshold=threshold,
+            origin=origin,
+            destination=destination,
+            depart_date=depart_date.isoformat(),
+        )
+
+    def _dates_requiring_retry(
+        self,
+        origin: str,
+        destinations: list[str],
+        dates: list[date],
+    ) -> list[date]:
+        retry_dates: list[date] = []
+        completed_states = {"success", "skipped"}
+        for depart_date in dates:
+            needs_retry = any(
+                self._check_states.get(self._check_key(origin, destination, depart_date))
+                not in completed_states
+                for destination in destinations
+            )
+            if needs_retry:
+                retry_dates.append(depart_date)
+        return retry_dates
 
     def _run_context_payload(
         self,
@@ -501,6 +561,12 @@ class FlightScheduler:
                 dates=remaining,
             )
 
+        missing = self._dates_requiring_retry(
+            segment.origin,
+            segment.destinations,
+            missing,
+        )
+
         if missing:
             retry = await collector.collect_route_batch(
                 origin=segment.origin,
@@ -533,6 +599,11 @@ class FlightScheduler:
                         destinations=segment.destinations,
                         dates=missing,
                     )
+                missing = self._dates_requiring_retry(
+                    segment.origin,
+                    segment.destinations,
+                    missing,
+                )
 
         stats["final_missing"] = len(missing) * len(segment.destinations) if not self._stop_requested else 0
         return stats
@@ -737,7 +808,7 @@ class FlightScheduler:
 
                     if self._stop_requested:
                         run.status = "stopped"
-                        run.errors = []
+                        run.errors = [self._auto_pause_reason] if self._auto_pause_reason else []
                     elif total_success == 0 and total_errors > 0:
                         run.status = "failed"
                     elif total_final_missing > 0:
@@ -1042,7 +1113,6 @@ class FlightScheduler:
                             origin=segment.origin,
                             destinations=segment.destinations,
                             dates=dates,
-                            respect_no_fare_skip=False,
                         )
 
                         if not remaining:
@@ -1131,7 +1201,7 @@ class FlightScheduler:
 
                     if self._stop_requested:
                         run.status = "stopped"
-                        run.errors = []
+                        run.errors = [self._auto_pause_reason] if self._auto_pause_reason else []
                     elif stats["success"] == 0 and stats["errors"] > 0:
                         run.status = "failed"
                     elif total_final_missing > 0:

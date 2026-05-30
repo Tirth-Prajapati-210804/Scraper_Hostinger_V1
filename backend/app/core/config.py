@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     scrape_route_parallelism: int = 3
     scrape_delay_seconds: float = 1.0
     scrape_no_fare_skip_hours: int = 48
+    scrape_retry_failure_pause_threshold: int = 2
     provider_timeout_seconds: int = 60
     provider_max_retries: int = 1
     provider_concurrency_limit: int = 3

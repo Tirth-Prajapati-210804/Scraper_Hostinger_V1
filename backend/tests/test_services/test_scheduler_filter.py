@@ -23,6 +23,7 @@ def make_scheduler() -> FlightScheduler:
     settings.telegram_chat_id = ""
     settings.sentry_dsn = ""
     settings.scrape_no_fare_skip_hours = 0
+    settings.scrape_retry_failure_pause_threshold = 2
     return FlightScheduler(
         settings=settings,
         session_factory=MagicMock(),
@@ -158,6 +159,95 @@ async def test_no_fare_skip_can_be_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_no_fare_skip_can_be_bypassed_for_manual_retry() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_no_fare_skip_hours = 168
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=make_execute_result([]))
+
+    remaining = await scheduler._filter_already_scraped(
+        session,
+        ROUTE_ID,
+        "DEN",
+        ["MLA"],
+        [D1],
+        respect_no_fare_skip=False,
+    )
+
+    assert remaining == [D1]
+    assert session.execute.await_count == 1
+
+
+def test_retry_errors_auto_pause_collection() -> None:
+    scheduler = make_scheduler()
+    scheduler._reset_progress()
+
+    scheduler._record_item_progress("error", "YYZ", "EDI", D1, True)
+
+    assert scheduler._stop_requested is False
+    assert scheduler.progress["retries_failed"] == 1
+
+    scheduler._record_item_progress("error", "YOW", "EDI", D2, True)
+
+    assert scheduler._stop_requested is True
+    assert scheduler.progress["retries_failed"] == 2
+    assert scheduler._auto_pause_reason is not None
+    assert scheduler._auto_pause_reason["code"] == "provider_retry_limit_reached"
+    assert scheduler._auto_pause_reason["threshold"] == 2
+
+
+@pytest.mark.asyncio
+async def test_filtered_out_dates_are_not_retried_in_same_run() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_batch_size = 1
+    scheduler.settings.scrape_delay_seconds = 0.0
+
+    group = MagicMock()
+    group.id = uuid4()
+    group.market = "us"
+    group.currency = "USD"
+    group.max_stops = 1
+    group.same_airline_only = True
+    group.max_leg_duration_minutes = None
+
+    segment = MagicMock()
+    segment.origin = "ATL"
+    segment.destinations = ["MLA"]
+    segment.trip_type = "round_trip"
+    segment.nights = 8
+    segment.return_origin = None
+
+    class DummyCollector:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def collect_route_batch(self, **kwargs):
+            self.calls += 1
+            assert kwargs.get("is_retry") is not True
+            scheduler._record_item_progress("skipped", "ATL", "MLA", D1, False)
+            return {"success": 0, "errors": 0, "skipped": 1}
+
+    collector = DummyCollector()
+    scheduler._filter_already_scraped = AsyncMock(return_value=[D1])
+
+    session = AsyncMock()
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    scheduler.session_factory = factory
+
+    stats = await scheduler._collect_segment_with_retry(
+        collector=collector,
+        group=group,
+        segment=segment,
+        remaining=[D1],
+    )
+
+    assert collector.calls == 1
+    assert stats == {"success": 0, "errors": 0, "skipped": 1, "final_missing": 0}
+
+
+@pytest.mark.asyncio
 async def test_filter_is_scoped_to_route_group() -> None:
     scheduler = make_scheduler()
     session = AsyncMock()
@@ -239,6 +329,67 @@ async def test_trigger_single_group_forwards_trip_type_and_nights(
     assert captured["market"] == "ca"
     assert captured["currency"] == "USD"
     assert captured["same_airline_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_trigger_single_group_respects_no_fare_skip_on_manual_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from uuid import uuid4
+
+    from app.tasks import scheduler as scheduler_module
+
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_batch_size = 1
+    scheduler.settings.scrape_delay_seconds = 0.0
+    scheduler.settings.scrape_no_fare_skip_hours = 168
+
+    group = MagicMock()
+    group.id = uuid4()
+    group.is_active = True
+    group.origins = ["ATL"]
+    group.destinations = ["MLA"]
+    group.currency = "USD"
+    group.market = "us"
+    group.max_stops = 1
+    group.same_airline_only = True
+    group.max_leg_duration_minutes = None
+    group.trip_type = "round_trip"
+    group.nights = 8
+    group.start_date = None
+    group.end_date = None
+    group.days_ahead = 7
+
+    class DummyCollector:
+        def __init__(self, *a, **kw) -> None:
+            pass
+
+        async def collect_route_batch(self, **kwargs):
+            return {"success": 0, "errors": 0, "skipped": 1}
+
+    monkeypatch.setattr(scheduler_module, "PriceCollector", DummyCollector)
+
+    fake_provider = MagicMock()
+    fake_provider.is_configured.return_value = True
+    scheduler.provider_registry.get_enabled = MagicMock(return_value=[fake_provider])
+
+    select_result = MagicMock()
+    select_result.scalar_one_or_none.return_value = group
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.execute = AsyncMock(return_value=select_result)
+
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    scheduler.session_factory = factory
+
+    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [], []])
+
+    await scheduler.trigger_single_group(group.id)
+
+    assert scheduler._filter_already_scraped.await_count == 3
+    assert "respect_no_fare_skip" not in scheduler._filter_already_scraped.await_args_list[0].kwargs
 
 
 @pytest.mark.asyncio
