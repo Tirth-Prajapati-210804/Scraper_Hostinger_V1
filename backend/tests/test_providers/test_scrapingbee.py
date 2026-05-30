@@ -41,6 +41,7 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
     assert instructions[2] == {"wait": _SAME_AIRLINE_INITIAL_WAIT_MS}
     assert "f.applyFacet=f.a" in helper_script
+    assert "f.clickCheapest=f.c" in helper_script
     assert "f.w=x=>" in helper_script
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
@@ -48,6 +49,11 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     assert {"wait": 1600} in instructions
     assert any(
         instruction.get("evaluate") == "window.FH.applyFacet()"
+        for instruction in instructions
+        if isinstance(instruction, dict)
+    )
+    assert any(
+        instruction.get("evaluate") == "window.FH.clickCheapest()"
         for instruction in instructions
         if isinstance(instruction, dict)
     )
@@ -80,6 +86,20 @@ def test_rendered_results_scenario_can_apply_stop_prefilter() -> None:
 
     instructions = scenario["instructions"]
     assert {"evaluate": "window.FH.w(1)"} in instructions
+
+
+def test_rendered_results_scenario_can_apply_two_stop_prefilter() -> None:
+    provider = make_provider()
+
+    scenario = provider._build_results_scenario(
+        deep=True,
+        same_airline_only=True,
+        minimum_leg_count=2,
+        max_stops=2,
+    )
+
+    instructions = scenario["instructions"]
+    assert {"evaluate": "window.FH.w(2)"} in instructions
 
 
 def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:
@@ -178,6 +198,72 @@ def test_same_airline_filter_keeps_single_airline_aliases_only() -> None:
 
     assert len(filtered) == 1
     assert filtered[0].airline == "Air Canada"
+
+
+def test_rendered_card_parser_rejects_sponsored_partner_cards() -> None:
+    provider = make_provider()
+
+    results = provider._normalize_rendered_cards(
+        {
+            "cards": [
+                {
+                    "price_text": "C$ 1,276",
+                    "text": "FlightHub - Canada's Travel Agency C$ 1,276 1 stop FlightHub | Ad",
+                    "airline_text": "FlightHub",
+                    "legs": [
+                        {
+                            "airline": "FlightHub",
+                            "time_text": "6:15 pm - 1:05 pm",
+                            "route_text": "YYZ-MLA",
+                            "stops_text": "1 stop",
+                            "duration_text": "12h 50m",
+                            "text": "FlightHub | Ad",
+                        },
+                        {
+                            "airline": "FlightHub",
+                            "time_text": "7:15 am - 2:55 pm",
+                            "route_text": "MLA-YYZ",
+                            "stops_text": "1 stop",
+                            "duration_text": "13h 40m",
+                            "text": "FlightHub | Ad",
+                        },
+                    ],
+                },
+                {
+                    "price_text": "C$ 1,540",
+                    "text": "Lufthansa 1 stop YYZ-MLA 1 stop MLA-YYZ",
+                    "airline_text": "Lufthansa",
+                    "legs": [
+                        {
+                            "airline": "Lufthansa",
+                            "time_text": "6:15 pm - 1:05 pm",
+                            "route_text": "YYZ-MLA",
+                            "stops_text": "1 stop",
+                            "duration_text": "12h 50m",
+                            "text": "Lufthansa YYZ-MLA",
+                        },
+                        {
+                            "airline": "Lufthansa",
+                            "time_text": "7:15 am - 2:55 pm",
+                            "route_text": "MLA-YYZ",
+                            "stops_text": "1 stop",
+                            "duration_text": "13h 40m",
+                            "text": "Lufthansa MLA-YYZ",
+                        },
+                    ],
+                },
+            ]
+        },
+        currency="CAD",
+        deep_link="https://www.ca.kayak.com/flights/YYZ-MLA/2027-01-10/2027-01-20",
+        trip_type="round_trip",
+        market_country_code="ca",
+        expected_leg_count=2,
+    )
+
+    assert len(results) == 1
+    assert results[0].price == 1540
+    assert results[0].airline == "Lufthansa"
 
 
 def test_same_airline_filter_rejects_mixed_leg_operator_text() -> None:
@@ -536,6 +622,63 @@ async def test_round_trip_diagnostic_tries_next_airline_facet_when_first_price_i
     assert [result.price for result in outcome.results] == [950]
     assert outcome.diagnostics.raw_offers_found == 1
     assert outcome.diagnostics.eligible_offers_found == 1
+
+
+@pytest.mark.asyncio
+async def test_round_trip_diagnostic_rejects_stale_card_above_selected_facet_floor() -> None:
+    provider = make_provider()
+    calls: list[int] = []
+    rendered = {
+        "evaluate_results": [
+            json.dumps(
+                {
+                    "c": [],
+                    "f": {
+                        "s": "Lufthansa",
+                        "o": [
+                            {"n": "Lufthansa", "p": 1378},
+                        ],
+                    },
+                }
+            )
+        ]
+    }
+    stale_result = ProviderResult(
+        price=1540,
+        currency="CAD",
+        airline="Lufthansa",
+        deep_link="https://example.com/lh",
+        raw_data={
+            "legs": [
+                {"airline": "Lufthansa", "route_text": "Lufthansa"},
+                {"airline": "Lufthansa", "route_text": "Lufthansa"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+
+    async def fake_render_results_attempt(**kwargs):
+        calls.append(int(kwargs.get("airline_facet_index", 0)))
+        return rendered, {}, [stale_result], 1, 1
+
+    provider._render_results_attempt = fake_render_results_attempt
+
+    outcome = await provider._search_rendered_itinerary_diagnostic(
+        trip_type="round_trip",
+        target_url="https://www.ca.kayak.com/flights/YYZ-MLA/2027-01-10/2027-01-20",
+        requested_market="ca",
+        requested_currency="CAD",
+        market_country_code="ca",
+        max_stops=1,
+        same_airline_only=True,
+        minimum_leg_count=2,
+    )
+
+    assert calls == [0, 0]
+    assert outcome.results == []
+    assert outcome.diagnostics.result_reason == "filtered_out"
+    assert outcome.diagnostics.raw_offers_found == 1
+    assert outcome.diagnostics.eligible_offers_found == 0
 
 
 @pytest.mark.asyncio

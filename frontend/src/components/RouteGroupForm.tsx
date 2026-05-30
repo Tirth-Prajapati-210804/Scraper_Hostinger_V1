@@ -92,6 +92,7 @@ const MAX_LEG_DURATION_OPTIONS = [
   { label: "24h", value: "24" },
   { label: "36h", value: "36" },
 ];
+const KAYAK_MAX_FINAL_TRAVEL_DAYS = 365;
 
 function tripTypeToUi(type?: TripType | null): UiTripType {
   if (type === "multi_city") return "multicity";
@@ -128,6 +129,12 @@ function addDaysIso(isoDate: string, days: number): string {
   return toIsoDate(date);
 }
 
+function latestKayakDepartDate(finalLegOffsetDays: number): string {
+  const today = todayIso();
+  const departOffset = Math.max(0, KAYAK_MAX_FINAL_TRAVEL_DAYS - Math.max(1, finalLegOffsetDays));
+  return addDaysIso(today, departOffset);
+}
+
 function inclusiveDayCount(startDate: string, endDate: string): number | null {
   if (!startDate || !endDate) return null;
   const start = new Date(`${startDate}T00:00:00`);
@@ -136,6 +143,10 @@ function inclusiveDayCount(startDate: string, endDate: string): number | null {
     return null;
   }
   return Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+}
+
+function maxOffsetDays(state: ManualState): number {
+  return parsePositiveInt(state.nights, 10) + 1;
 }
 
 function normalizeCodes(values: string[]) {
@@ -471,6 +482,45 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
   const isEditing = Boolean(initial);
   const normalizedOrigins = useMemo(() => normalizeCodes(state.mainLeg.from), [state.mainLeg.from]);
   const normalizedDestinations = useMemo(() => normalizeCodes(state.mainLeg.to), [state.mainLeg.to]);
+  const latestDepartDate = useMemo(() => latestKayakDepartDate(maxOffsetDays(state)), [state]);
+
+  useEffect(() => {
+    setState((current) => {
+      const maxDate = latestKayakDepartDate(maxOffsetDays(current));
+      const today = todayIso();
+      const startDate = current.startDate
+        ? current.startDate > maxDate
+          ? maxDate
+          : current.startDate < today
+            ? today
+            : current.startDate
+        : "";
+      const endDate = current.endDate
+        ? current.endDate > maxDate
+          ? maxDate
+          : current.endDate
+        : "";
+      const normalizedEndDate = startDate && endDate && endDate < startDate ? startDate : endDate;
+      const dayCount = startDate && normalizedEndDate
+        ? inclusiveDayCount(startDate, normalizedEndDate)
+        : null;
+
+      if (
+        startDate === current.startDate &&
+        normalizedEndDate === current.endDate &&
+        (!dayCount || String(dayCount) === current.days)
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        startDate,
+        endDate: normalizedEndDate,
+        days: dayCount ? String(dayCount) : current.days,
+      };
+    });
+  }, [state.nights]);
 
   async function refreshQueries(groupId?: string) {
     await qc.invalidateQueries({ queryKey: ["route-groups"] });
@@ -496,6 +546,10 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
       const resolvedDays = parsePositiveInt(state.days, 365);
       const resolvedStartDate = state.startDate || todayIso();
       const resolvedEndDate = state.endDate || addDaysIso(resolvedStartDate, resolvedDays - 1);
+      const maxDepartDate = latestKayakDepartDate(maxOffsetDays(state));
+      if (resolvedStartDate > maxDepartDate || resolvedEndDate > maxDepartDate) {
+        throw new Error(`Travel window must end by ${maxDepartDate} for the current trip length.`);
+      }
       const resolvedDayCount = inclusiveDayCount(resolvedStartDate, resolvedEndDate) ?? resolvedDays;
       const maxLegDurationHours = Number.parseInt(state.maxLegDurationHours, 10);
       const maxLegDurationMinutes =
@@ -632,6 +686,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                 label="Nights at destination"
                 value={state.nights}
                 onChange={(nights) => setState((current) => ({ ...current, nights }))}
+                max={364}
               />
             </div>
           </RoutePanel>
@@ -710,11 +765,13 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
               setState((current) => {
                 const parsedDays = parsePositiveInt(days, 1);
                 const startDate = current.startDate || todayIso();
+                const maxDate = latestKayakDepartDate(maxOffsetDays(current));
+                const endDate = addDaysIso(startDate, Math.min(parsedDays, 730) - 1);
                 return {
                   ...current,
                   days,
                   startDate,
-                  endDate: addDaysIso(startDate, Math.min(parsedDays, 730) - 1),
+                  endDate: endDate > maxDate ? maxDate : endDate,
                 };
               })
             }
@@ -726,6 +783,8 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
               <TextInput
                 type="date"
                 value={state.startDate}
+                min={todayIso()}
+                max={latestDepartDate}
                 onChange={(e) =>
                   setState((current) => {
                     const startDate = e.target.value;
@@ -733,14 +792,17 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                       return { ...current, startDate: "", endDate: "" };
                     }
                     const parsedDays = parsePositiveInt(current.days, 1);
-                    const endDate = current.endDate && current.endDate >= startDate
+                    const maxDate = latestKayakDepartDate(maxOffsetDays(current));
+                    const boundedStartDate = startDate > maxDate ? maxDate : startDate;
+                    const endDate = current.endDate && current.endDate >= boundedStartDate
                       ? current.endDate
-                      : addDaysIso(startDate, parsedDays - 1);
-                    const dayCount = inclusiveDayCount(startDate, endDate);
+                      : addDaysIso(boundedStartDate, parsedDays - 1);
+                    const boundedEndDate = endDate > maxDate ? maxDate : endDate;
+                    const dayCount = inclusiveDayCount(boundedStartDate, boundedEndDate);
                     return {
                       ...current,
-                      startDate,
-                      endDate,
+                      startDate: boundedStartDate,
+                      endDate: boundedEndDate,
                       days: dayCount ? String(Math.min(dayCount, 730)) : current.days,
                     };
                   })
@@ -752,6 +814,8 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
               <TextInput
                 type="date"
                 value={state.endDate}
+                min={state.startDate || todayIso()}
+                max={latestDepartDate}
                 onChange={(e) =>
                   setState((current) => {
                     const endDate = e.target.value;
@@ -759,11 +823,13 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                       return { ...current, endDate: "" };
                     }
                     const startDate = current.startDate || todayIso();
-                    const dayCount = inclusiveDayCount(startDate, endDate);
+                    const maxDate = latestKayakDepartDate(maxOffsetDays(current));
+                    const boundedEndDate = endDate > maxDate ? maxDate : endDate;
+                    const dayCount = inclusiveDayCount(startDate, boundedEndDate);
                     return {
                       ...current,
                       startDate,
-                      endDate,
+                      endDate: boundedEndDate,
                       days: dayCount ? String(Math.min(dayCount, 730)) : current.days,
                     };
                   })
