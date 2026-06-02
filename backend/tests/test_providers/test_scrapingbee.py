@@ -615,3 +615,265 @@ async def test_multi_city_diagnostic_tries_next_airline_facet_when_first_price_i
     assert [result.price for result in results] == [950]
     assert diagnostics.raw_offers_found == 1
     assert diagnostics.eligible_offers_found == 1
+
+
+@pytest.mark.asyncio
+async def test_round_trip_diagnostic_logs_result_diagnostics(monkeypatch) -> None:
+    provider = make_provider(REALISTIC_SCRAPINGBEE_KEY)
+    rendered = {
+        "evaluate_results": [
+            json.dumps(
+                {
+                    "c": [],
+                    "f": {
+                        "s": "Airline A",
+                        "o": [
+                            {"n": "Airline A", "p": 700},
+                            {"n": "Airline B", "p": 760},
+                        ],
+                    },
+                }
+            )
+        ]
+    }
+
+    result = ProviderResult(
+        price=700,
+        currency="USD",
+        airline="Airline A",
+        deep_link="https://example.com/a",
+        raw_data={
+            "legs": [
+                {"airline": "Airline A", "route_text": "Airline A"},
+                {"airline": "Airline A", "route_text": "Airline A"},
+            ],
+            "leg_stops": [1, 1],
+        },
+    )
+
+    async def fake_render_results_attempt(**kwargs):
+        return rendered, {}, [result], 1, 1
+
+    provider._render_results_attempt = fake_render_results_attempt
+
+    captured: list[tuple[str, dict[str, object]]] = []
+
+    def fake_info(event, **kwargs):
+        captured.append((event, kwargs))
+
+    monkeypatch.setattr("app.providers.scrapingbee.log.info", fake_info)
+
+    target_url = "https://www.kayak.com/flights/DEN-MLA/2027-02-20/2027-03-01"
+    await provider._search_rendered_itinerary_diagnostic(
+        trip_type="round_trip",
+        target_url=target_url,
+        requested_market="us",
+        requested_currency="USD",
+        market_country_code="us",
+        max_stops=1,
+        same_airline_only=True,
+        minimum_leg_count=2,
+    )
+
+    events = [kwargs for event, kwargs in captured if event == "scrapingbee_results"]
+    assert len(events) == 1
+    fields = events[0]
+    assert fields["trip_type"] == "round_trip"
+    assert fields["target_url"] == target_url
+    assert fields["result_reason"] == "success"
+    assert fields["raw_offers_found"] == 1
+    assert fields["eligible_offers_found"] == 1
+    assert fields["selected_facet"] == "Airline A"
+    assert fields["facet_option_count"] == 2
+    # The diagnostic log must never carry the API key in any field.
+    assert REALISTIC_SCRAPINGBEE_KEY not in json.dumps(fields)
+
+
+# ---------------------------------------------------------------------------
+# Baseline-locking tests (Stage 2): pin current behavior of pure helpers
+# before any scraper logic change. These are characterization tests — if one
+# fails after an intended change, decide deliberately whether the new behavior
+# is correct, do not "fix" the test reflexively.
+# ---------------------------------------------------------------------------
+
+
+def _round_trip_result(price: float, leg_stops: list[int], airline: str = "Air Canada") -> ProviderResult:
+    return ProviderResult(
+        price=price,
+        currency="USD",
+        airline=airline,
+        deep_link="https://example.com/x",
+        raw_data={
+            "legs": [
+                {"airline": airline, "route_text": airline}
+                for _ in leg_stops
+            ],
+            "leg_stops": list(leg_stops),
+        },
+    )
+
+
+def test_filter_by_stops_rejects_result_when_any_leg_exceeds_limit() -> None:
+    """max_stops is per leg: a 0/2 itinerary must be rejected at max_stops=1
+    even though the outbound leg is fine."""
+    provider = make_provider()
+    results = [
+        _round_trip_result(700, [1, 1]),   # both legs within limit -> keep
+        _round_trip_result(650, [0, 2]),   # return leg has 2 stops -> drop
+        _round_trip_result(680, [2, 0]),   # outbound leg has 2 stops -> drop
+    ]
+
+    filtered = provider._filter_results_by_stops(results, max_stops=1)
+
+    assert [r.price for r in filtered] == [700]
+
+
+def test_filter_by_stops_nonstop_only_rejects_any_stop() -> None:
+    provider = make_provider()
+    results = [
+        _round_trip_result(700, [0, 0]),
+        _round_trip_result(650, [0, 1]),
+    ]
+
+    filtered = provider._filter_results_by_stops(results, max_stops=0)
+
+    assert [r.price for r in filtered] == [700]
+
+
+def test_filter_by_stops_none_limit_keeps_everything() -> None:
+    provider = make_provider()
+    results = [
+        _round_trip_result(700, [0, 0]),
+        _round_trip_result(650, [3, 4]),
+    ]
+
+    filtered = provider._filter_results_by_stops(results, max_stops=None)
+
+    assert {r.price for r in filtered} == {700, 650}
+
+
+def test_normalize_rejects_non_flight_transport_card() -> None:
+    """A leg that is a train/bus must not be normalized into a flight result."""
+    provider = make_provider()
+    results = provider._normalize_rendered_cards(
+        {
+            "cards": [
+                {
+                    "text": "Deutsche Bahn $120",
+                    "price_text": "$120",
+                    "airline_text": "Deutsche Bahn",
+                    "legs": [
+                        {"airline": "Deutsche Bahn", "route_text": "Train to airport", "duration_text": "2h"},
+                        {"airline": "Deutsche Bahn", "route_text": "Train", "duration_text": "2h"},
+                    ],
+                },
+                {
+                    "text": "Lufthansa $480",
+                    "price_text": "$480",
+                    "airline_text": "Lufthansa",
+                    "legs": [
+                        {"airline": "Lufthansa", "route_text": "Lufthansa", "duration_text": "10h", "stops_text": "1 stop"},
+                        {"airline": "Lufthansa", "route_text": "Lufthansa", "duration_text": "11h", "stops_text": "1 stop"},
+                    ],
+                },
+            ]
+        },
+        currency="USD",
+        deep_link="https://www.kayak.com/flights/FRA-JFK/2027-03-12/2027-03-20",
+        trip_type="round_trip",
+        market_country_code="us",
+        expected_leg_count=2,
+    )
+
+    assert [r.airline for r in results] == ["Lufthansa"]
+
+
+def test_should_probe_alternate_facets_when_price_clearly_above_floor() -> None:
+    """Stale-facet guard: a result >=20% AND >=$150 above the cheapest facet
+    floor should trigger probing other airline facets."""
+    provider = make_provider()
+    rendered = {
+        "evaluate_results": [
+            json.dumps({"c": [], "f": {"s": "A", "o": [{"n": "A", "p": 900}, {"n": "B", "p": 950}]}})
+        ]
+    }
+    eligible = [_round_trip_result(1200, [1, 1])]  # 1200 >= 900*1.2 (1080) and >= 900+150 (1050)
+
+    assert provider._should_probe_alternate_airline_facets(
+        rendered=rendered,
+        eligible_results=eligible,
+        facet_option_count=2,
+    ) is True
+
+
+def test_should_not_probe_alternate_facets_when_price_near_floor() -> None:
+    provider = make_provider()
+    rendered = {
+        "evaluate_results": [
+            json.dumps({"c": [], "f": {"s": "A", "o": [{"n": "A", "p": 900}, {"n": "B", "p": 950}]}})
+        ]
+    }
+    eligible = [_round_trip_result(1000, [1, 1])]  # below both clearly-high thresholds, and < 1500
+
+    assert provider._should_probe_alternate_airline_facets(
+        rendered=rendered,
+        eligible_results=eligible,
+        facet_option_count=2,
+    ) is False
+
+
+def test_should_not_probe_alternate_facets_with_single_option() -> None:
+    provider = make_provider()
+    rendered = {
+        "evaluate_results": [
+            json.dumps({"c": [], "f": {"s": "A", "o": [{"n": "A", "p": 900}]}})
+        ]
+    }
+    eligible = [_round_trip_result(5000, [1, 1])]
+
+    assert provider._should_probe_alternate_airline_facets(
+        rendered=rendered,
+        eligible_results=eligible,
+        facet_option_count=1,
+    ) is False
+
+
+def test_extract_rendered_cards_payload_decodes_short_keys() -> None:
+    """The minified js_scenario emits short keys (c/f/s/n/m). The decoder must
+    map them back to the verbose structure the normalizer expects."""
+    provider = make_provider()
+    payload = provider._extract_rendered_cards_payload(
+        {
+            "evaluate_results": [
+                json.dumps(
+                    {
+                        "n": 7,
+                        "m": 3,
+                        "c": [
+                            {
+                                "t": "Air France $676",
+                                "p": "$676",
+                                "a": "Air France",
+                                "l": [
+                                    {"a": "Air France", "s": "1 stop", "d": "10h"},
+                                    {"a": "Air France", "s": "1 stop", "d": "11h"},
+                                ],
+                            }
+                        ],
+                        "s": {"c": "$676", "b": "$700", "q": "$900"},
+                        "f": {"s": "Air France", "o": [{"n": "Air France", "p": 676}]},
+                    }
+                )
+            ]
+        }
+    )
+
+    assert payload is not None
+    assert payload["card_count"] == 7
+    assert payload["captured_count"] == 3
+    assert len(payload["cards"]) == 1
+    assert payload["cards"][0]["price_text"] == "$676"
+    assert payload["cards"][0]["legs"][0]["airline"] == "Air France"
+    assert payload["summary"]["cheapest"] == "$676"
+    assert payload["facet"]["selected"] == "Air France"
+    assert payload["facet"]["options"][0]["name"] == "Air France"

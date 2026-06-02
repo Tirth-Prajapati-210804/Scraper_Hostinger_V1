@@ -1681,6 +1681,22 @@ class ScrapingBeeProvider:
         )
         diagnostics.raw_offers_found = raw_offers_found
         diagnostics.eligible_offers_found = len(eligible_results)
+        log.info(
+            "scrapingbee_results",
+            trip_type=trip_type,
+            target_url=target_url,
+            result_reason=result_reason,
+            raw_offers_found=raw_offers_found,
+            eligible_offers_found=len(eligible_results),
+            card_count=card_count,
+            captured_count=captured_count,
+            selected_facet=selected_facet,
+            facet_option_count=facet_option_count,
+            visible_results_found=visible_results_found,
+            summary_price_found=summary_price_found,
+            used_strong_retry=used_strong_retry,
+            used_alternate_facet=used_alternate_facet,
+        )
         return ProviderSearchOutcome(results=eligible_results, diagnostics=diagnostics)
 
     async def _search_multi_city_once(

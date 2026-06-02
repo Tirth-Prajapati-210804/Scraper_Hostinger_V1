@@ -14,3 +14,5 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/.vite/
 .claude/
+CLAUDE_HANDOFF_FULL_CONTEXT.txt
+memory/
