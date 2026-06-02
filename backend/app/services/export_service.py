@@ -33,6 +33,7 @@ _MULTI_CITY_HEADERS = [
     "Ending Date",
     "Dep Airport",
     "Arrival Airport",
+    "Return From",
     "Nights",
     "Airline",
     "Stop Result",
@@ -514,8 +515,17 @@ def _export_multi_city_route_group(
 
         for row_idx, depart_date in enumerate(all_dates, start=2):
             result = rows_by_date.get(depart_date)
-            itinerary = result.itinerary_data if result else {}
-            return_date = itinerary.get("return_date") if isinstance(itinerary, dict) else None
+            itinerary = result.itinerary_data if isinstance(result, object) and result else {}
+            if not isinstance(itinerary, dict):
+                itinerary = {}
+            return_date = itinerary.get("return_date")
+            # Return-leg origin: prefer the actual airport flown (e.g. FCO when the
+            # group searched the ROM metro code), else the searched return origin.
+            return_from = (
+                itinerary.get("actual_return_origin")
+                or itinerary.get("return_origin")
+                or (itinerary.get("inbound") or {}).get("origin")
+            )
 
             _set_date_cell(ws, row=row_idx, column=1, value=depart_date)
             if return_date:
@@ -524,19 +534,20 @@ def _export_multi_city_route_group(
                 ws.cell(row=row_idx, column=2, value=_MISSING_VALUE)
             ws.cell(row=row_idx, column=3, value=origin)
             ws.cell(row=row_idx, column=4, value=destination)
-            ws.cell(row=row_idx, column=5, value=route_group.nights)
+            ws.cell(row=row_idx, column=5, value=return_from or _MISSING_VALUE)
+            ws.cell(row=row_idx, column=6, value=route_group.nights)
             if result:
-                ws.cell(row=row_idx, column=6, value=result.airline)
-                ws.cell(row=row_idx, column=7, value=_safe_stop_label(result.stop_label, result.stops))
-                ws.cell(row=row_idx, column=8, value=_safe_duration_label(result))
-                ws.cell(row=row_idx, column=9, value=int(round(float(result.price))))
+                ws.cell(row=row_idx, column=7, value=result.airline)
+                ws.cell(row=row_idx, column=8, value=_safe_stop_label(result.stop_label, result.stops))
+                ws.cell(row=row_idx, column=9, value=_safe_duration_label(result))
+                ws.cell(row=row_idx, column=10, value=int(round(float(result.price))))
                 itinerary_prices_by_origin.setdefault(origin, []).append(float(result.price))
                 all_itinerary_prices.append(result)
             else:
-                ws.cell(row=row_idx, column=6, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=7, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=9, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=10, value=_MISSING_VALUE)
 
         _autosize_columns(ws)
 

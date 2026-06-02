@@ -208,7 +208,11 @@ export function TagInput({
                         ? "Add airport code"
                         : suggestion.kind === "country"
                           ? "Add country airports"
-                          : "Add city airports"}
+                          : suggestion.codes.length === 1 &&
+                              /^[A-Z]{3}$/.test(suggestion.codes[0]) &&
+                              suggestion.codes[0] !== suggestion.label.toUpperCase()
+                            ? "Metro city code — covers all airports"
+                            : "Add city airports"}
                   </div>
                 </div>
               <div className="text-xs font-medium text-slate-500">

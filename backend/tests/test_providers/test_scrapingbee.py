@@ -54,6 +54,14 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     )
     assert instructions[-1] == {"evaluate": "window.FH.extract()"}
 
+    # After unticking "Multiple airlines" (applyFacet), the Cheapest sort is
+    # re-asserted so the cheapest same-airline card is at the top before extract.
+    evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
+    assert "window.FH.cheapest()" in evals
+    assert evals.index("window.FH.applyFacet()") < evals.index("window.FH.cheapest()")
+    assert evals.index("window.FH.cheapest()") < evals.index("window.FH.extract()")
+    assert "f.cheap=" in helper_script
+
 
 def test_rendered_results_scenario_can_select_later_airline_facet() -> None:
     provider = make_provider()
