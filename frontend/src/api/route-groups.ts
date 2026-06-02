@@ -42,9 +42,10 @@ export async function getRouteGroupProgress(
   return res.data;
 }
 
-// Excel download — returns Blob
-export async function downloadExport(id: string): Promise<Blob> {
+// Excel download — returns Blob. Pass includeLinks to add a verification-link column.
+export async function downloadExport(id: string, includeLinks = false): Promise<Blob> {
   const res = await api.get(`/api/v1/route-groups/${id}/export`, {
+    params: includeLinks ? { include_links: true } : undefined,
     responseType: "blob",
     timeout: 120_000,
   });

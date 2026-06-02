@@ -7,6 +7,7 @@ export interface DailyPrice {
   price: number;
   currency: string;
   provider: string;
+  deep_link?: string | null;
   stops: number | null;
   stop_label?: string | null;
   duration_minutes: number | null;

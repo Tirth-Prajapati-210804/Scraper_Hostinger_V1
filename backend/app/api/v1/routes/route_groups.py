@@ -79,7 +79,12 @@ async def delete_group(group_id: uuid.UUID, session: _DB, current_user: _Auth) -
 
 
 @router.get("/{group_id}/export")
-async def export_group(group_id: uuid.UUID, session: _DB, current_user: _Auth) -> StreamingResponse:
+async def export_group(
+    group_id: uuid.UUID,
+    session: _DB,
+    current_user: _Auth,
+    include_links: bool = False,
+) -> StreamingResponse:
     group = await route_group_service.get_by_id(session, group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Route group not found")
@@ -89,7 +94,7 @@ async def export_group(group_id: uuid.UUID, session: _DB, current_user: _Auth) -
     )
     all_results = list(all_results_result.scalars().all())
 
-    excel_bytes = export_service.export_route_group(group, all_results)
+    excel_bytes = export_service.export_route_group(group, all_results, include_links=include_links)
     # Sanitize filename: strip dangerous chars, quotes, newlines, and limit length
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", group.name).strip("._") or "route-group"
     safe_name = safe_name.replace('"', "").replace("'", "")[:100]

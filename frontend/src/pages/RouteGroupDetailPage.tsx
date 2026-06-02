@@ -36,6 +36,8 @@ export function RouteGroupDetailPage() {
 
   const [editOpen, setEditOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [includeLinks, setIncludeLinks] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [confirmTrigger, setConfirmTrigger] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -123,9 +125,10 @@ export function RouteGroupDetailPage() {
     if (!group) return;
     setDownloading(true);
     try {
-      const blob = await downloadExport(group.id);
+      const blob = await downloadExport(group.id, includeLinks);
       saveBlobAsFile(blob, `${group.name.replace(/[^a-z0-9_-]/gi, "_")}.xlsx`);
       showToast("Excel downloaded", "success");
+      setDownloadOpen(false);
     } catch (err) {
       showToast(getErrorMessage(err, "Download failed"), "error");
     } finally {
@@ -189,7 +192,7 @@ export function RouteGroupDetailPage() {
               <RefreshCw className="h-4 w-4" />
               Trigger Scrape
             </Button>
-            <Button variant="primary" onClick={handleDownload} loading={downloading}>
+            <Button variant="primary" onClick={() => setDownloadOpen(true)}>
               <Download className="h-4 w-4" />
               Download Excel
             </Button>
@@ -400,6 +403,40 @@ export function RouteGroupDetailPage() {
 
         {editOpen ? (
           <RouteGroupForm open={editOpen} onClose={() => setEditOpen(false)} initial={group} />
+        ) : null}
+
+        {downloadOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="mx-4 w-full max-w-sm rounded-[24px] bg-white p-6 shadow-xl">
+              <h3 className="text-base font-semibold text-slate-900">Download Excel</h3>
+              <p className="mt-2 text-sm text-slate-500">
+                Export collected fares for <span className="font-medium">{group.name}</span>.
+              </p>
+              <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={includeLinks}
+                  onChange={(e) => setIncludeLinks(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                />
+                <span>
+                  Include verification links
+                  <span className="block text-xs text-slate-400">
+                    Adds a column with the Kayak link each fare was scraped from.
+                  </span>
+                </span>
+              </label>
+              <div className="mt-5 flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setDownloadOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={handleDownload} loading={downloading}>
+                  <Download className="h-4 w-4" />
+                  Download
+                </Button>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {confirmTrigger ? (

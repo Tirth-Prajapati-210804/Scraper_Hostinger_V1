@@ -210,6 +210,8 @@ def _export_dates(route_group: RouteGroup, fallback_dates: list[date]) -> list[d
 def export_route_group(
     route_group: RouteGroup,
     all_results: list[AllFlightResult],
+    *,
+    include_links: bool = False,
 ) -> bytes:
     wb = Workbook()
     wb.remove(wb.active)
@@ -223,7 +225,9 @@ def export_route_group(
         return output.read()
 
     if route_group.trip_type == "multi_city":
-        return _export_multi_city_route_group(wb, route_group, all_results)
+        return _export_multi_city_route_group(
+            wb, route_group, all_results, include_links=include_links
+        )
 
     # --------------------------------------------------
     # LOOKUPS
@@ -253,9 +257,11 @@ def export_route_group(
         o: o for o in route_group.origins
     }
 
+    main_headers = list(_MAIN_HEADERS) + (["Verification Link"] if include_links else [])
+
     for origin, sheet_name in sheet_name_map.items():
         ws = wb.create_sheet(title=_safe_sheet_title(wb, sheet_name, fallback=origin))
-        _write_header_row(ws, _MAIN_HEADERS)
+        _write_header_row(ws, main_headers)
 
         for row_idx, d in enumerate(all_dates, start=2):
             result = cheapest_by_origin_date.get((origin, d))
@@ -286,11 +292,15 @@ def export_route_group(
                     column=8,
                     value=int(round(float(result.price))),
                 )
+                if include_links:
+                    ws.cell(row=row_idx, column=9, value=result.deep_link or _MISSING_VALUE)
             else:
                 ws.cell(row=row_idx, column=5, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=6, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=7, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
+                if include_links:
+                    ws.cell(row=row_idx, column=9, value=_MISSING_VALUE)
 
         _autosize_columns(ws)
 
@@ -469,6 +479,8 @@ def _export_multi_city_route_group(
     wb: Workbook,
     route_group: RouteGroup,
     all_results: list[AllFlightResult],
+    *,
+    include_links: bool = False,
 ) -> bytes:
     itinerary_rows = [r for r in all_results if r.itinerary_data]
     if not itinerary_rows:
@@ -507,9 +519,13 @@ def _export_multi_city_route_group(
 
         return _safe_sheet_title(wb, base_name, fallback=f"{origin}-{destination}")
 
+    headers = list(_MULTI_CITY_HEADERS)
+    if include_links:
+        headers = headers + ["Verification Link"]
+
     for (origin, destination), rows in sorted(rows_by_route.items()):
         ws = wb.create_sheet(title=build_sheet_name(origin, destination))
-        _write_header_row(ws, _MULTI_CITY_HEADERS)
+        _write_header_row(ws, headers)
 
         rows_by_date = {row.depart_date: row for row in rows}
 
@@ -541,6 +557,8 @@ def _export_multi_city_route_group(
                 ws.cell(row=row_idx, column=8, value=_safe_stop_label(result.stop_label, result.stops))
                 ws.cell(row=row_idx, column=9, value=_safe_duration_label(result))
                 ws.cell(row=row_idx, column=10, value=int(round(float(result.price))))
+                if include_links:
+                    ws.cell(row=row_idx, column=11, value=result.deep_link or _MISSING_VALUE)
                 itinerary_prices_by_origin.setdefault(origin, []).append(float(result.price))
                 all_itinerary_prices.append(result)
             else:
@@ -548,6 +566,8 @@ def _export_multi_city_route_group(
                 ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=9, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=10, value=_MISSING_VALUE)
+                if include_links:
+                    ws.cell(row=row_idx, column=11, value=_MISSING_VALUE)
 
         _autosize_columns(ws)
 

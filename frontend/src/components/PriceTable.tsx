@@ -20,7 +20,7 @@ const BASE_COLUMNS: Column[] = [
   { key: "stops", label: "Stops" },
   { key: "duration_minutes", label: "Duration" },
   { key: "price", label: "Price", align: "right" },
-  { key: "provider", label: "Provider" },
+  { key: "deep_link", label: "Link" },
   { key: "scraped_at", label: "Freshness" },
 ];
 
@@ -273,7 +273,20 @@ export function PriceTable({
                     {Math.round(price.price).toLocaleString()}{" "}
                     <span className="text-xs text-slate-400">{groupCurrency ?? price.currency}</span>
                   </td>
-                  <td className="whitespace-nowrap px-6 py-3 capitalize text-slate-500">{price.provider}</td>
+                  <td className="whitespace-nowrap px-6 py-3 text-slate-500">
+                    {price.deep_link ? (
+                      <a
+                        href={price.deep_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-medium text-brand-600 underline-offset-2 hover:underline"
+                      >
+                        Open
+                      </a>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
                   <td className="whitespace-nowrap px-6 py-3 text-slate-400">
                     <div className="font-medium text-slate-600">{formatFreshnessLabel(price.scraped_at)}</div>
                   </td>
