@@ -131,6 +131,14 @@ _MAX_AIRLINE_FACET_ATTEMPTS = 4
 _RESULT_PRICE_SELECTOR = ".nrc6-price-section .e2GB-price-text"
 _SAME_AIRLINE_INITIAL_WAIT_MS = 5_000
 _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
+# ScrapingBee's internal render budget must stay BELOW the httpx client timeout so
+# a render that legitimately uses most of its budget still returns (with proxy /
+# browser-startup / response-transfer overhead) before the client gives up.
+# Equal budgets caused every slow Kayak page to fail as "ScrapingBee request timed
+# out" at ~the client timeout instead of returning an (inspectable) payload.
+_RENDER_TIMEOUT_HEADROOM_SECONDS = 35
+_MIN_RENDER_TIMEOUT_MS = 20_000
+_MAX_RENDER_TIMEOUT_MS = 140_000
 
 
 def _clean_text(value: object) -> str:
@@ -309,6 +317,17 @@ class ScrapingBeeProvider:
             return requested
         return _CURRENCY_BY_COUNTRY.get(market_country_code, "USD")
 
+    def _render_budget_ms(self) -> int:
+        """ScrapingBee render timeout, kept below the httpx client timeout.
+
+        httpx waits ``self._timeout`` seconds for the whole round-trip. ScrapingBee
+        needs part of that for proxy connection, browser startup and shipping the
+        JSON back, so its *render* budget must leave headroom — otherwise a render
+        that uses its full budget returns after httpx has already aborted.
+        """
+        budget_ms = (self._timeout - _RENDER_TIMEOUT_HEADROOM_SECONDS) * 1000
+        return max(_MIN_RENDER_TIMEOUT_MS, min(budget_ms, _MAX_RENDER_TIMEOUT_MS))
+
     def _base_request_params(
         self,
         target_url: str,
@@ -322,7 +341,7 @@ class ScrapingBeeProvider:
             "block_resources": "False",
             "block_ads": "True",
             "device": "desktop",
-            "timeout": min(self._timeout * 1000, 140_000),
+            "timeout": self._render_budget_ms(),
             "wait": 0,
             "wait_browser": "load",
             "window_width": 1600,
@@ -409,8 +428,19 @@ class ScrapingBeeProvider:
                     params=params,
                 )
             except httpx.TimeoutException as exc:
+                log.warning(
+                    "scrapingbee_request_timeout",
+                    target_url=target_url,
+                    client_timeout_s=self._timeout,
+                    render_budget_ms=self._render_budget_ms(),
+                )
                 raise RuntimeError("ScrapingBee request timed out.") from exc
             except httpx.HTTPError as exc:
+                log.warning(
+                    "scrapingbee_request_failed",
+                    target_url=target_url,
+                    error_type=type(exc).__name__,
+                )
                 raise RuntimeError("ScrapingBee request failed.") from exc
 
         self._raise_for_status(response)

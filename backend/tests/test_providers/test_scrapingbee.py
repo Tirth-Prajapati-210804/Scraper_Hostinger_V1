@@ -918,3 +918,30 @@ def test_render_failure_snapshot_detects_selector_presence_and_block() -> None:
     assert big_body not in serialized
     assert snap3["body_length"] == 50000
     assert REALISTIC_SCRAPINGBEE_KEY not in serialized
+
+
+def test_render_budget_stays_below_client_timeout() -> None:
+    """The ScrapingBee render budget must always leave headroom under the httpx
+    client timeout, so a slow-but-valid render returns before httpx aborts."""
+    # Production value.
+    provider = ScrapingBeeProvider(api_key="k", timeout=120)
+    budget_ms = provider._render_budget_ms()
+    assert budget_ms == 85_000  # (120 - 35) * 1000
+    assert budget_ms < provider._timeout * 1000  # strictly below client timeout
+    # Headroom is at least 30s.
+    assert provider._timeout * 1000 - budget_ms >= 30_000
+
+    # Old default still safe.
+    assert ScrapingBeeProvider(api_key="k", timeout=90)._render_budget_ms() == 55_000
+
+    # Never exceeds ScrapingBee's hard cap even with a very large client timeout.
+    assert ScrapingBeeProvider(api_key="k", timeout=600)._render_budget_ms() == 140_000
+
+    # Never collapses below a sane floor for tiny timeouts.
+    assert ScrapingBeeProvider(api_key="k", timeout=10)._render_budget_ms() == 20_000
+
+
+def test_base_request_params_uses_decoupled_render_budget() -> None:
+    provider = ScrapingBeeProvider(api_key="k", timeout=120)
+    params = provider._base_request_params("https://www.kayak.com/flights/MIA-MLA/2026-06-05")
+    assert params["timeout"] == 85_000
