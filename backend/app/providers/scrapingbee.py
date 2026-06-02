@@ -461,6 +461,15 @@ class ScrapingBeeProvider:
 
         return data
 
+    def _kayak_query(self, max_stops: int | None) -> str:
+        """Kayak results query. The per-leg stop filter is carried in the URL
+        (fs=stops=...), like Kayak's own UI, e.g. ?sort=price_a&fs=stops=0,1.
+        This removes the need for the scenario to click the stop facet."""
+        query = "?sort=price_a"
+        if max_stops is not None and max_stops <= 1:
+            query += f"&fs=stops={'0' if max_stops <= 0 else '0,1'}"
+        return query
+
     def _build_search_url(
         self,
         *,
@@ -470,17 +479,19 @@ class ScrapingBeeProvider:
         return_date: date | None = None,
         market: str | None = None,
         currency: str = "USD",
+        max_stops: int | None = None,
     ) -> str:
         route = f"{origin.upper()}-{destination.upper()}"
         base_url = self._kayak_site_base(currency, market)
+        query = self._kayak_query(max_stops)
         if return_date:
             return (
                 f"{base_url}/flights/{route}/"
-                f"{depart_date.isoformat()}/{return_date.isoformat()}?sort=price_a"
+                f"{depart_date.isoformat()}/{return_date.isoformat()}{query}"
             )
         return (
             f"{base_url}/flights/{route}/"
-            f"{depart_date.isoformat()}?sort=price_a"
+            f"{depart_date.isoformat()}{query}"
         )
 
     def _build_multi_city_results_url(
@@ -494,6 +505,7 @@ class ScrapingBeeProvider:
         inbound_date: date,
         market: str | None = None,
         currency: str = "USD",
+        max_stops: int | None = None,
     ) -> str:
         base_url = self._kayak_site_base(currency, market)
         return (
@@ -501,7 +513,7 @@ class ScrapingBeeProvider:
             f"{outbound_origin.upper()}-{outbound_destination.upper()}/"
             f"{outbound_date.isoformat()}/"
             f"{inbound_origin.upper()}-{inbound_destination.upper()}/"
-            f"{inbound_date.isoformat()}?sort=price_a"
+            f"{inbound_date.isoformat()}{self._kayak_query(max_stops)}"
         )
 
     def _build_results_scenario(
@@ -517,7 +529,6 @@ class ScrapingBeeProvider:
         del same_airline_only
         card_limit = _DEEP_MULTI_CITY_CARD_LIMIT if deep else _FAST_MULTI_CITY_CARD_LIMIT
         facet_index = max(0, min(int(airline_facet_index), _MAX_AIRLINE_FACET_ATTEMPTS - 1))
-        stop_limit = str(max_stops) if max_stops is not None and max_stops <= 1 else "null"
         effective_wait_ms = (
             same_airline_wait_ms
             if same_airline_wait_ms is not None
@@ -525,15 +536,14 @@ class ScrapingBeeProvider:
         )
 
         helper_script = (
-            "(()=>{const l=__LIMIT__,g=__MIN_LEGS__,p='__PRICE_SELECTOR__',j='ol.hJSA-list > li',c='div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]',b='button,a,[role=\"button\"],div,span',f=window.FH||(window.FH={});"
+            "(()=>{const l=__LIMIT__,g=__MIN_LEGS__,p='__PRICE_SELECTOR__',j='ol.hJSA-list > li',q='label,button,[role=\"button\"],li',d='section,aside,div',c='div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]',b='button,a,[role=\"button\"],div,span',f=window.FH||(window.FH={});"
             "f.t=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
             "f.n=v=>(v||'').toString().replace(/\\u00a0/g,' ').split(/\\n+/).map(f.t).filter(Boolean);"
             "f.v=e=>{if(!e)return 0;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none'};"
             "f.p=v=>{const m=f.t(v).replace(/,/g,'').match(/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*([0-9]+(?:\\.[0-9]+)?)/i);return m?Number(m[1]):null};"
-            "f.o=()=>Array.from(document.querySelectorAll('section,aside,div')).filter(e=>f.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;"
-            "f.x=()=>{const r=f.o();if(!r)return[];const s=new Map();for(const e of Array.from(r.querySelectorAll('label,button,[role=\"button\"],li,div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),p=f.p(t);if(p===null)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n))continue;const k=n.toLowerCase(),u=s.get(k),q=e.closest('label,button,[role=\"button\"],li')||e;if(!u||p<u.p)s.set(k,{n,p,e:q})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
-            "f.w=x=>{if(x==null||x>1)return 0;const r=Array.from(document.querySelectorAll('section,aside,div')).filter(e=>f.v(e)&&/(^|\\n)\\s*Stops\\s*($|\\n)/i.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0];if(!r)return 0;let n=0,m=x<1?/^nonstop\\b/i:/^(nonstop|1 stop)\\b/i;for(const e of Array.from(r.querySelectorAll('label,button,[role=\"button\"],li'))){const t=f.t(e.innerText),h=e.querySelector('input[type=\"checkbox\"]');if(!t||h?.disabled)continue;const y=m.test(t);if((h&&h.checked&&!y)||(y&&(!h||!h.checked))){e.click();n++}}return n};"
-            "f.a=()=>{const o=f.x();f.g={s:'',o:o.map(v=>({n:v.n,p:v.p}))};if(!o.length)return 0;const t=o[__FACET_INDEX__]||o[0],h=t.e.querySelector('input[type=\"checkbox\"]');f.g.s=t.n;if(h&&!h.checked){h.click();return 1}t.e.click();return 1};"
+            "f.o=()=>Array.from(document.querySelectorAll(d)).filter(e=>f.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;"
+            "f.x=()=>{const r=f.o();if(!r)return[];const s=new Map();for(const e of Array.from(r.querySelectorAll(q+',div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),p=f.p(t);if(p===null)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n))continue;const k=n.toLowerCase(),u=s.get(k),z=e.closest(q)||e;if(!u||p<u.p)s.set(k,{n,p,e:z})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
+            "f.a=()=>{const o=f.x();f.g={s:o.length?(o[__FACET_INDEX__]||o[0]).n:'',o:o.map(v=>({n:v.n,p:v.p}))};const r=f.o();if(!r)return 0;let n=0;for(const e of Array.from(r.querySelectorAll(q))){if(!f.v(e))continue;if(/(multiple|mixed|various) airlines/i.test(f.t(e.innerText))){const h=e.querySelector('input[type=\"checkbox\"]');if(!h||h.checked){(h||e).click();n++}}}return n};"
             "f.l=()=>Array.from(document.querySelectorAll('[role=\"progressbar\"],progress,[aria-busy=\"true\"],[class*=\"loading\"],[class*=\"progress\"]')).some(f.v);"
             "f.empty=()=>!f.r().length&&/no result|no flight|no match|couldn.t f|adjust your f/i.test(document.body?.innerText||'');"
             "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll(j).length>=g).filter((n,i,a)=>!a.some((o,k)=>k!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll(j).length>=g));"
@@ -547,18 +557,14 @@ class ScrapingBeeProvider:
             .replace("__PRICE_SELECTOR__", _RESULT_PRICE_SELECTOR)
         )
 
+        # Stops are applied via the URL (fs=stops=...). The scenario only needs to
+        # remove the "Multiple airlines" mixed-carrier bucket (applyFacet) so the
+        # cheapest SAME-airline card sorts to the top under sort=price_a.
         instructions: list[dict[str, object]] = [
             {"evaluate": helper_script},
             {"wait_for": _RESULT_PRICE_SELECTOR},
             {"wait": effective_wait_ms},
         ]
-        if max_stops is not None and max_stops <= 1:
-            instructions.extend(
-                [
-                    {"evaluate": f"window.FH.w({stop_limit})"},
-                    {"wait": 700},
-                ]
-            )
         instructions.extend(
             [
                 {"evaluate": "window.FH.applyFacet()"},
@@ -1929,6 +1935,7 @@ class ScrapingBeeProvider:
             inbound_date=inbound_date,
             market=market,
             currency=currency,
+            max_stops=max_stops,
         )
 
         used_deep_pass = True
@@ -2155,6 +2162,7 @@ class ScrapingBeeProvider:
             return_date=return_date,
             market=market,
             currency=currency,
+            max_stops=max_stops,
         )
         return await self._search_rendered_itinerary_diagnostic(
             trip_type="round_trip",
