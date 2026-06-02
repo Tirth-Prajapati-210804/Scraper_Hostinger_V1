@@ -13,6 +13,56 @@ from unicodedata import normalize
 _IATA_RE = re.compile(r"^[A-Z0-9]{2,4}$")
 _DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "location_catalog.json"
 
+# Standard IATA metropolitan area codes. Kayak searches one of these as
+# "<City> - All airports", which finds the cheapest fare across every airport in
+# the metro. Searching an individual airport instead (e.g. CIA for Rome) can hit
+# an airport with little/no inventory and return nothing. So for these cities we
+# search the metro code, not the individual airports. Keyed by the catalog
+# city label (casefolded). Only metros with a real IATA metro code are listed.
+# Kayak-verified metro/city codes only (source: docs/kayak_metro_city_codes_seed.csv,
+# rows whose source_confidence starts with "kayak_verified"). Searching one of
+# these makes Kayak look across ALL airports in the metro and return the cheapest
+# fare, instead of fragmenting into a single low-inventory airport (the CIA-vs-ROM
+# problem). Codes that are only IATA-confident but NOT yet live-verified on Kayak
+# (OSA, SEL, BJS, SHA, MOW, RIO, SAO, STO, TCI) are intentionally NOT active here —
+# using a code Kayak doesn't accept would create a new dead route. Add them once
+# live-verified.
+_CITY_METRO_CODES: dict[str, str] = {
+    # Europe
+    "rome": "ROM",            # FCO, CIA
+    "london": "LON",          # LHR, LGW, LCY, LTN, STN, SEN
+    "paris": "PAR",           # CDG, ORY, BVA
+    "milan": "MIL",           # MXP, LIN
+    # North America
+    "new york": "NYC",        # JFK, LGA, EWR
+    "washington": "WAS",      # DCA, IAD, BWI
+    "washington, d.c.": "WAS",
+    "washington dc": "WAS",
+    "chicago": "CHI",         # ORD, MDW
+    "toronto": "YTO",         # YYZ, YTZ
+    "houston": "HO1",         # IAH, HOU (Kayak-specific code, not IATA)
+    # South America
+    "buenos aires": "BUE",    # EZE, AEP
+    # Asia
+    "tokyo": "TYO",           # HND, NRT
+}
+
+
+def _metro_code_for_label(label: object) -> str | None:
+    key = _ascii_fold(" ".join(str(label or "").strip().split()).casefold())
+    return _CITY_METRO_CODES.get(key)
+
+
+# Metro cities the bundled catalog is missing entirely, so a user searching the
+# city name gets no useful result. Added as city entries (with kayak-verified
+# member airports) so they resolve to the metro code via _codes_for_entry. Only
+# kayak-verified metros belong here. Houston is missing as a metro grouping in the
+# bundled catalog, so it is added explicitly.
+_SUPPLEMENTAL_METRO_CITIES: list[dict[str, object]] = [
+    {"label": "Houston", "kind": "city", "codes": ["IAH", "HOU"],
+     "aliases": ["Houston", "HO1", "IAH", "HOU"]},
+]
+
 
 def _ascii_fold(value: str) -> str:
     normalized = normalize("NFKD", value)
@@ -34,8 +84,9 @@ def _load_catalog() -> list[dict[str, object]]:
         return []
     payload = json.loads(_DATA_PATH.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
-        return []
-    return [item for item in payload if isinstance(item, dict)]
+        return list(_SUPPLEMENTAL_METRO_CITIES)
+    catalog = [item for item in payload if isinstance(item, dict)]
+    return catalog + list(_SUPPLEMENTAL_METRO_CITIES)
 
 
 def _catalog_by_alias() -> dict[str, list[dict[str, object]]]:
@@ -62,7 +113,17 @@ def _codes_for_entry(entry: dict[str, object]) -> list[str]:
     raw_codes = entry.get("codes")
     if not isinstance(raw_codes, list):
         return []
-    return list(dict.fromkeys(str(code).strip().upper() for code in raw_codes if str(code).strip()))
+    codes = list(dict.fromkeys(str(code).strip().upper() for code in raw_codes if str(code).strip()))
+    # For a city with a known (IATA-verified) metro code, search the metro code
+    # (all airports) instead of an individual airport, so we don't fragment into
+    # a single low-inventory airport (the CIA-vs-ROM problem). The metro code
+    # covers all airports on Kayak regardless of what this catalog happens to
+    # list, so we override even when only one airport is cataloged.
+    if str(entry.get("kind") or "").strip() == "city":
+        metro = _metro_code_for_label(entry.get("label"))
+        if metro:
+            return [metro]
+    return codes
 
 
 def _resolve_single(query: str) -> list[str]:

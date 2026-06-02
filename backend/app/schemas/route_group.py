@@ -20,8 +20,9 @@ def _normalize_iata_codes(v: object) -> list[str] | object:
         for code in codes:
             if not re.match(_IATA_PATTERN, code):
                 raise ValueError(
-                    f"'{code}' is not a valid IATA airport code. "
-                    "Codes must be 2-4 uppercase letters or digits (e.g. YVR, DPS, TYO)."
+                    f"'{code}' is not a valid Kayak location code. "
+                    "Use 2-4 uppercase letters or digits: a city code for all its "
+                    "airports (ROM, LON, NYC, TYO) or a single airport (JFK, FCO)."
                 )
         return codes
     return v

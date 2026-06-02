@@ -19,7 +19,7 @@ const IATA_RE = /^[A-Za-z0-9]{2,4}$/;
 export function TagInput({
   value,
   onChange,
-  placeholder = "e.g. YYZ",
+  placeholder = "e.g. ROM (all Rome airports), LON, NYC, or JFK",
   hint,
   className,
   hintClassName,
@@ -222,13 +222,14 @@ export function TagInput({
 
       {invalid ? (
         <p className="text-xs text-red-500">
-          Use a valid IATA code with 2 to 4 letters or digits, or choose a suggestion.
+          Enter a Kayak code (2-4 letters/digits). Tip: use a city code for all its
+          airports (Rome = ROM, London = LON, New York = NYC), or a single airport (FCO).
         </p>
       ) : (
         <p className={`text-[11px] text-slate-400 ${hintClassName ?? ""}`}>
           {loading
             ? "Searching locations..."
-            : hint ?? "Press Enter, comma, or Tab to add airports, or choose a suggestion."}
+            : hint ?? "Tip: city codes (ROM, LON, NYC, TYO) search all airports for the best fare. Press Enter, comma, or Tab to add."}
         </p>
       )}
     </div>
