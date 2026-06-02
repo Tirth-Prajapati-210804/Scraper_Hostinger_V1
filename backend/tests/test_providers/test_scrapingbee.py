@@ -877,3 +877,44 @@ def test_extract_rendered_cards_payload_decodes_short_keys() -> None:
     assert payload["summary"]["cheapest"] == "$676"
     assert payload["facet"]["selected"] == "Air France"
     assert payload["facet"]["options"][0]["name"] == "Air France"
+
+
+def test_render_failure_snapshot_detects_selector_presence_and_block() -> None:
+    """The failure snapshot must surface drift-vs-hydration signals without
+    leaking full HTML or secrets."""
+    provider = make_provider(REALISTIC_SCRAPINGBEE_KEY)
+
+    hydrated_but_drifted = {
+        "initial-status-code": 200,
+        "cost": 25,
+        "resolved-url": "https://www.kayak.com/flights/BOS-EDI/2026-07-01/2026-07-10",
+        "evaluate_results": ["{}"],
+        # Result containers present, but the price class is absent -> drift signal.
+        "body": "<html><title>Cheap Flights BOS to EDI | KAYAK</title>"
+                "<div class='nrc6'><ol class='hJSA-list'></ol></div>Airlines</html>",
+    }
+    snap = provider._render_failure_snapshot(hydrated_but_drifted)
+    assert snap["http_status"] == 200
+    assert snap["cost"] == 25
+    assert snap["title"] == "Cheap Flights BOS to EDI | KAYAK"
+    assert snap["markers"]["card_cls"] is True
+    assert snap["markers"]["leg_list_cls"] is True
+    assert snap["markers"]["airlines_facet"] is True
+    assert snap["markers"]["price_cls"] is False  # the drift fingerprint
+    assert snap["markers"]["captcha_or_block"] is False
+
+    blocked = {
+        "initial-status-code": 200,
+        "body": "<html><title>Robot Check</title>Please verify you are not a robot. CAPTCHA</html>",
+    }
+    snap2 = provider._render_failure_snapshot(blocked)
+    assert snap2["markers"]["captcha_or_block"] is True
+    assert snap2["markers"]["price_cls"] is False
+
+    # Safety: the snapshot must never carry the full body or any API key.
+    big_body = "x" * 50000
+    snap3 = provider._render_failure_snapshot({"body": big_body})
+    serialized = json.dumps(snap3)
+    assert big_body not in serialized
+    assert snap3["body_length"] == 50000
+    assert REALISTIC_SCRAPINGBEE_KEY not in serialized

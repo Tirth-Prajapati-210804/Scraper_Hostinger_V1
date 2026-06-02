@@ -843,6 +843,51 @@ class ScrapingBeeProvider:
             return False
         return any(_clean_text(summary.get(key)) for key in ("cheapest", "best"))
 
+    def _render_failure_snapshot(self, rendered: dict) -> dict[str, object]:
+        """Compact, secret-free signals explaining *why* a render produced no
+        cards, so we can tell selector drift from a page that never hydrated.
+
+        Never returns full HTML or any credential. The body is inspected only
+        for presence of known marker substrings and a short <title>.
+        """
+        body = rendered.get("body")
+        body_text = body if isinstance(body, str) else ""
+        body_len = len(body_text)
+
+        title = ""
+        match = re.search(r"(?is)<title[^>]*>(.*?)</title>", body_text)
+        if match:
+            title = _clean_text(match.group(1))[:120]
+
+        # Cheap substring checks — does the marker class even exist in the DOM?
+        # If the price selector class is absent while result containers exist,
+        # that points at selector drift rather than a non-hydrated page.
+        markers = {
+            "price_cls": "e2GB-price-text" in body_text,
+            "card_cls": "nrc6" in body_text,
+            "leg_list_cls": "hJSA-list" in body_text,
+            "airlines_facet": "Airlines" in body_text,
+            "captcha_or_block": any(
+                token in body_text.lower()
+                for token in ("captcha", "are you a robot", "access denied", "unusual traffic")
+            ),
+        }
+
+        snapshot: dict[str, object] = {
+            "http_status": rendered.get("initial-status-code") or rendered.get("status_code"),
+            "cost": rendered.get("cost"),
+            "resolved_url": rendered.get("resolved-url"),
+            "body_length": body_len,
+            "title": title,
+            "markers": markers,
+            "evaluate_results_count": (
+                len(rendered.get("evaluate_results"))
+                if isinstance(rendered.get("evaluate_results"), list)
+                else 0
+            ),
+        }
+        return snapshot
+
     def _multi_city_summary_prices(self, rendered: dict) -> dict[str, str]:
         payload = self._extract_rendered_cards_payload(rendered)
         if payload is None:
@@ -1655,6 +1700,12 @@ class ScrapingBeeProvider:
                 eligible_results = []
 
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            log.warning(
+                "scrapingbee_render_no_cards",
+                trip_type=trip_type,
+                target_url=target_url,
+                **self._render_failure_snapshot(rendered),
+            )
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
 
         selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
@@ -1868,6 +1919,12 @@ class ScrapingBeeProvider:
                 eligible_results = []
 
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            log.warning(
+                "scrapingbee_render_no_cards",
+                trip_type="multi_city",
+                target_url=target_url,
+                **self._render_failure_snapshot(rendered),
+            )
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
         self._log_multi_city_debug_snapshot(
             outbound_origin=outbound_origin,
