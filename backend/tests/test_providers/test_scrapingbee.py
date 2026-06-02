@@ -41,7 +41,6 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
     assert instructions[2] == {"wait": _SAME_AIRLINE_INITIAL_WAIT_MS}
     assert "f.applyFacet=f.a" in helper_script
-    assert "f.w=x=>" in helper_script
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
     assert "o[0]||o[0]" in helper_script
@@ -52,6 +51,13 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
         if isinstance(instruction, dict)
     )
     assert instructions[-1] == {"evaluate": "window.FH.extract()"}
+
+    # Workflow order: Cheapest sort is clicked BEFORE the airline facet, so the
+    # cheapest valid same-airline card lands at the top of the extracted window.
+    evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
+    assert "window.FH.cheapest()" in evals
+    assert evals.index("window.FH.cheapest()") < evals.index("window.FH.applyFacet()")
+    assert "f.cheap=" in helper_script
 
 
 def test_rendered_results_scenario_can_select_later_airline_facet() -> None:
@@ -68,18 +74,50 @@ def test_rendered_results_scenario_can_select_later_airline_facet() -> None:
     assert "o[2]||o[0]" in helper_script
 
 
-def test_rendered_results_scenario_can_apply_stop_prefilter() -> None:
+def test_stop_filter_is_carried_in_kayak_url() -> None:
+    """The stop filter is applied via the Kayak URL (fs=stops=...), like Kayak's
+    own UI, instead of clicking the stop facet in the scenario."""
     provider = make_provider()
 
-    scenario = provider._build_results_scenario(
-        deep=True,
-        same_airline_only=True,
-        minimum_leg_count=2,
+    # max_stops=1 -> allow nonstop + 1 stop.
+    url = provider._build_search_url(
+        origin="MIA",
+        destination="MLA",
+        depart_date=date(2026, 6, 5),
+        return_date=date(2026, 6, 18),
+        market="us",
+        currency="USD",
         max_stops=1,
     )
+    assert url.endswith("?sort=price_a&fs=stops=0,1")
 
-    instructions = scenario["instructions"]
-    assert {"evaluate": "window.FH.w(1)"} in instructions
+    # max_stops=0 -> nonstop only.
+    url0 = provider._build_search_url(
+        origin="MIA",
+        destination="MLA",
+        depart_date=date(2026, 6, 5),
+        return_date=date(2026, 6, 18),
+        max_stops=0,
+    )
+    assert url0.endswith("?sort=price_a&fs=stops=0")
+
+    # max_stops>=2 or None -> no stop filter in the URL.
+    url2 = provider._build_search_url(
+        origin="MIA",
+        destination="MLA",
+        depart_date=date(2026, 6, 5),
+        return_date=date(2026, 6, 18),
+        max_stops=2,
+    )
+    assert url2.endswith("?sort=price_a")
+    assert "fs=stops" not in url2
+
+    # The scenario no longer clicks the stop facet.
+    scenario = provider._build_results_scenario(
+        deep=True, same_airline_only=True, minimum_leg_count=2, max_stops=1
+    )
+    evals = [i.get("evaluate") for i in scenario["instructions"] if isinstance(i, dict)]
+    assert not any(e and "window.FH.w(" in e for e in evals)
 
 
 def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:
