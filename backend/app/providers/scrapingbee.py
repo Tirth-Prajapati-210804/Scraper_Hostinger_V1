@@ -36,6 +36,8 @@ _MONEY_RE = re.compile(r"(-?\d[\d,]*(?:\.\d+)?)")
 _HOURS_MINUTES_RE = re.compile(r"(?i)(\d+)\s*(?:hours|hour|hrs|hr|h)\s*(?:(\d+)\s*(?:minutes|minute|mins|min|m))?")
 _MINUTES_ONLY_RE = re.compile(r"(?i)(\d+)\s*(?:minutes|minute|mins|min|m)")
 _STOPS_RE = re.compile(r"(?i)\b(\d+)\s+stop(?:s)?\b")
+# Actual airport pair Kayak renders on a leg, e.g. "FCO-IAD" -> ("FCO", "IAD").
+_AIRPORT_PAIR_RE = re.compile(r"\b([A-Z]{3})\s*[-–—]\s*([A-Z]{3})\b")
 _CURRENCY_CODE_RE = re.compile(r"\b([A-Z]{3})\b")
 _KAYAK_HOST_BY_COUNTRY = {
     "au": "www.kayak.com.au",
@@ -519,7 +521,7 @@ class ScrapingBeeProvider:
         )
 
         helper_script = (
-            "(()=>{const l=__LIMIT__,g=__MIN_LEGS__,p='__PRICE_SELECTOR__',c='div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]',b='button,a,[role=\"button\"],div,span',f=window.FH||(window.FH={});"
+            "(()=>{const l=__LIMIT__,g=__MIN_LEGS__,p='__PRICE_SELECTOR__',j='ol.hJSA-list > li',c='div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]',b='button,a,[role=\"button\"],div,span',f=window.FH||(window.FH={});"
             "f.t=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
             "f.n=v=>(v||'').toString().replace(/\\u00a0/g,' ').split(/\\n+/).map(f.t).filter(Boolean);"
             "f.v=e=>{if(!e)return 0;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none'};"
@@ -529,9 +531,10 @@ class ScrapingBeeProvider:
             "f.w=x=>{if(x==null||x>1)return 0;const r=Array.from(document.querySelectorAll('section,aside,div')).filter(e=>f.v(e)&&/(^|\\n)\\s*Stops\\s*($|\\n)/i.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0];if(!r)return 0;let n=0,m=x<1?/^nonstop\\b/i:/^(nonstop|1 stop)\\b/i;for(const e of Array.from(r.querySelectorAll('label,button,[role=\"button\"],li'))){const t=f.t(e.innerText),h=e.querySelector('input[type=\"checkbox\"]');if(!t||h?.disabled)continue;const y=m.test(t);if((h&&h.checked&&!y)||(y&&(!h||!h.checked))){e.click();n++}}return n};"
             "f.a=()=>{const o=f.x();f.g={s:'',o:o.map(v=>({n:v.n,p:v.p}))};if(!o.length)return 0;const t=o[__FACET_INDEX__]||o[0],h=t.e.querySelector('input[type=\"checkbox\"]');f.g.s=t.n;if(h&&!h.checked){h.click();return 1}t.e.click();return 1};"
             "f.l=()=>Array.from(document.querySelectorAll('[role=\"progressbar\"],progress,[aria-busy=\"true\"],[class*=\"loading\"],[class*=\"progress\"]')).some(f.v);"
-            "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll('ol.hJSA-list > li').length>=g).filter((n,i,a)=>!a.some((o,j)=>j!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll('ol.hJSA-list > li').length>=g));"
+            "f.empty=()=>!f.r().length&&/no result|no flight|no match|couldn.t f|adjust your f/i.test(document.body?.innerText||'');"
+            "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll(j).length>=g).filter((n,i,a)=>!a.some((o,k)=>k!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll(j).length>=g));"
             "f.s=()=>{const z=Array.from(document.querySelectorAll(p)).map(n=>f.t(n.innerText)).filter(Boolean).slice(0,6).join('|'),m=(f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))).map(v=>`${v.n}:${v.p}`).join('|'),k=[f.l()?1:0,f.t(f.g?.s||''),z,m,f.r().length].join('||'),st=f.u||{k:'',h:0};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=f.l()?1:0;f.u=st;return !st.b&&(z||m)&&st.h>=3};"
-            "f.e=()=>{const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll('ol.hJSA-list > li')).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:f.t(f.g?.s||''),o:f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(f.u&&f.u.h>=3&&!f.u.b),sm:true})};f.applyFacet=f.a;f.settle=f.s;f.extract=f.e;return true})()"
+            "f.e=()=>{const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll(j)).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:f.t(f.g?.s||''),o:f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(f.u&&f.u.h>=3&&!f.u.b),np:f.empty(),sm:true})};f.applyFacet=f.a;f.settle=f.s;f.extract=f.e;return true})()"
         )
         helper_script = (
             helper_script.replace("__LIMIT__", str(card_limit))
@@ -860,6 +863,7 @@ class ScrapingBeeProvider:
                         ],
                     },
                     "settled": payload.get("e"),
+                    "no_results": payload.get("np"),
                     "same_airline_mode": payload.get("sm"),
                 }
         return None
@@ -872,6 +876,19 @@ class ScrapingBeeProvider:
         if not isinstance(summary, dict):
             return False
         return any(_clean_text(summary.get(key)) for key in ("cheapest", "best"))
+
+    def _rendered_payload_reports_no_results(self, rendered: dict) -> bool:
+        """True when Kayak explicitly rendered a 'no results' state for the route.
+
+        Distinguishes a legitimately empty route (small/unsupported airport,
+        beyond booking horizon) from a render that failed to hydrate, so empty
+        routes can be classified as no_results instead of burning credit as a
+        timeout.
+        """
+        payload = self._extract_rendered_cards_payload(rendered)
+        if payload is None:
+            return False
+        return bool(payload.get("no_results"))
 
     def _render_failure_snapshot(self, rendered: dict) -> dict[str, object]:
         """Compact, secret-free signals explaining *why* a render produced no
@@ -974,6 +991,58 @@ class ScrapingBeeProvider:
     def _cheapest_result_price(self, results: list[ProviderResult]) -> float | None:
         prices = [float(result.price) for result in results if result.price is not None]
         return min(prices) if prices else None
+
+    def _accuracy_audit(
+        self,
+        *,
+        rendered: dict,
+        summary_prices: dict[str, str],
+        eligible_results: list[ProviderResult],
+    ) -> dict[str, object]:
+        """Numbers for verifying the saved fare against Kayak's own prices.
+
+        - saved_price: cheapest same-airline fare we are about to keep.
+        - facet_floor: cheapest airline-facet price Kayak displayed.
+        - summary_cheapest: Kayak's headline "Cheapest" price (across all airlines).
+        - floor_gap / summary_gap: how far the saved fare sits above each, so a
+          systematic over-charge (scraper missed a cheaper same-airline option)
+          shows up directly in the logs without a manual browser check.
+        """
+        saved = self._cheapest_result_price(eligible_results)
+        facet_prices = self._facet_option_prices(rendered)
+        facet_floor = min(facet_prices) if facet_prices else None
+        summary_cheapest = self._summary_lowest_price(summary_prices)
+
+        def _gap(value: float | None, base: float | None) -> float | None:
+            if value is None or base is None or base <= 0:
+                return None
+            return round(value - base, 2)
+
+        return {
+            "saved_price": saved,
+            "facet_floor": facet_floor,
+            "summary_cheapest": summary_cheapest,
+            "floor_gap": _gap(saved, facet_floor),
+            "summary_gap": _gap(saved, summary_cheapest),
+        }
+
+    def _actual_route_label(self, eligible_results: list[ProviderResult]) -> str | None:
+        """The actual airports flown on the cheapest saved fare (e.g. 'FCO->IAD'),
+        so group logs reveal the real airport when a city code like ROM was searched."""
+        if not eligible_results:
+            return None
+        cheapest = min(eligible_results, key=lambda r: r.price)
+        raw = cheapest.raw_data if isinstance(cheapest.raw_data, dict) else {}
+        out_o = _clean_text(raw.get("actual_outbound_origin"))
+        out_d = _clean_text(raw.get("actual_outbound_destination"))
+        if not out_o or not out_d:
+            return None
+        label = f"{out_o}->{out_d}"
+        ret_o = _clean_text(raw.get("actual_return_origin"))
+        ret_d = _clean_text(raw.get("actual_return_destination"))
+        if ret_o and ret_d:
+            label += f" / {ret_o}->{ret_d}"
+        return label
 
     def _should_probe_alternate_airline_facets(
         self,
@@ -1141,6 +1210,20 @@ class ScrapingBeeProvider:
         except ValueError:
             return None
 
+    def _route_airport_pair(self, route_text: object) -> tuple[str, str] | None:
+        """Pull the actual departure/arrival airport codes from a leg's route text.
+
+        When a group is searched with a city/metro code (e.g. ROM = all Rome
+        airports), Kayak returns a fare on a specific airport (e.g. FCO). Kayak
+        renders that on the card as an airport pair like "FCO-IAD"; we surface it
+        so logs/export show the airport actually flown, not the searched code.
+        """
+        text = _clean_text(route_text).upper()
+        match = _AIRPORT_PAIR_RE.search(text)
+        if not match:
+            return None
+        return match.group(1), match.group(2)
+
     def _parse_duration_minutes(
         self,
         summary: str,
@@ -1231,11 +1314,14 @@ class ScrapingBeeProvider:
                 total_duration += leg_duration
                 leg_stops = self._parse_stops(f"{stops_text} {layover_text}".strip())
                 leg_stop_counts.append(leg_stops)
+                airport_pair = self._route_airport_pair(route_text)
                 normalized_legs.append(
                     {
                         "airline": airline,
                         "time_text": _clean_text(leg.get("time_text")),
                         "route_text": route_text,
+                        "actual_origin": airport_pair[0] if airport_pair else "",
+                        "actual_destination": airport_pair[1] if airport_pair else "",
                         "stops_text": stops_text,
                         "layover_text": layover_text,
                         "duration_text": duration_text,
@@ -1322,6 +1408,21 @@ class ScrapingBeeProvider:
             )
 
             raw_data = results[-1].raw_data
+            # Actual airports flown (e.g. FCO when the group searched ROM), so
+            # logs/export can show the real airport instead of the searched code.
+            actual_outbound_origin = _clean_text(normalized_legs[0].get("actual_origin"))
+            actual_outbound_destination = _clean_text(normalized_legs[0].get("actual_destination"))
+            if actual_outbound_origin:
+                raw_data["actual_outbound_origin"] = actual_outbound_origin
+            if actual_outbound_destination:
+                raw_data["actual_outbound_destination"] = actual_outbound_destination
+            if len(normalized_legs) > 1:
+                actual_return_origin = _clean_text(normalized_legs[1].get("actual_origin"))
+                actual_return_destination = _clean_text(normalized_legs[1].get("actual_destination"))
+                if actual_return_origin:
+                    raw_data["actual_return_origin"] = actual_return_origin
+                if actual_return_destination:
+                    raw_data["actual_return_destination"] = actual_return_destination
             if trip_type in {"round_trip", "multi_city"}:
                 outbound_airline = _clean_text(normalized_legs[0].get("airline")) or (
                     airline_parts[0] if airline_parts else display_airline
@@ -1734,6 +1835,7 @@ class ScrapingBeeProvider:
                 "scrapingbee_render_no_cards",
                 trip_type=trip_type,
                 target_url=target_url,
+                no_results=self._rendered_payload_reports_no_results(rendered),
                 **self._render_failure_snapshot(rendered),
             )
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
@@ -1777,6 +1879,12 @@ class ScrapingBeeProvider:
             summary_price_found=summary_price_found,
             used_strong_retry=used_strong_retry,
             used_alternate_facet=used_alternate_facet,
+            actual_route=self._actual_route_label(eligible_results),
+            **self._accuracy_audit(
+                rendered=rendered,
+                summary_prices=summary_prices,
+                eligible_results=eligible_results,
+            ),
         )
         return ProviderSearchOutcome(results=eligible_results, diagnostics=diagnostics)
 
@@ -1953,6 +2061,7 @@ class ScrapingBeeProvider:
                 "scrapingbee_render_no_cards",
                 trip_type="multi_city",
                 target_url=target_url,
+                no_results=self._rendered_payload_reports_no_results(rendered),
                 **self._render_failure_snapshot(rendered),
             )
             raise ValueError("KAYAK rendered page did not expose extractable result cards.")
@@ -1989,6 +2098,12 @@ class ScrapingBeeProvider:
             count=len(eligible_results),
             currency=currency,
             target_url=target_url,
+            actual_route=self._actual_route_label(eligible_results),
+            **self._accuracy_audit(
+                rendered=rendered,
+                summary_prices=summary_prices,
+                eligible_results=eligible_results,
+            ),
         )
         selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
         visible_results_found = card_count > 0 or facet_option_count > 0

@@ -945,3 +945,157 @@ def test_base_request_params_uses_decoupled_render_budget() -> None:
     provider = ScrapingBeeProvider(api_key="k", timeout=120)
     params = provider._base_request_params("https://www.kayak.com/flights/MIA-MLA/2026-06-05")
     assert params["timeout"] == 85_000
+
+
+def test_payload_decodes_no_results_flag() -> None:
+    provider = make_provider()
+    rendered = {
+        "evaluate_results": [
+            json.dumps({"c": [], "f": {"s": "", "o": []}, "np": True})
+        ]
+    }
+    payload = provider._extract_rendered_cards_payload(rendered)
+    assert payload is not None
+    assert payload["no_results"] is True
+    assert provider._rendered_payload_reports_no_results(rendered) is True
+
+
+def test_payload_no_results_defaults_false_when_absent() -> None:
+    provider = make_provider()
+    rendered = {
+        "evaluate_results": [
+            json.dumps({"c": [], "f": {"s": "A", "o": [{"n": "A", "p": 700}]}})
+        ]
+    }
+    assert provider._rendered_payload_reports_no_results(rendered) is False
+
+
+def test_no_results_helper_emitted_in_scenario() -> None:
+    """The empty-route detector must be present in the rendered scenario so
+    legitimately empty Kayak routes can be told apart from failed renders."""
+    provider = make_provider()
+    scenario = provider._build_results_scenario(
+        deep=True, same_airline_only=True, minimum_leg_count=2
+    )
+    helper_script = scenario["instructions"][0]["evaluate"]
+    assert "f.empty=" in helper_script
+    assert "np:f.empty()" in helper_script
+
+
+def test_accuracy_audit_reports_saved_vs_floor_gap() -> None:
+    """The audit must expose how far the saved fare sits above Kayak's cheapest
+    visible airline-facet price, so accuracy drift is measurable from logs."""
+    provider = make_provider()
+    rendered = {
+        "evaluate_results": [
+            json.dumps(
+                {
+                    "c": [],
+                    "f": {
+                        "s": "Icelandair",
+                        "o": [
+                            {"n": "Icelandair", "p": 579},
+                            {"n": "Scandinavian Airlines", "p": 669},
+                            {"n": "Air France", "p": 735},
+                        ],
+                    },
+                }
+            )
+        ]
+    }
+    eligible = [_round_trip_result(579, [1, 1], airline="Icelandair")]
+
+    audit = provider._accuracy_audit(
+        rendered=rendered,
+        summary_prices={"cheapest": "$560", "best": "$640"},
+        eligible_results=eligible,
+    )
+
+    assert audit["saved_price"] == 579
+    assert audit["facet_floor"] == 579  # cheapest visible facet
+    assert audit["summary_cheapest"] == 560  # Kayak headline (may be mixed-airline)
+    assert audit["floor_gap"] == 0.0  # saved == cheapest same-airline facet -> ideal
+    assert audit["summary_gap"] == 19.0  # 579 - 560, expected when headline is mixed
+
+
+def test_accuracy_audit_flags_saved_above_facet_floor() -> None:
+    """If the saved fare is well above the cheapest visible facet, floor_gap is
+    positive -> a real accuracy red flag (scraper kept a worse same-airline card)."""
+    provider = make_provider()
+    rendered = {
+        "evaluate_results": [
+            json.dumps(
+                {
+                    "c": [],
+                    "f": {"s": "Delta", "o": [{"n": "Icelandair", "p": 579}, {"n": "Delta", "p": 735}]},
+                }
+            )
+        ]
+    }
+    eligible = [_round_trip_result(735, [1, 1], airline="Delta")]
+
+    audit = provider._accuracy_audit(
+        rendered=rendered,
+        summary_prices={},
+        eligible_results=eligible,
+    )
+
+    assert audit["facet_floor"] == 579
+    assert audit["saved_price"] == 735
+    assert audit["floor_gap"] == 156.0  # 735 - 579 -> saved is $156 above the floor
+    assert audit["summary_cheapest"] is None
+    assert audit["summary_gap"] is None
+
+
+def test_route_airport_pair_parses_actual_airports() -> None:
+    provider = make_provider()
+    assert provider._route_airport_pair("FCO-IAD") == ("FCO", "IAD")
+    assert provider._route_airport_pair("IAD - EDI") == ("IAD", "EDI")
+    assert provider._route_airport_pair("fco–iad") == ("FCO", "IAD")  # en-dash, lowercase
+    assert provider._route_airport_pair("Aer Lingus") is None
+    assert provider._route_airport_pair("") is None
+
+
+def test_normalize_surfaces_actual_airport_when_city_code_searched() -> None:
+    """When a group searches a city code (ROM), the saved data must expose the
+    actual airport Kayak returned (FCO), parsed from the leg route text."""
+    provider = make_provider()
+    results = provider._normalize_rendered_cards(
+        {
+            "cards": [
+                {
+                    "text": "Aer Lingus $1051",
+                    "price_text": "$1,051",
+                    "airline_text": "Aer Lingus",
+                    "legs": [
+                        {
+                            "airline": "Aer Lingus",
+                            "route_text": "IAD-EDI",
+                            "stops_text": "1 stop",
+                            "duration_text": "14h 15m",
+                        },
+                        {
+                            "airline": "Aer Lingus",
+                            "route_text": "FCO-IAD",
+                            "stops_text": "1 stop",
+                            "duration_text": "14h 05m",
+                        },
+                    ],
+                }
+            ]
+        },
+        currency="USD",
+        deep_link="https://www.kayak.com/flights/IAD-EDI/2027-04-14/ROM-IAD/2027-04-24",
+        trip_type="multi_city",
+        market_country_code="us",
+        expected_leg_count=2,
+    )
+
+    assert len(results) == 1
+    raw = results[0].raw_data
+    assert raw["actual_outbound_origin"] == "IAD"
+    assert raw["actual_outbound_destination"] == "EDI"
+    assert raw["actual_return_origin"] == "FCO"  # the real Rome airport, not ROM
+    assert raw["actual_return_destination"] == "IAD"
+    assert raw["legs"][1]["actual_origin"] == "FCO"
+    assert provider._actual_route_label(results) == "IAD->EDI / FCO->IAD"
