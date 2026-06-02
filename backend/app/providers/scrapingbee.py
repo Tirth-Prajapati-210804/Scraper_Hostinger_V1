@@ -127,9 +127,13 @@ _MARKET_RE = re.compile(r"^[a-z]{2}$")
 _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
     "uk": "gb",
 }
-_FAST_MULTI_CITY_CARD_LIMIT = 30
-_DEEP_MULTI_CITY_CARD_LIMIT = 180
-_MAX_AIRLINE_FACET_ATTEMPTS = 4
+# Intended workflow extracts only the top few cards after filters (not all cards).
+# Kayak is sorted cheapest-first with the airline facet isolated, so the cheapest
+# valid same-airline fare is near the top. Smaller windows = far less DOM work and
+# serialization per render = faster scrapes.
+_FAST_MULTI_CITY_CARD_LIMIT = 8
+_DEEP_MULTI_CITY_CARD_LIMIT = 12
+_MAX_AIRLINE_FACET_ATTEMPTS = 3
 _RESULT_PRICE_SELECTOR = ".nrc6-price-section .e2GB-price-text"
 _SAME_AIRLINE_INITIAL_WAIT_MS = 5_000
 _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
