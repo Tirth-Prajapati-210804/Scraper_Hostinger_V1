@@ -21,8 +21,10 @@ FROM nginx:1.27-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 80
+EXPOSE 80 443
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+# HTTP now 301-redirects to HTTPS, so probe HTTPS directly. --no-check-certificate
+# because the origin serves a Cloudflare Origin cert (not browser-trusted, by design).
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget --quiet --tries=1 --no-check-certificate --spider https://localhost/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

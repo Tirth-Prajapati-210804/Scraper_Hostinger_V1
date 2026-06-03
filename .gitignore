@@ -22,3 +22,8 @@ memory/
 Flight Scraper Redesign.html
 Flight scraper.zip
 _babel.js
+
+# TLS origin certs (live on the VPS only — never commit private keys)
+certs/
+*.pem
+*.key

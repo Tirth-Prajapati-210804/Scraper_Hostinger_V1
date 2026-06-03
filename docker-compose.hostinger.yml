@@ -25,3 +25,8 @@ services:
     restart: unless-stopped
     ports: !override
       - "80:80"
+      - "443:443"
+    volumes:
+      # Cloudflare Origin Certificate (read-only). Generated in the Cloudflare
+      # dashboard (SSL/TLS -> Origin Server) and saved to ./certs on the VPS.
+      - ./certs:/etc/nginx/certs:ro
