@@ -103,3 +103,7 @@ def test_no_fare_skip_window_defaults_to_two_days() -> None:
 
     assert settings.scrape_no_fare_skip_hours == 48
     assert settings.scrape_max_empty_attempts == 2
+    assert settings.scrape_max_error_attempts == 2
+    # Disabled by default so the error brake never skips historical live data
+    # until an operator sets the deploy cutoff.
+    assert settings.scrape_error_cap_since == ""

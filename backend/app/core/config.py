@@ -75,6 +75,17 @@ class Settings(BaseSettings):
     # (a manual run always re-checks regardless). 2 = first scrape + one retry,
     # then leave it. Bump to 3 if one retry proves insufficient.
     scrape_max_empty_attempts: int = 2
+    # Same idea for transient scrape errors (provider_error / extract_failed /
+    # parse_error): scrape once + retry once, then stop auto-retrying. Hard
+    # errors (rate_limited / market_mismatch) use a cap of 1 = never retry, and
+    # quota_exhausted / auth_error halt the whole run instead (handled in the
+    # scheduler). Only errors logged AFTER this rule's deploy are counted.
+    scrape_max_error_attempts: int = 2
+    # Only error rows created at/after this UTC instant count toward the error
+    # caps, so historical errors logged before this rule shipped never trigger a
+    # surprise skip on existing live data. Set to the deploy time (ISO-8601, e.g.
+    # "2026-06-03T00:00:00Z"); leave empty to count all history.
+    scrape_error_cap_since: str = ""
     provider_timeout_seconds: int = 60
     provider_max_retries: int = 1
     provider_concurrency_limit: int = 3

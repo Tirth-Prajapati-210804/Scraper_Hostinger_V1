@@ -24,6 +24,8 @@ def make_scheduler() -> FlightScheduler:
     settings.sentry_dsn = ""
     settings.scrape_no_fare_skip_hours = 0
     settings.scrape_max_empty_attempts = 2
+    settings.scrape_max_error_attempts = 2
+    settings.scrape_error_cap_since = ""  # disabled by default (no surprise skips)
     return FlightScheduler(
         settings=settings,
         session_factory=MagicMock(),
@@ -130,6 +132,89 @@ async def test_empty_dates_parked_after_attempt_cap() -> None:
     assert "COUNT(*) >= :max_attempts" in no_fare_sql
     assert "make_interval" not in no_fare_sql  # no clock
     assert no_fare_params["max_attempts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_error_cap_skipped_when_cap_since_unset() -> None:
+    """With scrape_error_cap_since empty, the error brake is OFF (fail-safe):
+    only the saved-fare + empty-cap queries run, never the error query. This is
+    what protects existing live data from surprise skips before deploy."""
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_error_cap_since = ""
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=make_execute_result([]))
+
+    remaining = await scheduler._filter_already_scraped(
+        session, ROUTE_ID, "DEN", ["MLA"], [D1]
+    )
+
+    assert remaining == [D1]
+    # saved-fare query + empty-cap query only (no error query).
+    assert session.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_transient_and_hard_errors_parked_with_cutoff() -> None:
+    """Once cap_since is set, transient errors are capped at scrape_max_error_attempts
+    and hard errors at 1, and the query is scoped to created_at >= cutoff."""
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_max_empty_attempts = 0  # isolate the error query
+    scheduler.settings.scrape_max_error_attempts = 2
+    scheduler.settings.scrape_error_cap_since = "2026-06-03T00:00:00Z"
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            make_execute_result([]),               # no saved fares
+            make_execute_result([(D1, "MLA")]),    # D1 reached an error cap -> parked
+        ]
+    )
+
+    remaining = await scheduler._filter_already_scraped(
+        session, ROUTE_ID, "DEN", ["MLA"], [D1, D2]
+    )
+
+    assert D1 not in remaining
+    assert D2 in remaining
+    err_sql = str(session.execute.await_args_list[1].args[0])
+    err_params = session.execute.await_args_list[1].args[1]
+    assert "provider_error" in err_sql
+    assert "extract_failed" in err_sql
+    assert "rate_limited" in err_sql
+    assert "market_mismatch" in err_sql
+    assert "created_at >= :cap_since" in err_sql
+    assert err_params["max_attempts"] == 2
+    assert err_params["cap_since"].year == 2026
+
+
+@pytest.mark.asyncio
+async def test_provider_block_halts_run_without_parking_dates() -> None:
+    """quota/auth failures must set _stop_requested (halt) and still report to
+    the registry -- but they do NOT park the date (that's the cap query's job)."""
+    from app.providers.base import ProviderAuthError, ProviderQuotaExhaustedError
+
+    scheduler = make_scheduler()
+    scheduler.provider_registry.report_failure = MagicMock()
+
+    assert scheduler._stop_requested is False
+    scheduler._on_provider_failure("scrapingbee", ProviderQuotaExhaustedError("out"))
+    assert scheduler._stop_requested is True
+    scheduler.provider_registry.report_failure.assert_called_once()
+
+    scheduler._stop_requested = False
+    scheduler._on_provider_failure("scrapingbee", ProviderAuthError("bad key"))
+    assert scheduler._stop_requested is True
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_non_block_does_not_halt() -> None:
+    """A plain provider_error must NOT halt the run -- it's a per-date issue."""
+    scheduler = make_scheduler()
+    scheduler.provider_registry.report_failure = MagicMock()
+
+    scheduler._on_provider_failure("scrapingbee", RuntimeError("timeout"))
+
+    assert scheduler._stop_requested is False
+    scheduler.provider_registry.report_failure.assert_called_once()
 
 
 @pytest.mark.asyncio

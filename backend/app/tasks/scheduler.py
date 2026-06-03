@@ -18,6 +18,7 @@ from app.core.logging import get_logger
 from app.core.redaction import redact_text
 from app.models.collection_run import CollectionRun
 from app.models.route_group import RouteGroup
+from app.providers.base import ProviderAuthError, ProviderQuotaExhaustedError
 from app.providers.registry import ProviderRegistry
 from app.services.alert_service import AlertService
 from app.services.price_collector import PriceCollector
@@ -624,7 +625,7 @@ class FlightScheduler:
                         session_factory=self.session_factory,
                         providers=providers,
                         on_provider_success=self.provider_registry.report_success,
-                        on_provider_failure=self.provider_registry.report_failure,
+                        on_provider_failure=self._on_provider_failure,
                         on_item_started=lambda origin, destination, depart_date, is_retry: self._record_item_started(
                             origin,
                             destination,
@@ -900,7 +901,85 @@ class FlightScheduler:
             for depart_date, destination in no_fare_result.fetchall():
                 done_by_date.setdefault(depart_date, set()).add(destination)
 
+        # Error brake. Transient errors (provider_error / extract_failed /
+        # parse_error) get scrape_max_error_attempts tries; hard errors
+        # (rate_limited / market_mismatch) get 1 = never auto-retry. quota /
+        # auth never reach here -- they halt the run instead, so their dates
+        # stay collectable. Only errors created at/after scrape_error_cap_since
+        # count, so historical rows don't trigger surprise skips on live data.
+        max_error_attempts = int(
+            getattr(self.settings, "scrape_max_error_attempts", 2) or 0
+        )
+        cap_since = self._error_cap_since()
+        if respect_no_fare_skip and max_error_attempts > 0 and cap_since is not None:
+            error_result = await session.execute(
+                text(
+                    """
+                    SELECT depart_date, destination
+                    FROM scrape_logs
+                    WHERE route_group_id = :route_group_id
+                      AND origin = :origin
+                      AND destination = ANY(:destinations)
+                      AND depart_date = ANY(:dates)
+                      AND created_at >= :cap_since
+                      AND status IN (
+                        'provider_error', 'extract_failed', 'parse_error',
+                        'rate_limited', 'market_mismatch'
+                      )
+                    GROUP BY depart_date, destination
+                    HAVING COUNT(*) >= CASE
+                      WHEN BOOL_OR(status IN ('rate_limited', 'market_mismatch'))
+                      THEN 1 ELSE :max_attempts
+                    END
+                    """
+                ),
+                {
+                    "route_group_id": str(route_group_id),
+                    "origin": origin,
+                    "destinations": list(destinations),
+                    "dates": list(dates),
+                    "cap_since": cap_since,
+                    "max_attempts": max_error_attempts,
+                },
+            )
+            for depart_date, destination in error_result.fetchall():
+                done_by_date.setdefault(depart_date, set()).add(destination)
+
         return [d for d in dates if len(done_by_date.get(d, set())) < target]
+
+    def _on_provider_failure(self, provider_name: str, exc: BaseException) -> None:
+        """Report the failure, and halt the whole run on quota/auth errors.
+
+        These are system-wide blocks, not bad dates: continuing just throws the
+        same error on every remaining date. Setting _stop_requested winds the
+        run down via the existing stop path, and crucially does NOT mark those
+        dates done -- they collect normally next cycle once credit/key is back.
+        """
+        self.provider_registry.report_failure(provider_name, exc)
+        if isinstance(exc, (ProviderQuotaExhaustedError, ProviderAuthError)):
+            if not self._stop_requested:
+                log.warning(
+                    "collection_halted_provider_block",
+                    provider=provider_name,
+                    reason=type(exc).__name__,
+                )
+            self._stop_requested = True
+
+    def _error_cap_since(self) -> datetime | None:
+        """Parse scrape_error_cap_since into a UTC datetime.
+
+        Returns None to disable the error brake when unset/invalid, so a bad
+        value fails safe (no surprise skips) rather than counting all history.
+        """
+        raw = str(getattr(self.settings, "scrape_error_cap_since", "") or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            log.warning("scrape_error_cap_since_invalid", value=redact_text(raw))
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
     # --------------------------------------------------
     # LOCKS
@@ -1045,7 +1124,7 @@ class FlightScheduler:
                         session_factory=self.session_factory,
                         providers=providers,
                         on_provider_success=self.provider_registry.report_success,
-                        on_provider_failure=self.provider_registry.report_failure,
+                        on_provider_failure=self._on_provider_failure,
                         on_item_started=lambda origin, destination, depart_date, is_retry: self._record_item_started(
                             origin,
                             destination,

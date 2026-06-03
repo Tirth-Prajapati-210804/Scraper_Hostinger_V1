@@ -16,3 +16,9 @@ frontend/.vite/
 .claude/
 CLAUDE_HANDOFF_FULL_CONTEXT.txt
 memory/
+
+# Frontend redesign prototype (scratch — not part of the app build)
+.redesign/
+Flight Scraper Redesign.html
+Flight scraper.zip
+_babel.js
