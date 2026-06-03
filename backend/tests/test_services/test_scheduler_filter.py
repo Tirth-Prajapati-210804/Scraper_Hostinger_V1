@@ -23,6 +23,7 @@ def make_scheduler() -> FlightScheduler:
     settings.telegram_chat_id = ""
     settings.sentry_dsn = ""
     settings.scrape_no_fare_skip_hours = 0
+    settings.scrape_max_empty_attempts = 2
     return FlightScheduler(
         settings=settings,
         session_factory=MagicMock(),
@@ -101,14 +102,17 @@ async def test_no_scrapes_returns_all_dates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_recent_confirmed_no_fare_excludes_date() -> None:
+async def test_empty_dates_parked_after_attempt_cap() -> None:
+    """A (date,destination) that has come back empty >= scrape_max_empty_attempts
+    times is parked (stops auto-retrying). Covers both filtered_out and the
+    genuinely-empty page_empty case (the credit leak)."""
     scheduler = make_scheduler()
-    scheduler.settings.scrape_no_fare_skip_hours = 168
+    scheduler.settings.scrape_max_empty_attempts = 2
     session = AsyncMock()
     session.execute = AsyncMock(
         side_effect=[
-            make_execute_result([]),
-            make_execute_result([(D1, "MLA")]),
+            make_execute_result([]),               # no saved fares
+            make_execute_result([(D1, "MLA")]),    # D1 hit the attempt cap -> parked
         ]
     )
 
@@ -116,17 +120,38 @@ async def test_recent_confirmed_no_fare_excludes_date() -> None:
         session, ROUTE_ID, "DEN", ["MLA"], [D1, D2]
     )
 
-    assert D1 not in remaining
+    assert D1 not in remaining  # parked (reached attempt cap)
     assert D2 in remaining
-    assert session.execute.await_count == 2
+    no_fare_sql = str(session.execute.await_args_list[1].args[0])
     no_fare_params = session.execute.await_args_list[1].args[1]
-    assert no_fare_params["skip_hours"] == 168
+    # Count-based cap, covering both empty reasons; no time window.
+    assert "page_empty" in no_fare_sql
+    assert "filtered_out" in no_fare_sql
+    assert "COUNT(*) >= :max_attempts" in no_fare_sql
+    assert "make_interval" not in no_fare_sql  # no clock
+    assert no_fare_params["max_attempts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_empty_date_attempt_cap_disabled_when_zero() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_max_empty_attempts = 0
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=make_execute_result([]))
+
+    remaining = await scheduler._filter_already_scraped(
+        session, ROUTE_ID, "DEN", ["MLA"], [D1]
+    )
+
+    assert remaining == [D1]
+    # With cap=0 the no-fare query is skipped entirely (only the saved-fare query runs).
+    assert session.execute.await_count == 1
 
 
 @pytest.mark.asyncio
 async def test_no_fare_skip_does_not_double_count_same_destination() -> None:
     scheduler = make_scheduler()
-    scheduler.settings.scrape_no_fare_skip_hours = 168
+    scheduler.settings.scrape_max_empty_attempts = 2
     session = AsyncMock()
     session.execute = AsyncMock(
         side_effect=[
@@ -144,8 +169,9 @@ async def test_no_fare_skip_does_not_double_count_same_destination() -> None:
 
 @pytest.mark.asyncio
 async def test_no_fare_skip_can_be_disabled() -> None:
+    # Setting the attempt cap to 0 disables the empty-date brake entirely.
     scheduler = make_scheduler()
-    scheduler.settings.scrape_no_fare_skip_hours = 0
+    scheduler.settings.scrape_max_empty_attempts = 0
     session = AsyncMock()
     session.execute = AsyncMock(return_value=make_execute_result([]))
 

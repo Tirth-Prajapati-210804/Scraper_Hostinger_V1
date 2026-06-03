@@ -102,3 +102,4 @@ def test_no_fare_skip_window_defaults_to_two_days() -> None:
     settings = _settings()
 
     assert settings.scrape_no_fare_skip_hours == 48
+    assert settings.scrape_max_empty_attempts == 2

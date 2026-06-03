@@ -67,6 +67,19 @@ _WEEKEND_HEADERS = [
 ]
 
 
+def _display_airport(actual: object, searched: object) -> str:
+    """Show the actual airport flown, annotating the searched metro code when it
+    differs. e.g. actual=FCO searched=ROM -> "FCO (ROM)"; equal/missing -> as-is.
+    """
+    actual_code = str(actual or "").strip().upper()
+    searched_code = str(searched or "").strip().upper()
+    if not actual_code:
+        return searched_code
+    if searched_code and searched_code != actual_code:
+        return f"{actual_code} ({searched_code})"
+    return actual_code
+
+
 def _safe_stop_label(value: object, stops: object = None) -> str:
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -535,12 +548,15 @@ def _export_multi_city_route_group(
             if not isinstance(itinerary, dict):
                 itinerary = {}
             return_date = itinerary.get("return_date")
-            # Return-leg origin: prefer the actual airport flown (e.g. FCO when the
-            # group searched the ROM metro code), else the searched return origin.
-            return_from = (
-                itinerary.get("actual_return_origin")
-                or itinerary.get("return_origin")
-                or (itinerary.get("inbound") or {}).get("origin")
+            # Prefer the ACTUAL airport flown (e.g. FCO when the group searched the
+            # ROM metro code), falling back to the searched code. _display_airport
+            # appends the searched metro code in brackets when they differ, e.g.
+            # "FCO (ROM)", so the sheet shows the real airport without losing context.
+            dep_airport = _display_airport(itinerary.get("actual_outbound_origin"), origin)
+            arr_airport = _display_airport(itinerary.get("actual_outbound_destination"), destination)
+            return_from = _display_airport(
+                itinerary.get("actual_return_origin"),
+                itinerary.get("return_origin") or (itinerary.get("inbound") or {}).get("origin"),
             )
 
             _set_date_cell(ws, row=row_idx, column=1, value=depart_date)
@@ -548,8 +564,8 @@ def _export_multi_city_route_group(
                 _set_date_cell(ws, row=row_idx, column=2, value=return_date)
             else:
                 ws.cell(row=row_idx, column=2, value=_MISSING_VALUE)
-            ws.cell(row=row_idx, column=3, value=origin)
-            ws.cell(row=row_idx, column=4, value=destination)
+            ws.cell(row=row_idx, column=3, value=dep_airport or origin)
+            ws.cell(row=row_idx, column=4, value=arr_airport or destination)
             ws.cell(row=row_idx, column=5, value=return_from or _MISSING_VALUE)
             ws.cell(row=row_idx, column=6, value=route_group.nights)
             if result:

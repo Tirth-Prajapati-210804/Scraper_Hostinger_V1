@@ -501,39 +501,12 @@ class FlightScheduler:
                 dates=remaining,
             )
 
-        if missing:
-            retry = await collector.collect_route_batch(
-                origin=segment.origin,
-                destinations=segment.destinations,
-                dates=missing,
-                route_group_id=group.id,
-                batch_size=self.settings.scrape_batch_size,
-                delay_seconds=self.settings.scrape_delay_seconds,
-                stop_check=lambda: self._stop_requested,
-                market=getattr(group, "market", None),
-                currency=group.currency,
-                max_stops=group.max_stops,
-                same_airline_only=bool(getattr(group, "same_airline_only", False)),
-                max_leg_duration_minutes=getattr(group, "max_leg_duration_minutes", None),
-                trip_type=segment.trip_type,
-                nights=segment.nights,
-                return_origin=segment.return_origin,
-                is_retry=True,
-            )
-            stats["success"] += retry["success"]
-            stats["errors"] += retry["errors"]
-            stats["skipped"] += retry["skipped"]
-
-            if not self._stop_requested:
-                async with self.session_factory() as check_session:
-                    missing = await self._filter_already_scraped(
-                        session=check_session,
-                        route_group_id=group.id,
-                        origin=segment.origin,
-                        destinations=segment.destinations,
-                        dates=missing,
-                    )
-
+        # Dates still missing after this single pass are intentionally NOT
+        # re-scraped in-run. An immediate retry rarely recovers a date that just
+        # failed (usually genuinely empty, or a transient issue that won't clear
+        # in seconds) and it roughly doubles ScrapingBee credit. The NEXT scheduler
+        # cycle re-attempts these once via _filter_already_scraped, after which
+        # scrape_no_fare_skip_hours caps further retries -> "one retry, next cycle".
         stats["final_missing"] = len(missing) * len(segment.destinations) if not self._stop_requested else 0
         return stats
 
@@ -884,10 +857,16 @@ class FlightScheduler:
             done_by_date.setdefault(depart_date, set()).add(destination)
         target = len(destinations)
 
-        no_fare_skip_hours = int(
-            getattr(self.settings, "scrape_no_fare_skip_hours", 168) or 0
+        # Smart empty-date brake (attempt-count, not a clock): once a (date,
+        # destination) has come back empty/no-fare scrape_max_empty_attempts times,
+        # the scheduler stops auto-retrying it. This fixes the leak where empty
+        # dates re-scraped every cycle forever, WITHOUT an arbitrary time window:
+        # a genuinely-dead route dies after N attempts; a manual run (which passes
+        # respect_no_fare_skip=False) always re-checks regardless.
+        max_empty_attempts = int(
+            getattr(self.settings, "scrape_max_empty_attempts", 2) or 0
         )
-        if respect_no_fare_skip and no_fare_skip_hours > 0:
+        if respect_no_fare_skip and max_empty_attempts > 0:
             no_fare_result = await session.execute(
                 text(
                     """
@@ -898,10 +877,16 @@ class FlightScheduler:
                       AND destination = ANY(:destinations)
                       AND depart_date = ANY(:dates)
                       AND status = 'no_results'
-                      AND result_reason = 'filtered_out'
-                      AND raw_offers_found > 0
-                      AND eligible_offers_found = 0
-                      AND created_at >= now() - make_interval(hours => :skip_hours)
+                      AND (
+                        -- Kayak had flights but none matched our filters.
+                        (result_reason = 'filtered_out'
+                         AND raw_offers_found > 0
+                         AND eligible_offers_found = 0)
+                        -- Kayak genuinely has no flights for this route/date.
+                        OR result_reason = 'page_empty'
+                      )
+                    GROUP BY depart_date, destination
+                    HAVING COUNT(*) >= :max_attempts
                     """
                 ),
                 {
@@ -909,7 +894,7 @@ class FlightScheduler:
                     "origin": origin,
                     "destinations": list(destinations),
                     "dates": list(dates),
-                    "skip_hours": no_fare_skip_hours,
+                    "max_attempts": max_empty_attempts,
                 },
             )
             for depart_date, destination in no_fare_result.fetchall():

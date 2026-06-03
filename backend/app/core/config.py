@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     scrape_route_parallelism: int = 3
     scrape_delay_seconds: float = 1.0
     scrape_no_fare_skip_hours: int = 48
+    # Smart empty-date handling (replaces the clock-based skip as the brake on the
+    # empty-date credit leak). Total number of times the scheduler will scrape a
+    # date that keeps coming back empty/no-fare before it STOPS auto-retrying it
+    # (a manual run always re-checks regardless). 2 = first scrape + one retry,
+    # then leave it. Bump to 3 if one retry proves insufficient.
+    scrape_max_empty_attempts: int = 2
     provider_timeout_seconds: int = 60
     provider_max_retries: int = 1
     provider_concurrency_limit: int = 3

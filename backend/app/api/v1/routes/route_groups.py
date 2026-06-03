@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from datetime import date as date_type
@@ -94,7 +95,11 @@ async def export_group(
     )
     all_results = list(all_results_result.scalars().all())
 
-    excel_bytes = export_service.export_route_group(group, all_results, include_links=include_links)
+    # Building the workbook (openpyxl) is CPU-bound; run it off the event loop so
+    # it doesn't block other requests and the download feels responsive.
+    excel_bytes = await asyncio.to_thread(
+        export_service.export_route_group, group, all_results, include_links=include_links
+    )
     # Sanitize filename: strip dangerous chars, quotes, newlines, and limit length
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", group.name).strip("._") or "route-group"
     safe_name = safe_name.replace('"', "").replace("'", "")[:100]

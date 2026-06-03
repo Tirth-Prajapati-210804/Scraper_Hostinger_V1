@@ -906,6 +906,23 @@ class ScrapingBeeProvider:
             return False
         return bool(payload.get("no_results"))
 
+    def _strong_retry_worthwhile(self, rendered: dict) -> bool:
+        """Whether a second (slower) render is likely to recover results.
+
+        Only retry when there's a signal that data SHOULD exist but extraction
+        glitched: Kayak did NOT report 'no results', AND the page showed some
+        airline facet options or summary prices. If the route is genuinely empty
+        (no_results, or no facet/summary signal at all), a 2nd render just burns
+        ScrapingBee credit for nothing, so we skip it.
+        """
+        if self._rendered_payload_reports_no_results(rendered):
+            return False
+        if self._facet_option_prices(rendered):
+            return True
+        if self._rendered_payload_has_summary_prices(rendered):
+            return True
+        return False
+
     def _render_failure_snapshot(self, rendered: dict) -> dict[str, object]:
         """Compact, secret-free signals explaining *why* a render produced no
         cards, so we can tell selector drift from a page that never hydrated.
@@ -1355,7 +1372,11 @@ class ScrapingBeeProvider:
             airline_parts = [part.strip() for part in airline_text.split("/") if part.strip()]
             display_airline = airline_text or " / ".join(unique_airlines) or "Unknown airline"
             booking_href = _clean_text(card.get("booking_href"))
-            normalized_link = urljoin(deep_link, booking_href) if booking_href else deep_link
+            # The card's /book/ href is a session-specific redirect that EXPIRES,
+            # so it is useless for later verification. Save the stable Kayak search
+            # URL instead (re-runs the same search); keep the booking href in
+            # raw_data only for reference.
+            normalized_link = deep_link
             card_text = _clean_text(card.get("text"))
             actual_currency = self._detect_display_currency(
                 card.get("price_text") or card_text,
@@ -1410,6 +1431,7 @@ class ScrapingBeeProvider:
                         "summary": card_text,
                         "cabin": _clean_text(card.get("cabin")),
                         "badges": badges,
+                        "booking_href": booking_href,
                         "legs": normalized_legs,
                         "airline_names": unique_airlines or airline_parts,
                         "leg_stops": leg_stop_counts,
@@ -1785,7 +1807,13 @@ class ScrapingBeeProvider:
                 force=should_probe_alternate_facet,
             )
 
-        if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+        if (
+            not eligible_results
+            and not results
+            and card_count == 0
+            and not self._rendered_payload_has_summary_prices(rendered)
+            and self._strong_retry_worthwhile(rendered)
+        ):
             retry_rendered, retry_summary_prices, retry_results, retry_card_count, retry_captured_count = await self._render_results_attempt(
                 target_url=target_url,
                 country_code=market_country_code,
@@ -2009,7 +2037,13 @@ class ScrapingBeeProvider:
                 force=should_probe_alternate_facet,
             )
 
-        if not eligible_results and not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+        if (
+            not eligible_results
+            and not results
+            and card_count == 0
+            and not self._rendered_payload_has_summary_prices(rendered)
+            and self._strong_retry_worthwhile(rendered)
+        ):
             retry_rendered, retry_summary_prices, retry_results, retry_card_count, retry_captured_count = await self._render_results_attempt(
                 target_url=target_url,
                 country_code=market_country_code,
