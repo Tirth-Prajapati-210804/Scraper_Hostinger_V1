@@ -1106,7 +1106,7 @@ class FlightScheduler:
                             origin=segment.origin,
                             destinations=segment.destinations,
                             dates=dates,
-                            respect_no_fare_skip=False,
+                            respect_no_fare_skip=True,
                         )
 
                         if not remaining:
