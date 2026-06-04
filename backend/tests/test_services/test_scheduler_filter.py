@@ -16,6 +16,32 @@ D2 = TODAY + timedelta(days=2)
 D3 = TODAY + timedelta(days=3)
 
 
+def _filter_stub(*, plan: list[date], summary: list[date], pause: list[date]) -> AsyncMock:
+    """Stub for _filter_already_scraped that returns the right value per caller,
+    robust to how many segments each path iterates.
+
+    The planning + summary passes use the small PLANNED date list; the auto-pause
+    exhaustion check (_pause_group_if_exhausted) passes the group's FULL date
+    range. We tell them apart by call order: the first call is planning, then
+    summary calls return `summary`, and any call whose `dates` arg is longer than
+    the planned set is the pause check and returns `pause`.
+    """
+    planned_len = len(plan)
+    state = {"first": True}
+
+    async def _impl(*args, **kwargs):
+        dates = kwargs.get("dates", [])
+        if state["first"]:
+            state["first"] = False
+            return list(plan)
+        # The pause check scans the full range (more dates than were planned).
+        if len(dates) > planned_len:
+            return list(pause)
+        return list(summary)
+
+    return AsyncMock(side_effect=_impl)
+
+
 def make_scheduler() -> FlightScheduler:
     settings = MagicMock()
     settings.scheduler_enabled = False
@@ -341,7 +367,10 @@ async def test_trigger_single_group_forwards_trip_type_and_nights(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [], []])
+    # plan -> [D1] (one pending date); summary -> [] (it got collected); the
+    # auto-pause exhaustion check that follows returns [D1] = "still has work",
+    # so the group is NOT auto-paused in this test.
+    scheduler._filter_already_scraped = _filter_stub(plan=[D1], summary=[], pause=[D1])
 
     await scheduler.trigger_single_group(group.id)
 
@@ -416,12 +445,11 @@ async def test_trigger_single_group_collects_multi_city_special_sheets(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(
-        side_effect=[
-            [D1, D2, D3, D3 + timedelta(days=1), D3 + timedelta(days=2)],
-            [],
-            [],
-        ]
+    scheduler._filter_already_scraped = _filter_stub(
+        plan=[D1, D2, D3, D3 + timedelta(days=1), D3 + timedelta(days=2)],
+        summary=[],
+        # auto-pause exhaustion check -> still has work, so no auto-pause here.
+        pause=[D1],
     )
 
     await scheduler.trigger_single_group(group.id)
@@ -492,7 +520,9 @@ async def test_trigger_single_group_updates_live_progress(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1, D2], [], []])
+    # plan -> [D1, D2]; summary -> []; auto-pause exhaustion check -> [D1]
+    # (still has work) so the group is NOT auto-paused here.
+    scheduler._filter_already_scraped = _filter_stub(plan=[D1, D2], summary=[], pause=[D1])
 
     stats = await scheduler.trigger_single_group(group.id)
 
@@ -577,7 +607,9 @@ async def test_trigger_single_group_clears_stale_errors_on_success(
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
     scheduler.session_factory = factory
 
-    scheduler._filter_already_scraped = AsyncMock(side_effect=[[D1], [], []])
+    # plan -> [D1]; summary -> []; auto-pause exhaustion check -> [D1]
+    # (still has work) so the group is NOT auto-paused here.
+    scheduler._filter_already_scraped = _filter_stub(plan=[D1], summary=[], pause=[D1])
 
     await scheduler.trigger_single_group(group.id)
 
@@ -777,3 +809,73 @@ def test_route_parallelism_caps_groups_by_provider_budget() -> None:
 
     scheduler.settings.scrape_batch_size = 2
     assert scheduler._route_parallelism(10) == 2
+
+
+def _exhaustion_group() -> MagicMock:
+    group = MagicMock()
+    group.id = uuid4()
+    group.name = "YYZ -> Iceland"
+    group.is_active = True
+    group.origins = ["YYZ"]
+    group.destinations = ["KEF"]
+    group.trip_type = "round_trip"
+    group.nights = 5
+    group.special_sheets = []
+    group.start_date = None
+    group.end_date = None
+    group.days_ahead = 3
+    return group
+
+
+def _exhaustion_scheduler(group: MagicMock) -> FlightScheduler:
+    """A scheduler whose session_factory yields a session whose .get() returns
+    the given group, so _pause_group_if_exhausted can re-fetch + flip it."""
+    scheduler = make_scheduler()
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=group)
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    scheduler.session_factory = factory
+    return scheduler
+
+
+@pytest.mark.asyncio
+async def test_pause_group_if_exhausted_pauses_when_nothing_remains() -> None:
+    """When every date is collected or capped (filter returns []), the group is
+    auto-paused (is_active -> False) so it drops out of scheduled runs."""
+    group = _exhaustion_group()
+    scheduler = _exhaustion_scheduler(group)
+    scheduler._filter_already_scraped = AsyncMock(return_value=[])
+
+    paused = await scheduler._pause_group_if_exhausted(group)
+
+    assert paused is True
+    assert group.is_active is False
+
+
+@pytest.mark.asyncio
+async def test_pause_group_if_exhausted_keeps_active_when_work_remains() -> None:
+    """A group with any pending date (filter returns a date) stays active."""
+    group = _exhaustion_group()
+    scheduler = _exhaustion_scheduler(group)
+    scheduler._filter_already_scraped = AsyncMock(return_value=[D1])
+
+    paused = await scheduler._pause_group_if_exhausted(group)
+
+    assert paused is False
+    assert group.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_pause_group_if_exhausted_skips_already_paused_group() -> None:
+    """An already-paused group is left alone and is not re-checked."""
+    group = _exhaustion_group()
+    group.is_active = False
+    scheduler = _exhaustion_scheduler(group)
+    scheduler._filter_already_scraped = AsyncMock(return_value=[])
+
+    paused = await scheduler._pause_group_if_exhausted(group)
+
+    assert paused is False
+    scheduler._filter_already_scraped.assert_not_awaited()

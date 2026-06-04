@@ -446,6 +446,45 @@ class FlightScheduler:
                     summary["routes_failed"] += 1
         return summary
 
+    async def _pause_group_if_exhausted(self, group: RouteGroup) -> bool:
+        """Pause a group once every date is collected OR has hit its retry cap.
+
+        Checks the group's FULL date range across all segments (not just the
+        dates planned this run): _filter_already_scraped returns the dates that
+        are neither collected nor capped, so an empty result means there is
+        nothing left to attempt -- all retries are done. We then flip
+        is_active=False so the group drops out of scheduled runs and shows in the
+        Paused bucket, signalling "this group is fully processed".
+
+        Only auto-pauses an active group, and only when it actually has dates in
+        range (an empty range is not 'done'). Returns True if it paused.
+        """
+        if not group.is_active:
+            return False
+        dates = self._group_dates(group)
+        if not dates:
+            return False
+        async with self.session_factory() as session:
+            for segment in iter_group_segments(group):
+                remaining = await self._filter_already_scraped(
+                    session=session,
+                    route_group_id=group.id,
+                    origin=segment.origin,
+                    destinations=segment.destinations,
+                    dates=dates,
+                )
+                if remaining:
+                    return False  # still has dates left to attempt
+            # Nothing remaining in any segment -> fully processed. Pause it.
+            db_group = await session.get(RouteGroup, group.id)
+            if db_group is None or not db_group.is_active:
+                return False
+            db_group.is_active = False
+            await session.commit()
+        group.is_active = False
+        log.info("route_group_auto_paused", group_id=str(group.id), group_name=group.name)
+        return True
+
     async def _collect_segment_with_retry(
         self,
         *,
@@ -708,6 +747,8 @@ class FlightScheduler:
                         route_success += summary["routes_success"]
                         route_failed += summary["routes_failed"]
                         total_final_missing += summary["final_missing"]
+                        if not self._stop_requested:
+                            await self._pause_group_if_exhausted(group_plan["group"])
 
                     if self._stop_requested:
                         run.status = "stopped"
@@ -1192,6 +1233,9 @@ class FlightScheduler:
                     total_final_missing = summary["final_missing"]
                     route_success = summary["routes_success"]
                     route_failed = summary["routes_failed"]
+
+                    if not self._stop_requested:
+                        await self._pause_group_if_exhausted(group)
 
                     if self._stop_requested:
                         run.status = "stopped"
