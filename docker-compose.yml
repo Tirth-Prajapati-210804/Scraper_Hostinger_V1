@@ -59,7 +59,12 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1/ || exit 1"]
+      # nginx now serves HTTPS and redirects http -> https (Cloudflare Origin
+      # cert), so the old plain-http spider got a 301 and reported unhealthy
+      # even though the site was serving fine. Check https on localhost with
+      # --no-check-certificate (the Origin cert is for the public domain, not
+      # 127.0.0.1). Matches the Dockerfile HEALTHCHECK.
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --no-check-certificate --spider https://127.0.0.1/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
