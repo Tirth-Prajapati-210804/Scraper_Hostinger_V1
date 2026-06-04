@@ -64,12 +64,13 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
     assert workbook.sheetnames == ["Toronto Open Jaw"]
 
     sheet = workbook["Toronto Open Jaw"]
-    headers = [sheet.cell(row=1, column=index).value for index in range(1, 10)]
+    headers = [sheet.cell(row=1, column=index).value for index in range(1, 11)]
     assert headers == [
         "Date",
         "Ending Date",
         "Dep Airport",
         "Arrival Airport",
+        "Return From",
         "Nights",
         "Airline",
         "Stop Result",
@@ -79,11 +80,12 @@ def test_multi_city_export_uses_itinerary_sheet_shape() -> None:
     assert sheet["A2"].value == datetime(2026, 5, 20)
     assert sheet["B2"].value == datetime(2026, 5, 31)
     assert sheet["D2"].value == "BER"
-    assert sheet["E2"].value == 11
-    assert sheet["F2"].value == "Icelandair / Lufthansa"
-    assert sheet["G2"].value == "1 Stop"
-    assert sheet["H2"].value == "8h 20m / 10h 20m"
-    assert sheet["I2"].value == 829
+    assert sheet["E2"].value == "BUD"  # Return From (return-leg origin)
+    assert sheet["F2"].value == 11
+    assert sheet["G2"].value == "Icelandair / Lufthansa"
+    assert sheet["H2"].value == "1 Stop"
+    assert sheet["I2"].value == "8h 20m / 10h 20m"
+    assert sheet["J2"].value == 829
 
 
 def test_multi_city_export_marks_missing_dates_as_na() -> None:
@@ -124,8 +126,9 @@ def test_multi_city_export_marks_missing_dates_as_na() -> None:
     assert sheet["A2"].value == datetime(2026, 5, 20)
     assert sheet["A3"].value == datetime(2026, 5, 21)
     assert sheet["A4"].value == datetime(2026, 5, 22)
-    assert sheet["B3"].value == "N-A"
-    assert sheet["F3"].value == "N-A"
-    assert sheet["G3"].value == "N-A"
-    assert sheet["H3"].value == "N-A"
-    assert sheet["I3"].value == "N-A"
+    assert sheet["B3"].value == "N-A"  # Ending Date
+    assert sheet["E3"].value == "N-A"  # Return From
+    assert sheet["G3"].value == "N-A"  # Airline
+    assert sheet["H3"].value == "N-A"  # Stop Result
+    assert sheet["I3"].value == "N-A"  # Duration
+    assert sheet["J3"].value == "N-A"  # Flight Price

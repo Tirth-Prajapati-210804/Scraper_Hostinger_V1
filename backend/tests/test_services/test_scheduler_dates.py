@@ -42,15 +42,17 @@ def test_group_dates_normal_range() -> None:
 
 
 def test_group_dates_explicit_range() -> None:
+    # Use future-relative dates so the range is never clamped to today()
+    # (the scheduler sets start = max(start_date, today)). Hardcoded calendar
+    # dates made this test fail once "today" passed them.
     scheduler = make_scheduler()
-    group = make_group(
-        start_date=date(2026, 6, 1),
-        end_date=date(2026, 6, 5),
-    )
+    start = date.today() + timedelta(days=10)
+    end = start + timedelta(days=4)
+    group = make_group(start_date=start, end_date=end)
     dates = scheduler._group_dates(group)
     assert len(dates) == 5
-    assert dates[0] == date(2026, 6, 1)
-    assert dates[-1] == date(2026, 6, 5)
+    assert dates[0] == start
+    assert dates[-1] == end
 
 
 def test_group_dates_capped_at_730() -> None:

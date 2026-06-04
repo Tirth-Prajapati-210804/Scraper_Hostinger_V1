@@ -206,10 +206,12 @@ def test_multi_city_export_creates_one_sheet_per_route() -> None:
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [first, second])))
 
     assert wb.sheetnames == ["YOW-LGW", "YOW-LHR"]
-    assert wb["YOW-LHR"].cell(1, 7).value == "Stop Result"
-    assert wb["YOW-LHR"].cell(1, 8).value == "Duration"
-    assert wb["YOW-LHR"].cell(1, 9).value == "Flight Price"
+    assert wb["YOW-LHR"].cell(1, 5).value == "Return From"
+    assert wb["YOW-LHR"].cell(1, 8).value == "Stop Result"
+    assert wb["YOW-LHR"].cell(1, 9).value == "Duration"
+    assert wb["YOW-LHR"].cell(1, 10).value == "Flight Price"
     assert wb["YOW-LHR"].cell(2, 4).value == "LHR"
+    assert wb["YOW-LHR"].cell(2, 5).value == "MXP"  # Return From
     assert wb["YOW-LGW"].cell(2, 4).value == "LGW"
     assert wb["YOW-LHR"].cell(2, 1).number_format == "DD-MM-YYYY"
     assert wb["YOW-LHR"].cell(2, 2).number_format == "DD-MM-YYYY"

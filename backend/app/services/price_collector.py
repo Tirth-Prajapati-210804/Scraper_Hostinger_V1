@@ -179,14 +179,6 @@ class PriceCollector:
             return "1 Stop"
         return f"{stops} Stops"
 
-    def _airline_match_key(self, value: object) -> str | None:
-        if not isinstance(value, str):
-            return None
-        normalized = normalize_airline(value).strip()
-        if not normalized or normalized == "-":
-            return None
-        return normalized.casefold()
-
     def _tokenize_airline_value(self, value: object) -> list[str]:
         if not isinstance(value, str):
             return []
@@ -234,13 +226,6 @@ class PriceCollector:
                 if normalized and normalized != "-":
                     names.append(normalized)
         return names
-
-    def _result_airline_keys(self, result: ProviderResult) -> set[str]:
-        return {
-            name.casefold()
-            for name in self._result_airline_names(result)
-            if name != "__multiple__"
-        }
 
     def _same_airline_results_only(self, results: list[ProviderResult]) -> list[ProviderResult]:
         filtered: list[ProviderResult] = []
