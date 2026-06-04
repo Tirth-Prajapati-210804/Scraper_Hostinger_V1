@@ -462,26 +462,22 @@ class ScrapingBeeProvider:
         return data
 
     def _kayak_query(self, max_stops: int | None) -> str:
-        """Kayak results query. Filters are carried in the URL (fs=...), like
-        Kayak's own UI, e.g. ?sort=price_a&fs=airlines=-MULT;stops=0,1.
+        """Kayak results query. The per-leg stop filter is carried in the URL
+        (fs=stops=...), like Kayak's own UI, e.g. ?sort=price_a&fs=stops=0,1.
 
-        - airlines=-MULT EXCLUDES the "Multiple airlines" mixed-carrier bucket,
-          which is exactly what the UI does when you untick "Multiple airlines".
-          Verified in a headless render: cheapest goes from the mixed-carrier
-          floor to the same-airline floor (matches what the browser shows). This
-          makes the page load same-airline + cheapest-first WITHOUT relying on a
-          js_scenario click. We intentionally DO NOT add Kayak's `flylocal`
-          token (self-transfer / separately-booked fares) -- those are not true
-          single-itinerary same-airline fares and would reintroduce options the
-          same-airline rule should exclude. The applyFacet() untick is kept in
-          the scenario as a harmless backstop (it finds nothing to untick when
-          the URL already excluded MULT).
-        - stops is appended with ';' per Kayak's filter grammar.
+        We intentionally do NOT put airlines=-MULT in the URL. It was tried
+        (commit 6847a1a) and worked on some dates, but on others the -MULT URL
+        parameter put Kayak into a broken "No matching results" state (0 cards)
+        even though same-airline fares existed -- verified on YEG-KEF 2026-10-19,
+        where the -MULT URL returned 0 but the facet-untick workflow below
+        returned 3 same-airline Alaska cards. Same-airline isolation is therefore
+        done in the scenario via applyFacet() (untick "Multiple airlines") + the
+        Cheapest sort, which is reliable across dates.
         """
-        filters = ["airlines=-MULT"]
+        query = "?sort=price_a"
         if max_stops is not None and max_stops <= 1:
-            filters.append(f"stops={'0' if max_stops <= 0 else '0,1'}")
-        return f"?sort=price_a&fs={';'.join(filters)}"
+            query += f"&fs=stops={'0' if max_stops <= 0 else '0,1'}"
+        return query
 
     def _build_search_url(
         self,
@@ -581,15 +577,15 @@ class ScrapingBeeProvider:
         ]
         instructions.extend(
             [
-                # NOTE: applyFacet() (untick "Multiple airlines") is intentionally
-                # NOT called here. The URL already excludes the mixed-carrier
-                # bucket via fs=airlines=-MULT, and on that filtered page the
-                # "Multiple airlines" control renders with NO checkbox, so
-                # f.a()'s `if(!h||h.checked) click` fired the no-checkbox branch
-                # and TOGGLED MULT BACK ON -- reintroducing mixed itineraries
-                # (e.g. WestJet+Icelandair) that the same-airline filter then
-                # dropped, yielding 0 saved results. The URL isolation is the
-                # single source of truth; we only re-assert the Cheapest sort.
+                # Same-airline isolation: untick "Multiple airlines" via the
+                # facet, then re-assert the Cheapest sort. This is done in the
+                # scenario (NOT via an airlines=-MULT URL param) because the URL
+                # param glitched some dates to 0 cards; the facet untick + sort
+                # reliably surfaces the cheapest same-airline card. (The page is
+                # loaded WITHOUT -MULT, so the "Multiple airlines" checkbox is
+                # present and applyFacet unticks it correctly.)
+                {"evaluate": "window.FH.applyFacet()"},
+                {"wait": 1200},
                 {"evaluate": "window.FH.cheapest()"},
                 {"wait": 1000},
                 {"scroll_y": 1200},

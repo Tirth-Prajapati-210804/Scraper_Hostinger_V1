@@ -44,25 +44,24 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
     assert "o[0]||o[0]" in helper_script
-    # The applyFacet helper is still defined, but it must NOT be CALLED in the
-    # scenario: the URL (fs=airlines=-MULT) already excludes the mixed-carrier
-    # bucket, and on that filtered page the "Multiple airlines" control has no
-    # checkbox, so calling f.a() re-toggled MULT back ON and reintroduced mixed
-    # itineraries (0 same-airline results saved). URL isolation is the sole
-    # source of truth.
+    # Same-airline isolation is done in the SCENARIO: applyFacet() unticks
+    # "Multiple airlines", then cheapest() re-asserts the Cheapest sort. The URL
+    # does NOT carry airlines=-MULT (that param glitched some dates to 0 cards),
+    # so the facet untick is the reliable mechanism and must be CALLED.
     assert "multiple|mixed|various" in helper_script
     assert {"wait": 1600} in instructions
-    assert not any(
+    assert any(
         instruction.get("evaluate") == "window.FH.applyFacet()"
         for instruction in instructions
         if isinstance(instruction, dict)
     )
     assert instructions[-1] == {"evaluate": "window.FH.extract()"}
 
-    # The Cheapest sort is re-asserted (after the URL-filtered load) so the
-    # cheapest same-airline card is at the top before extract.
+    # applyFacet (untick Multiple airlines) runs BEFORE cheapest (re-sort), and
+    # cheapest before extract, so the cheapest same-airline card is at the top.
     evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
     assert "window.FH.cheapest()" in evals
+    assert evals.index("window.FH.applyFacet()") < evals.index("window.FH.cheapest()")
     assert evals.index("window.FH.cheapest()") < evals.index("window.FH.extract()")
     assert "f.cheap=" in helper_script
 
@@ -82,10 +81,10 @@ def test_rendered_results_scenario_can_select_later_airline_facet() -> None:
 
 
 def test_stop_filter_is_carried_in_kayak_url() -> None:
-    """Same-airline isolation (airlines=-MULT) and the per-leg stop filter are
-    both carried in the Kayak URL (fs=...), like Kayak's own UI, instead of a JS
-    facet click. airlines=-MULT excludes the mixed-carrier "Multiple airlines"
-    bucket; flylocal (self-transfer fares) is intentionally NOT included."""
+    """The per-leg stop filter is carried in the Kayak URL (fs=stops=...), like
+    Kayak's own UI. Same-airline isolation is NOT in the URL (airlines=-MULT was
+    tried but glitched some dates to 0 cards); it is done in the scenario via
+    applyFacet() + Cheapest sort instead. The URL must never carry -MULT."""
     provider = make_provider()
 
     url1 = provider._build_search_url(
@@ -93,23 +92,25 @@ def test_stop_filter_is_carried_in_kayak_url() -> None:
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=1,
     )
-    assert url1.endswith("?sort=price_a&fs=airlines=-MULT;stops=0,1")
+    assert url1.endswith("?sort=price_a&fs=stops=0,1")
 
     url0 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=0,
     )
-    assert url0.endswith("?sort=price_a&fs=airlines=-MULT;stops=0")
+    assert url0.endswith("?sort=price_a&fs=stops=0")
 
     url2 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=2,
     )
-    # No stop filter when max_stops >= 2, but airlines=-MULT is always present.
-    assert url2.endswith("?sort=price_a&fs=airlines=-MULT")
+    # No stop filter when max_stops >= 2.
+    assert url2.endswith("?sort=price_a")
     assert "stops=" not in url2
+    # The URL must NOT carry same-airline isolation (done in the scenario).
+    assert "airlines=-MULT" not in url1 and "airlines=-MULT" not in url2
     assert "flylocal" not in url2
 
     # The scenario no longer clicks the stop facet.
