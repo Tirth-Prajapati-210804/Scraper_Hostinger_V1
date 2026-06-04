@@ -31,7 +31,7 @@ class ProviderRegistry:
         self._fail_counts: dict[str, int] = {}
         self._last_status: dict[str, str] = {}
 
-        self._default_cooldown_seconds = 300
+        self._default_cooldown_seconds = 0
         self._rate_limit_cooldown_seconds = 300
 
         scrapingbee_keys = settings.get_scrapingbee_keys()
