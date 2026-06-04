@@ -100,9 +100,17 @@ export function DashboardPage() {
   const groups = useMemo(() => groupsQuery.data ?? [], [groupsQuery.data]);
   const health = healthQuery.data;
   const providerStatuses = Object.values(health?.provider_status ?? {});
+  // "No API key configured" must reflect a genuinely UNconfigured provider,
+  // not one that is merely in a temporary cooldown. The backend reports
+  // "disabled" only when no key is present; a configured provider that is
+  // cooling down reports "cooldown"/"rate_limited"/"quota_exhausted"/etc. and
+  // must NOT trigger this banner (that briefly showed the wrong message while
+  // collection was actually working). Only flag when there are provider entries
+  // and every one of them is "disabled".
   const noProvider =
     !healthQuery.isLoading &&
-    !providerStatuses.some((status) => status === "configured");
+    providerStatuses.length > 0 &&
+    providerStatuses.every((status) => status === "disabled");
   const activeGroups = groups.filter((group) => group.is_active).length;
   const pausedGroups = groups.length - activeGroups;
   const lastRunDisplay = useMemo(() => {
