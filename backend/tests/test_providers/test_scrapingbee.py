@@ -44,21 +44,25 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
     assert "o[0]||o[0]" in helper_script
-    # applyFacet removes the "Multiple airlines" mixed-carrier bucket.
+    # The applyFacet helper is still defined, but it must NOT be CALLED in the
+    # scenario: the URL (fs=airlines=-MULT) already excludes the mixed-carrier
+    # bucket, and on that filtered page the "Multiple airlines" control has no
+    # checkbox, so calling f.a() re-toggled MULT back ON and reintroduced mixed
+    # itineraries (0 same-airline results saved). URL isolation is the sole
+    # source of truth.
     assert "multiple|mixed|various" in helper_script
     assert {"wait": 1600} in instructions
-    assert any(
+    assert not any(
         instruction.get("evaluate") == "window.FH.applyFacet()"
         for instruction in instructions
         if isinstance(instruction, dict)
     )
     assert instructions[-1] == {"evaluate": "window.FH.extract()"}
 
-    # After unticking "Multiple airlines" (applyFacet), the Cheapest sort is
-    # re-asserted so the cheapest same-airline card is at the top before extract.
+    # The Cheapest sort is re-asserted (after the URL-filtered load) so the
+    # cheapest same-airline card is at the top before extract.
     evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
     assert "window.FH.cheapest()" in evals
-    assert evals.index("window.FH.applyFacet()") < evals.index("window.FH.cheapest()")
     assert evals.index("window.FH.cheapest()") < evals.index("window.FH.extract()")
     assert "f.cheap=" in helper_script
 

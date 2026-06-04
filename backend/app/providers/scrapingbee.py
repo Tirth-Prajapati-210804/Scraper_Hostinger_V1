@@ -581,11 +581,15 @@ class ScrapingBeeProvider:
         ]
         instructions.extend(
             [
-                {"evaluate": "window.FH.applyFacet()"},
-                {"wait": 1200},
-                # After unticking "Multiple airlines", re-assert the Cheapest sort
-                # so the cheapest same-airline card is at the top of what we
-                # extract (the facet change can disturb the URL sort).
+                # NOTE: applyFacet() (untick "Multiple airlines") is intentionally
+                # NOT called here. The URL already excludes the mixed-carrier
+                # bucket via fs=airlines=-MULT, and on that filtered page the
+                # "Multiple airlines" control renders with NO checkbox, so
+                # f.a()'s `if(!h||h.checked) click` fired the no-checkbox branch
+                # and TOGGLED MULT BACK ON -- reintroducing mixed itineraries
+                # (e.g. WestJet+Icelandair) that the same-airline filter then
+                # dropped, yielding 0 saved results. The URL isolation is the
+                # single source of truth; we only re-assert the Cheapest sort.
                 {"evaluate": "window.FH.cheapest()"},
                 {"wait": 1000},
                 {"scroll_y": 1200},
