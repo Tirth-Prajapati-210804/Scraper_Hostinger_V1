@@ -462,13 +462,26 @@ class ScrapingBeeProvider:
         return data
 
     def _kayak_query(self, max_stops: int | None) -> str:
-        """Kayak results query. The per-leg stop filter is carried in the URL
-        (fs=stops=...), like Kayak's own UI, e.g. ?sort=price_a&fs=stops=0,1.
-        This removes the need for the scenario to click the stop facet."""
-        query = "?sort=price_a"
+        """Kayak results query. Filters are carried in the URL (fs=...), like
+        Kayak's own UI, e.g. ?sort=price_a&fs=airlines=-MULT;stops=0,1.
+
+        - airlines=-MULT EXCLUDES the "Multiple airlines" mixed-carrier bucket,
+          which is exactly what the UI does when you untick "Multiple airlines".
+          Verified in a headless render: cheapest goes from the mixed-carrier
+          floor to the same-airline floor (matches what the browser shows). This
+          makes the page load same-airline + cheapest-first WITHOUT relying on a
+          js_scenario click. We intentionally DO NOT add Kayak's `flylocal`
+          token (self-transfer / separately-booked fares) -- those are not true
+          single-itinerary same-airline fares and would reintroduce options the
+          same-airline rule should exclude. The applyFacet() untick is kept in
+          the scenario as a harmless backstop (it finds nothing to untick when
+          the URL already excluded MULT).
+        - stops is appended with ';' per Kayak's filter grammar.
+        """
+        filters = ["airlines=-MULT"]
         if max_stops is not None and max_stops <= 1:
-            query += f"&fs=stops={'0' if max_stops <= 0 else '0,1'}"
-        return query
+            filters.append(f"stops={'0' if max_stops <= 0 else '0,1'}")
+        return f"?sort=price_a&fs={';'.join(filters)}"
 
     def _build_search_url(
         self,
@@ -545,7 +558,7 @@ class ScrapingBeeProvider:
             "f.x=()=>{const r=f.o();if(!r)return[];const s=new Map();for(const e of Array.from(r.querySelectorAll(q+',div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),p=f.p(t);if(p===null)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n))continue;const k=n.toLowerCase(),u=s.get(k),z=e.closest(q)||e;if(!u||p<u.p)s.set(k,{n,p,e:z})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
             "f.a=()=>{const o=f.x();f.g={s:o.length?(o[__FACET_INDEX__]||o[0]).n:'',o:o.map(v=>({n:v.n,p:v.p}))};const r=f.o();if(!r)return 0;let n=0;for(const e of Array.from(r.querySelectorAll(q))){if(!f.v(e))continue;if(/(multiple|mixed|various) airlines/i.test(f.t(e.innerText))){const h=e.querySelector('input[type=\"checkbox\"]');if(!h||h.checked){(h||e).click();n++}}}return n};"
             "f.l=()=>Array.from(document.querySelectorAll('[role=\"progressbar\"],progress,[aria-busy=\"true\"],[class*=\"loading\"],[class*=\"progress\"]')).some(f.v);"
-            "f.cheap=()=>{const e=Array.from(document.querySelectorAll(b)).find(x=>f.v(x)&&/^cheapest\\b/i.test(f.t(x.innerText))&&f.t(x.innerText).length<30);if(e){e.click();return 1}return 0};"
+            "f.cheap=()=>{const e=Array.from(document.querySelectorAll(b)).find(x=>f.v(x)&&/^cheapest$/i.test(f.n(x.innerText)[0]||''));if(e){e.click();return 1}return 0};"
             "f.empty=()=>!f.r().length&&/no result|no flight|no match|couldn.t f|adjust your f/i.test(document.body?.innerText||'');"
             "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll(j).length>=g).filter((n,i,a)=>!a.some((o,k)=>k!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll(j).length>=g));"
             "f.s=()=>{const z=Array.from(document.querySelectorAll(p)).map(n=>f.t(n.innerText)).filter(Boolean).slice(0,6).join('|'),m=(f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))).map(v=>`${v.n}:${v.p}`).join('|'),k=[f.l()?1:0,f.t(f.g?.s||''),z,m,f.r().length].join('||'),st=f.u||{k:'',h:0};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=f.l()?1:0;f.u=st;return !st.b&&(z||m)&&st.h>=3};"
@@ -645,23 +658,6 @@ class ScrapingBeeProvider:
             expected_leg_count=expected_leg_count,
         )
         return results, card_count, captured_count
-
-    async def _parse_multi_city_rendered_payload(
-        self,
-        rendered: dict,
-        *,
-        currency: str,
-        deep_link: str,
-        market_country_code: str,
-    ) -> tuple[list[ProviderResult], int, int]:
-        return await self._parse_rendered_payload(
-            rendered,
-            currency=currency,
-            deep_link=deep_link,
-            market_country_code=market_country_code,
-            trip_type="multi_city",
-            expected_leg_count=2,
-        )
 
     def _filter_results_by_stops(
         self,
@@ -1115,21 +1111,6 @@ class ScrapingBeeProvider:
         ]
         return min(prices) if prices else None
 
-    def _results_include_badge(
-        self,
-        results: list[ProviderResult],
-        label: str,
-    ) -> bool:
-        target = label.strip().lower()
-        for result in results:
-            raw_data = result.raw_data if isinstance(result.raw_data, dict) else {}
-            badges = raw_data.get("badges")
-            if not isinstance(badges, list):
-                continue
-            if any(_clean_text(badge).lower() == target for badge in badges):
-                return True
-        return False
-
     def _log_multi_city_debug_snapshot(
         self,
         *,
@@ -1474,23 +1455,6 @@ class ScrapingBeeProvider:
                 raw_data["return_airline"] = return_airline
 
         return sorted(results, key=lambda item: item.price)
-
-    def _normalize_multi_city_cards(
-        self,
-        payload: dict,
-        *,
-        currency: str,
-        deep_link: str,
-        market_country_code: str,
-    ) -> list[ProviderResult]:
-        return self._normalize_rendered_cards(
-            payload,
-            currency=currency,
-            deep_link=deep_link,
-            trip_type="multi_city",
-            market_country_code=market_country_code,
-            expected_leg_count=2,
-        )
 
     def _normalize_flights(
         self,

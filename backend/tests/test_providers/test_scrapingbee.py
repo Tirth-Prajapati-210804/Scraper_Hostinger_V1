@@ -78,8 +78,10 @@ def test_rendered_results_scenario_can_select_later_airline_facet() -> None:
 
 
 def test_stop_filter_is_carried_in_kayak_url() -> None:
-    """The per-leg stop filter is applied via the Kayak URL (fs=stops=...), like
-    Kayak's own UI, instead of a JS facet click."""
+    """Same-airline isolation (airlines=-MULT) and the per-leg stop filter are
+    both carried in the Kayak URL (fs=...), like Kayak's own UI, instead of a JS
+    facet click. airlines=-MULT excludes the mixed-carrier "Multiple airlines"
+    bucket; flylocal (self-transfer fares) is intentionally NOT included."""
     provider = make_provider()
 
     url1 = provider._build_search_url(
@@ -87,22 +89,24 @@ def test_stop_filter_is_carried_in_kayak_url() -> None:
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=1,
     )
-    assert url1.endswith("?sort=price_a&fs=stops=0,1")
+    assert url1.endswith("?sort=price_a&fs=airlines=-MULT;stops=0,1")
 
     url0 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=0,
     )
-    assert url0.endswith("?sort=price_a&fs=stops=0")
+    assert url0.endswith("?sort=price_a&fs=airlines=-MULT;stops=0")
 
     url2 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=2,
     )
-    assert url2.endswith("?sort=price_a")
-    assert "fs=stops" not in url2
+    # No stop filter when max_stops >= 2, but airlines=-MULT is always present.
+    assert url2.endswith("?sort=price_a&fs=airlines=-MULT")
+    assert "stops=" not in url2
+    assert "flylocal" not in url2
 
     # The scenario no longer clicks the stop facet.
     scenario = provider._build_results_scenario(
