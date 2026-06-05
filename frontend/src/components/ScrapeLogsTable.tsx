@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import type { ScrapeLogEntry } from "../types/price";
-import { formatRelativeTime } from "../utils/format";
+import { formatDisplayDate, formatRelativeTime } from "../utils/format";
 import { Skeleton } from "./ui/Skeleton";
 
 interface ScrapeLogsTableProps {
@@ -44,7 +44,7 @@ export function ScrapeLogsTable({
             <tr className="border-b border-slate-200">
               <Th>Time</Th>
               <Th>Route</Th>
-              <Th>Provider</Th>
+              <Th>Search Date</Th>
               <Th>Status</Th>
               <Th align="right">Price</Th>
               <Th align="right">Ms</Th>
@@ -63,7 +63,9 @@ export function ScrapeLogsTable({
                     {log.origin} -&gt; {log.destination}
                   </span>
                 </Td>
-                <Td className="capitalize text-slate-700">{log.provider}</Td>
+                <Td className="whitespace-nowrap text-slate-700">
+                  {formatDisplayDate(log.depart_date)}
+                </Td>
                 <Td>
                   <StatusBadge log={log} />
                 </Td>
