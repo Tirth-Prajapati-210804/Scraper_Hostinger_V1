@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Pencil, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { triggerGroupCollection } from "../api/collection";
+import { resetGroupCaps, triggerGroupCollection } from "../api/collection";
 import { getErrorMessage } from "../api/client";
 import { fetchPrices, fetchPriceTrend } from "../api/prices";
 import {
@@ -40,6 +40,8 @@ export function RouteGroupDetailPage() {
   const [includeLinks, setIncludeLinks] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [confirmTrigger, setConfirmTrigger] = useState(false);
+  const [resettingCaps, setResettingCaps] = useState(false);
+  const [confirmResetCaps, setConfirmResetCaps] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [selectedOrigin, setSelectedOrigin] = useState<string>("");
@@ -152,6 +154,24 @@ export function RouteGroupDetailPage() {
     }
   }
 
+  async function handleResetCaps() {
+    if (!id) return;
+    setConfirmResetCaps(false);
+    setResettingCaps(true);
+    try {
+      const result = await resetGroupCaps(id);
+      showToast(
+        `Retry caps reset — ${result.rows_cleared} skipped attempt(s) cleared. Trigger a scrape to collect them.`,
+        "success",
+      );
+      qc.invalidateQueries({ queryKey: ["route-group-progress", id] });
+    } catch (err) {
+      showToast(getErrorMessage(err, "Failed to reset retry caps"), "error");
+    } finally {
+      setResettingCaps(false);
+    }
+  }
+
   if (groupQuery.isLoading) {
     return (
       <div className="space-y-4">
@@ -191,6 +211,14 @@ export function RouteGroupDetailPage() {
             <Button variant="secondary" onClick={() => setConfirmTrigger(true)} loading={triggering}>
               <RefreshCw className="h-4 w-4" />
               Trigger Scrape
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmResetCaps(true)}
+              loading={resettingCaps}
+            >
+              <RotateCcw className="h-4 w-4" />
+              Reset Retry Caps
             </Button>
             <Button variant="primary" onClick={() => setDownloadOpen(true)}>
               <Download className="h-4 w-4" />
@@ -452,6 +480,33 @@ export function RouteGroupDetailPage() {
                 </Button>
                 <Button variant="primary" onClick={handleTrigger} loading={triggering}>
                   Yes, trigger
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {confirmResetCaps ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="mx-4 w-full max-w-sm rounded-[24px] bg-white p-6 shadow-xl">
+              <h3 className="text-base font-semibold text-slate-900">Reset Retry Caps?</h3>
+              <p className="mt-2 text-sm text-slate-500">
+                Dates that repeatedly returned no fare or errored are skipped after a
+                few attempts. This clears those skipped-attempt records for{" "}
+                <span className="font-medium text-slate-700">{group.name}</span> so they
+                can be collected again on the next scrape.
+              </p>
+              <p className="mt-2 text-sm text-slate-500">
+                Your already-collected prices are <span className="font-medium">not</span>{" "}
+                deleted, and already-collected dates are not re-scraped.
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setConfirmResetCaps(false)}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={handleResetCaps} loading={resettingCaps}>
+                  <RotateCcw className="h-4 w-4" />
+                  Yes, reset caps
                 </Button>
               </div>
             </div>

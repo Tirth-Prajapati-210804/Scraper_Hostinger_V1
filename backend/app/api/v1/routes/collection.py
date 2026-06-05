@@ -5,7 +5,7 @@ from datetime import date as date_type
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -160,6 +160,49 @@ async def trigger_group_date(
         )
     scheduler.start_single_group_task(group_id, [target_date])
     return {"status": "triggered", "group_id": str(group_id), "date": str(target_date)}
+
+
+@router.post("/reset-caps/{group_id}")
+async def reset_group_caps(
+    group_id: uuid.UUID,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, str | int]:
+    """Clear a group's retry caps so capped/skipped dates can collect again.
+
+    Deletes ONLY the cap-contributing scrape_logs rows -- the empty-date rows
+    (no_results: filtered_out/page_empty) and the error rows
+    (provider_error/extract_failed/parse_error/rate_limited/market_mismatch)
+    that the scheduler counts toward the empty/error attempt caps. It does NOT
+    touch:
+      - daily_cheapest_prices / all_flight_results (saved prices are kept),
+      - 'success' scrape_logs rows (collection history is kept).
+    So already-collected dates stay collected (and are not re-scraped); only the
+    dates that were skipped because they hit a cap become eligible again.
+    """
+    _enforce_scrape_rate_limit(request, current_user, f"reset-caps:{group_id}")
+    await _get_accessible_group(session, group_id)
+
+    result = await session.execute(
+        text(
+            """
+            DELETE FROM scrape_logs
+            WHERE route_group_id = :route_group_id
+              AND (
+                (status = 'no_results' AND result_reason IN ('filtered_out', 'page_empty'))
+                OR status IN (
+                    'provider_error', 'extract_failed', 'parse_error',
+                    'rate_limited', 'market_mismatch'
+                )
+              )
+            """
+        ),
+        {"route_group_id": str(group_id)},
+    )
+    await session.commit()
+    deleted = result.rowcount if result.rowcount is not None else 0
+    return {"status": "reset", "group_id": str(group_id), "rows_cleared": deleted}
 
 
 @router.get("/runs")

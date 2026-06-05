@@ -51,6 +51,19 @@ export async function triggerGroupCollectionDate(groupId: string, date: string):
   await api.post(`/api/v1/collection/trigger-group/${groupId}/date/${date}`);
 }
 
+export interface ResetCapsResult {
+  status: string;
+  group_id: string;
+  rows_cleared: number;
+}
+
+export async function resetGroupCaps(groupId: string): Promise<ResetCapsResult> {
+  const res = await api.post<ResetCapsResult>(
+    `/api/v1/collection/reset-caps/${groupId}`,
+  );
+  return res.data;
+}
+
 export async function fetchCollectionRuns(limit = 20): Promise<CollectionRun[]> {
   const res = await api.get<CollectionRun[]>("/api/v1/collection/runs", {
     params: { limit },

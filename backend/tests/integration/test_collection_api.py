@@ -120,3 +120,78 @@ async def test_list_logs_scoped_to_user(make_auth_client):
     res = await user_client.get("/api/v1/collection/logs")
     assert res.status_code == 200
     assert isinstance(res.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_reset_caps_requires_auth(client):
+    res = await client.post(
+        "/api/v1/collection/reset-caps/00000000-0000-0000-0000-000000000000"
+    )
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_reset_caps_group_not_found(auth_client):
+    res = await auth_client.post(
+        "/api/v1/collection/reset-caps/00000000-0000-0000-0000-000000000000"
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_reset_caps_clears_only_cap_rows(auth_client, db_session_factory):
+    """reset-caps deletes empty/error scrape_logs but keeps 'success' rows and
+    daily_cheapest_prices (collected data must survive)."""
+    from datetime import date
+    from uuid import uuid4
+
+    from sqlalchemy import text
+
+    rg_id = uuid4()
+    async with db_session_factory() as s:
+        await s.execute(
+            text(
+                """
+                INSERT INTO route_groups (id, name, destination_label, destinations,
+                    origins, nights, days_ahead, sheet_name_map, special_sheets,
+                    is_active, market, currency, trip_type)
+                VALUES (:id, 'reset-caps-test', 'KEF', '["KEF"]'::jsonb, '["YEG"]'::jsonb,
+                    5, 30, '{}'::jsonb, '[]'::jsonb, true, 'ca', 'CAD', 'round_trip')
+                """
+            ),
+            {"id": str(rg_id)},
+        )
+        # 1 success (keep), 1 filtered_out empty (delete), 1 provider_error (delete)
+        for status_val, reason in [
+            ("success", "success"),
+            ("no_results", "filtered_out"),
+            ("provider_error", None),
+        ]:
+            await s.execute(
+                text(
+                    """
+                    INSERT INTO scrape_logs (id, route_group_id, origin, destination,
+                        depart_date, provider, status, offers_found, result_reason,
+                        raw_offers_found, eligible_offers_found)
+                    VALUES (:id, :rg, 'YEG', 'KEF', :d, 'scrapingbee', :st, 0, :rs, 5, 0)
+                    """
+                ),
+                {"id": str(uuid4()), "rg": str(rg_id), "d": date(2026, 10, 5),
+                 "st": status_val, "rs": reason},
+            )
+        await s.commit()
+
+    res = await auth_client.post(f"/api/v1/collection/reset-caps/{rg_id}")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "reset"
+    assert body["rows_cleared"] == 2  # the empty + error rows only
+
+    async with db_session_factory() as s:
+        remaining = (
+            await s.execute(
+                text("SELECT status FROM scrape_logs WHERE route_group_id = :rg"),
+                {"rg": str(rg_id)},
+            )
+        ).scalars().all()
+    assert remaining == ["success"]  # success row preserved
