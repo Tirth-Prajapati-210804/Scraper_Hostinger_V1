@@ -164,6 +164,30 @@ async def list_group_results(
     ]
 
 
+@router.get("/progress-summary", response_model=list[RouteGroupProgress])
+async def get_progress_summary(
+    session: _DB,
+    current_user: _Auth,
+    active_only: bool = False,
+) -> list[RouteGroupProgress]:
+    """Progress for ALL route groups in a single request.
+
+    The dashboard previously fetched progress one group at a time (an N+1 of
+    ~18 HTTP round-trips per load through Cloudflare, which felt slow even though
+    the server was idle). This returns the same per-group progress objects in one
+    response. Each group's progress is computed by the SAME get_progress() used
+    by the single-group endpoint, so the numbers are identical -- only the number
+    of HTTP requests changes. A group with no data is still included (0%).
+    """
+    groups = await route_group_service.list_all(session, active_only=active_only)
+    summaries: list[RouteGroupProgress] = []
+    for group in groups:
+        progress = await route_group_service.get_progress(session, group.id)
+        if progress is not None:
+            summaries.append(progress)
+    return summaries
+
+
 @router.get("/{group_id}/progress", response_model=RouteGroupProgress)
 async def get_progress(group_id: uuid.UUID, session: _DB, current_user: _Auth) -> RouteGroupProgress:
     # Verify access first
