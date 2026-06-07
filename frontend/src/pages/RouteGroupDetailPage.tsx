@@ -3,7 +3,11 @@ import { ArrowLeft, Download, Pencil, RefreshCw, RotateCcw, Trash2 } from "lucid
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { resetGroupCaps, triggerGroupCollection } from "../api/collection";
+import {
+  resetGroupCaps,
+  triggerGroupCollection,
+  triggerGroupCollectionDate,
+} from "../api/collection";
 import { getErrorMessage } from "../api/client";
 import { fetchPrices, fetchPriceTrend } from "../api/prices";
 import {
@@ -25,7 +29,7 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { useToast } from "../context/ToastContext";
 import type { DailyPrice } from "../types/price";
 import { formatStopModeLabel } from "../utils/stopModes";
-import { formatFreshnessLabel } from "../utils/format";
+import { formatDisplayDate, formatFreshnessLabel } from "../utils/format";
 import { usePageTitle } from "../utils/usePageTitle";
 
 export function RouteGroupDetailPage() {
@@ -42,6 +46,9 @@ export function RouteGroupDetailPage() {
   const [confirmTrigger, setConfirmTrigger] = useState(false);
   const [resettingCaps, setResettingCaps] = useState(false);
   const [confirmResetCaps, setConfirmResetCaps] = useState(false);
+  // On-demand single-date scrape (click a square in the Collection Progress grid).
+  const [confirmScrapeDate, setConfirmScrapeDate] = useState<string | null>(null);
+  const [scrapingDate, setScrapingDate] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [selectedOrigin, setSelectedOrigin] = useState<string>("");
@@ -169,6 +176,28 @@ export function RouteGroupDetailPage() {
       showToast(getErrorMessage(err, "Failed to reset retry caps"), "error");
     } finally {
       setResettingCaps(false);
+    }
+  }
+
+  async function handleScrapeDate(date: string) {
+    if (!id) return;
+    setConfirmScrapeDate(null);
+    setScrapingDate(date);
+    try {
+      await triggerGroupCollectionDate(id, date);
+      showToast(
+        `Scraping ${formatDisplayDate(date)} now (ignoring retry cap). It updates when done.`,
+        "success",
+      );
+      // Refresh progress shortly after so the square reflects the new result.
+      setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ["route-group-progress", id] });
+        qc.invalidateQueries({ queryKey: ["scrape-logs", id] });
+      }, 1500);
+    } catch (err) {
+      showToast(getErrorMessage(err, "Failed to scrape this date"), "error");
+    } finally {
+      setScrapingDate(null);
     }
   }
 
@@ -343,7 +372,11 @@ export function RouteGroupDetailPage() {
           ) : progressQuery.isError ? (
             <p className="text-sm text-red-500">Failed to load progress. Try refreshing the page.</p>
           ) : progressQuery.data ? (
-            <DateCoverageGrid progress={progressQuery.data} />
+            <DateCoverageGrid
+              progress={progressQuery.data}
+              onScrapeDate={(iso) => setConfirmScrapeDate(iso)}
+              scrapingDate={scrapingDate}
+            />
           ) : (
             <p className="text-sm text-slate-400">No data collected yet. Trigger a collection to start.</p>
           )}
@@ -507,6 +540,37 @@ export function RouteGroupDetailPage() {
                 <Button variant="primary" onClick={handleResetCaps} loading={resettingCaps}>
                   <RotateCcw className="h-4 w-4" />
                   Yes, reset caps
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {confirmScrapeDate ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="mx-4 w-full max-w-sm rounded-[24px] bg-white p-6 shadow-xl">
+              <h3 className="text-base font-semibold text-slate-900">Scrape this date?</h3>
+              <p className="mt-2 text-sm text-slate-500">
+                Scrape{" "}
+                <span className="font-medium text-slate-700">
+                  {formatDisplayDate(confirmScrapeDate)}
+                </span>{" "}
+                for <span className="font-medium text-slate-700">{group.name}</span> now.
+              </p>
+              <p className="mt-2 text-sm text-slate-500">
+                This re-scrapes that single date even if it was already collected or
+                previously skipped (ignores retry caps), and uses ScrapingBee credits.
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setConfirmScrapeDate(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => handleScrapeDate(confirmScrapeDate)}
+                  loading={Boolean(scrapingDate)}
+                >
+                  Yes, scrape it
                 </Button>
               </div>
             </div>

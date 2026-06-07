@@ -52,6 +52,7 @@ def make_scheduler() -> FlightScheduler:
     settings.scrape_max_empty_attempts = 2
     settings.scrape_max_error_attempts = 2
     settings.scrape_error_cap_since = ""  # disabled by default (no surprise skips)
+    settings.scrape_max_days_ahead = 325  # real int for the rolling-horizon logic
     return FlightScheduler(
         settings=settings,
         session_factory=MagicMock(),
@@ -688,6 +689,7 @@ async def test_start_single_group_task_tracks_one_active_task(
     async def fake_trigger_single_group(
         passed_group_id,
         target_dates=None,
+        bypass_caps=False,
     ) -> dict[str, int]:
         assert passed_group_id == group_id
         assert target_dates == [D1]
@@ -705,6 +707,33 @@ async def test_start_single_group_task_tracks_one_active_task(
     release.set()
     await scheduler._active_task
     assert scheduler._active_task is None
+
+
+@pytest.mark.asyncio
+async def test_start_single_group_task_passes_bypass_caps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The no-cap on-demand scrape (click-a-date) threads bypass_caps through to
+    trigger_single_group so the chosen date(s) skip the retry caps."""
+    scheduler = make_scheduler()
+    group_id = uuid4()
+    seen: dict[str, object] = {}
+
+    async def fake_trigger_single_group(
+        passed_group_id,
+        target_dates=None,
+        bypass_caps=False,
+    ) -> dict[str, int]:
+        seen["bypass_caps"] = bypass_caps
+        seen["target_dates"] = target_dates
+        return {"success": 0, "errors": 0, "skipped": 0}
+
+    monkeypatch.setattr(scheduler, "trigger_single_group", fake_trigger_single_group)
+
+    assert scheduler.start_single_group_task(group_id, [D1], bypass_caps=True) is True
+    await scheduler._active_task
+    assert seen["bypass_caps"] is True
+    assert seen["target_dates"] == [D1]
 
 
 @pytest.mark.asyncio

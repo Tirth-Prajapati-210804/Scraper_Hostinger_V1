@@ -26,7 +26,7 @@ def make_provider(api_key: str = "test-key") -> ScrapingBeeProvider:
     )
 
 
-def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
+def test_rendered_results_scenario_uses_mult_flylocal_url_flow() -> None:
     provider = make_provider()
 
     scenario = provider._build_results_scenario(
@@ -40,30 +40,22 @@ def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
 
     assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
     assert instructions[2] == {"wait": _SAME_AIRLINE_INITIAL_WAIT_MS}
-    assert "f.applyFacet=f.a" in helper_script
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
     assert "o[0]||o[0]" in helper_script
-    # Same-airline isolation is done in the SCENARIO: applyFacet() unticks
-    # "Multiple airlines", then cheapest() re-asserts the Cheapest sort. The URL
-    # does NOT carry airlines=-MULT (that param glitched some dates to 0 cards),
-    # so the facet untick is the reliable mechanism and must be CALLED.
-    assert "multiple|mixed|various" in helper_script
-    assert {"wait": 1600} in instructions
-    assert any(
-        instruction.get("evaluate") == "window.FH.applyFacet()"
-        for instruction in instructions
-        if isinstance(instruction, dict)
-    )
+    assert "f.cheap=" in helper_script
     assert instructions[-1] == {"evaluate": "window.FH.extract()"}
 
-    # applyFacet (untick Multiple airlines) runs BEFORE cheapest (re-sort), and
-    # cheapest before extract, so the cheapest same-airline card is at the top.
+    # Same-airline isolation is now carried in the URL (airlines=-MULT,flylocal),
+    # so the scenario no longer calls applyFacet(); it only re-asserts the Cheapest
+    # sort, then settles (adaptive poll) before extracting.
     evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
+    assert "window.FH.applyFacet()" not in evals
     assert "window.FH.cheapest()" in evals
-    assert evals.index("window.FH.applyFacet()") < evals.index("window.FH.cheapest()")
-    assert evals.index("window.FH.cheapest()") < evals.index("window.FH.extract()")
-    assert "f.cheap=" in helper_script
+    assert "window.FH.settle()" in evals
+    assert evals.index("window.FH.cheapest()") < evals.index("window.FH.settle()")
+    assert evals.index("window.FH.settle()") < evals.index("window.FH.extract()")
+    assert evals.count("window.FH.settle()") >= 2
 
 
 def test_rendered_results_scenario_can_select_later_airline_facet() -> None:
@@ -80,11 +72,11 @@ def test_rendered_results_scenario_can_select_later_airline_facet() -> None:
     assert "o[2]||o[0]" in helper_script
 
 
-def test_stop_filter_is_carried_in_kayak_url() -> None:
-    """The per-leg stop filter is carried in the Kayak URL (fs=stops=...), like
-    Kayak's own UI. Same-airline isolation is NOT in the URL (airlines=-MULT was
-    tried but glitched some dates to 0 cards); it is done in the scenario via
-    applyFacet() + Cheapest sort instead. The URL must never carry -MULT."""
+def test_same_airline_and_stop_filter_carried_in_kayak_url() -> None:
+    """Same-airline isolation (airlines=-MULT,flylocal) AND the per-leg stop
+    filter (stops=...) are carried in the Kayak URL, mirroring Kayak's own UI.
+    -MULT alone hid cheaper airlines; flylocal restores them (proven), so both
+    tokens are required. No stop token when max_stops >= 2."""
     provider = make_provider()
 
     url1 = provider._build_search_url(
@@ -92,33 +84,72 @@ def test_stop_filter_is_carried_in_kayak_url() -> None:
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=1,
     )
-    assert url1.endswith("?sort=price_a&fs=stops=0,1")
+    assert url1.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;stops=0,1")
 
     url0 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=0,
     )
-    assert url0.endswith("?sort=price_a&fs=stops=0")
+    assert url0.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;stops=0")
 
     url2 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=2,
     )
-    # No stop filter when max_stops >= 2.
-    assert url2.endswith("?sort=price_a")
+    # No stop filter when max_stops >= 2, but same-airline isolation still applies.
+    assert url2.endswith("?sort=price_a&fs=airlines=-MULT,flylocal")
     assert "stops=" not in url2
-    # The URL must NOT carry same-airline isolation (done in the scenario).
-    assert "airlines=-MULT" not in url1 and "airlines=-MULT" not in url2
-    assert "flylocal" not in url2
+    assert "airlines=-MULT,flylocal" in url1 and "airlines=-MULT,flylocal" in url2
 
-    # The scenario no longer clicks the stop facet.
+    # The scenario no longer clicks the stop facet or applyFacet (URL handles it).
     scenario = provider._build_results_scenario(
         deep=True, same_airline_only=True, minimum_leg_count=2, max_stops=1
     )
     evals = [i.get("evaluate") for i in scenario["instructions"] if isinstance(i, dict)]
     assert not any(e and "window.FH.w(" in e for e in evals)
+    assert "window.FH.applyFacet()" not in evals
+
+
+def _mk_result(price: float) -> ProviderResult:
+    return ProviderResult(
+        price=price, currency="CAD", airline="X", deep_link="", provider="scrapingbee",
+        duration_minutes=100, stops=1, raw_data={},
+    )
+
+
+def _rendered_with_facet(options: list[dict]) -> dict:
+    payload = json.dumps({"c": [], "f": {"o": options}})
+    return {"evaluate_results": [payload]}
+
+
+def test_render_missed_cheapest_flags_partial_render() -> None:
+    """When our cheapest is clearly above the facet floor, the render missed the
+    cheapest airline's cards -> completeness retry should trigger."""
+    provider = make_provider()
+    rendered = _rendered_with_facet([{"n": "ANA", "p": 2125}, {"n": "United", "p": 2446}])
+    # Our cheapest 2446 vs floor 2125 -> missed (> +40 and > +3%).
+    assert provider._render_missed_cheapest(rendered, [_mk_result(2446)]) is True
+
+
+def test_render_missed_cheapest_ignores_when_matching_floor() -> None:
+    provider = make_provider()
+    rendered = _rendered_with_facet([{"n": "ANA", "p": 2125}])
+    # Matches floor -> not missed.
+    assert provider._render_missed_cheapest(rendered, [_mk_result(2125)]) is False
+    # Within tolerance (+15 < +40) -> not missed.
+    assert provider._render_missed_cheapest(rendered, [_mk_result(2140)]) is False
+
+
+def test_render_missed_cheapest_safe_without_facet_or_results() -> None:
+    provider = make_provider()
+    # No facet data -> can't judge -> not missed (don't retry blindly).
+    assert provider._render_missed_cheapest({"evaluate_results": []}, [_mk_result(2446)]) is False
+    # No eligible results -> not missed.
+    assert provider._render_missed_cheapest(
+        _rendered_with_facet([{"n": "ANA", "p": 2125}]), []
+    ) is False
 
 
 def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:

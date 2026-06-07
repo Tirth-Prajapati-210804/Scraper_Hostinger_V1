@@ -158,7 +158,15 @@ async def trigger_group_date(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=_provider_unavailable_detail(registry),
         )
-    scheduler.start_single_group_task(group_id, [target_date])
+    # Clicking a single date (e.g. in the Collection Progress grid) is an explicit
+    # on-demand request: bypass the retry caps so the user can force-refresh ANY
+    # date, even one already collected or previously capped/skipped.
+    started = scheduler.start_single_group_task(group_id, [target_date], bypass_caps=True)
+    if not started:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A scrape is already running. Please wait for it to finish, then try again.",
+        )
     return {"status": "triggered", "group_id": str(group_id), "date": str(target_date)}
 
 

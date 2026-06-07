@@ -7,12 +7,15 @@ from unittest.mock import MagicMock
 from app.tasks.scheduler import FlightScheduler
 
 
-def make_scheduler() -> FlightScheduler:
+def make_scheduler(scrape_max_days_ahead: int = 365) -> FlightScheduler:
     settings = MagicMock()
     settings.scheduler_enabled = False
     settings.telegram_bot_token = ""
     settings.telegram_chat_id = ""
     settings.sentry_dsn = ""
+    # Real int so the rolling-horizon cap in _group_dates doesn't clamp existing
+    # date-range tests (default high). Horizon behaviour has its own tests below.
+    settings.scrape_max_days_ahead = scrape_max_days_ahead
     return FlightScheduler(
         settings=settings,
         session_factory=MagicMock(),
@@ -56,22 +59,47 @@ def test_group_dates_explicit_range() -> None:
 
 
 def test_group_dates_capped_at_730() -> None:
-    """Even if days_ahead is absurdly large, dates are capped at 730."""
-    scheduler = make_scheduler()
+    """The _MAX_DATES=730 hard safety ceiling still applies. In production the
+    325-day rolling horizon caps first; here we disable the horizon to verify the
+    deeper 730 guardrail in isolation."""
+    scheduler = make_scheduler(scrape_max_days_ahead=0)
     group = make_group(days_ahead=5000)
     dates = scheduler._group_dates(group)
     assert len(dates) == 730
 
 
 def test_group_dates_explicit_end_capped_at_730() -> None:
-    """An explicit end_date far in the future is still capped."""
-    scheduler = make_scheduler()
+    """An explicit far-future end_date is still capped at the 730 safety ceiling
+    (horizon disabled here to verify that ceiling in isolation)."""
+    scheduler = make_scheduler(scrape_max_days_ahead=0)
     group = make_group(
         start_date=date(2026, 1, 1),
         end_date=date(2030, 1, 1),  # ~4 years
     )
     dates = scheduler._group_dates(group)
     assert len(dates) == 730
+
+
+def test_group_dates_capped_at_horizon() -> None:
+    """The rolling horizon caps the date range at today + scrape_max_days_ahead.
+    This is the limit that actually applies in production (325 days)."""
+    scheduler = make_scheduler(scrape_max_days_ahead=325)
+    group = make_group(days_ahead=5000)  # group wants way more than the horizon
+    dates = scheduler._group_dates(group)
+    assert dates[0] == date.today()
+    assert dates[-1] == date.today() + timedelta(days=325)
+    assert len(dates) == 326  # today through today+325 inclusive
+
+
+def test_group_dates_horizon_beats_730() -> None:
+    """When both limits could apply, the smaller 325 horizon wins (production)."""
+    scheduler = make_scheduler(scrape_max_days_ahead=325)
+    group = make_group(
+        start_date=date.today(),
+        end_date=date.today() + timedelta(days=4000),
+    )
+    dates = scheduler._group_dates(group)
+    assert len(dates) == 326  # horizon (325) caps first, not 730
 
 
 def test_group_dates_zero_days_ahead() -> None:

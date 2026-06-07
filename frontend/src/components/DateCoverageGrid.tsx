@@ -5,6 +5,11 @@ import { formatDisplayDate, formatFreshnessLabel, formatNumber } from "../utils/
 
 interface DateCoverageGridProps {
   progress: RouteGroupProgress;
+  /** When provided, each date square becomes clickable and calls this with the
+   *  ISO date (YYYY-MM-DD) to scrape that single date on demand (no retry cap). */
+  onScrapeDate?: (iso: string) => void;
+  /** ISO date currently being scraped (shows a spinner/pulse on that square). */
+  scrapingDate?: string | null;
 }
 
 function addDays(date: Date, days: number): Date {
@@ -25,7 +30,7 @@ interface MonthGroup {
   days: { iso: string; hasData: boolean; isToday: boolean }[];
 }
 
-export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
+export function DateCoverageGrid({ progress, onScrapeDate, scrapingDate }: DateCoverageGridProps) {
   const scrapedSet = useMemo(() => new Set(progress.scraped_dates), [progress.scraped_dates]);
 
   const originCount = Object.keys(progress.per_origin).length || 1;
@@ -118,6 +123,9 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
             <span className="inline-block h-3 w-3 rounded-sm bg-slate-200" />
             Not yet collected
           </span>
+          {onScrapeDate ? (
+            <span className="text-slate-400">· click a date to scrape it</span>
+          ) : null}
         </div>
       </div>
 
@@ -126,19 +134,43 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
           <div key={month.label}>
             <p className="mb-1.5 text-xs font-medium text-slate-500">{month.label}</p>
             <div className="flex flex-wrap gap-1">
-              {month.days.map(({ iso, hasData, isToday }) => (
-                <div
-                  key={iso}
-                  title={formatDisplayDate(iso)}
-                  className={[
-                    "h-4 w-4 rounded-[4px] transition-colors",
-                    hasData ? "bg-brand-500 hover:bg-brand-600" : "bg-slate-200 hover:bg-slate-300",
-                    isToday ? "ring-2 ring-amber-400 ring-offset-1" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                />
-              ))}
+              {month.days.map(({ iso, hasData, isToday }) => {
+                const isScraping = scrapingDate === iso;
+                const baseClasses = [
+                  "h-4 w-4 rounded-[4px] transition-colors",
+                  hasData ? "bg-brand-500" : "bg-slate-200",
+                  isToday ? "ring-2 ring-amber-400 ring-offset-1" : "",
+                  isScraping ? "animate-pulse ring-2 ring-brand-400 ring-offset-1" : "",
+                ];
+                if (!onScrapeDate) {
+                  return (
+                    <div
+                      key={iso}
+                      title={formatDisplayDate(iso)}
+                      className={[...baseClasses, hasData ? "hover:bg-brand-600" : "hover:bg-slate-300"]
+                        .filter(Boolean)
+                        .join(" ")}
+                    />
+                  );
+                }
+                return (
+                  <button
+                    key={iso}
+                    type="button"
+                    disabled={Boolean(scrapingDate)}
+                    onClick={() => onScrapeDate(iso)}
+                    title={`${formatDisplayDate(iso)} — click to scrape this date`}
+                    className={[
+                      ...baseClasses,
+                      "cursor-pointer disabled:cursor-not-allowed",
+                      hasData ? "hover:bg-brand-700" : "hover:bg-brand-300",
+                      "hover:ring-2 hover:ring-brand-400 hover:ring-offset-1",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  />
+                );
+              })}
             </div>
           </div>
         ))}

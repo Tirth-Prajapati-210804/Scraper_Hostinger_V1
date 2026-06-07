@@ -30,6 +30,14 @@ from app.utils.airline_codes import normalize_airline
 
 log = get_logger(__name__)
 
+
+class ScrapingBeeTransientError(RuntimeError):
+    """A render failure that is worth retrying: a flaky empty render where the
+    page momentarily exposed no cards even though fares should exist (results DOM
+    present, not a genuine "no results" page). Subclasses RuntimeError so the
+    existing retry layer picks it up; classified as provider_error like before.
+    """
+
 _BASE_URL = "https://app.scrapingbee.com/api/v1"
 _KAYAK_DEFAULT_HOST = "www.kayak.com"
 _MONEY_RE = re.compile(r"(-?\d[\d,]*(?:\.\d+)?)")
@@ -137,6 +145,12 @@ _MAX_AIRLINE_FACET_ATTEMPTS = 3
 _RESULT_PRICE_SELECTOR = ".nrc6-price-section .e2GB-price-text"
 _SAME_AIRLINE_INITIAL_WAIT_MS = 5_000
 _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
+# Hard cap on total renders for ONE date in ONE scrape. A single shared budget
+# across ALL retry reasons (HTTP 5xx / flaky-empty / missed-cheapest) -- they do
+# NOT stack. So a date costs at most 2 renders: the first, plus at most one extra
+# to recover a fixably-flawed render. We stop early the instant the result matches
+# the facet floor (best possible) or the page genuinely reports "no results".
+_MAX_RENDERS_PER_SEARCH = 2
 # ScrapingBee's internal render budget must stay BELOW the httpx client timeout so
 # a render that legitimately uses most of its budget still returns (with proxy /
 # browser-startup / response-transfer overhead) before the client gives up.
@@ -219,6 +233,7 @@ class ScrapingBeeProvider:
         base_url: str = _BASE_URL,
         timeout: int = 30,
         max_retries: int = 3,
+        transient_retries: int = 2,
         concurrency_limit: int = 2,
         rendered_concurrency_limit: int | None = None,
         min_delay_seconds: float = 1.0,
@@ -233,6 +248,10 @@ class ScrapingBeeProvider:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._max_retries = max(1, max_retries)
+        # Attempts for transient render failures (HTTP 5xx, flaky empty renders).
+        # Independent of max_retries so transient flakiness gets a retry even when
+        # the general retry budget is deliberately kept at 1.
+        self._transient_retries = max(1, transient_retries)
         self._country_code = country_code.strip().lower()
         self._premium_proxy = premium_proxy
         self._stealth_proxy = stealth_proxy
@@ -462,22 +481,33 @@ class ScrapingBeeProvider:
         return data
 
     def _kayak_query(self, max_stops: int | None) -> str:
-        """Kayak results query. The per-leg stop filter is carried in the URL
-        (fs=stops=...), like Kayak's own UI, e.g. ?sort=price_a&fs=stops=0,1.
+        """Kayak results query, mirroring Kayak's own UI filter URL, e.g.
+        ?sort=price_a&fs=airlines=-MULT,flylocal;stops=0,1
 
-        We intentionally do NOT put airlines=-MULT in the URL. It was tried
-        (commit 6847a1a) and worked on some dates, but on others the -MULT URL
-        parameter put Kayak into a broken "No matching results" state (0 cards)
-        even though same-airline fares existed -- verified on YEG-KEF 2026-10-19,
-        where the -MULT URL returned 0 but the facet-untick workflow below
-        returned 3 same-airline Alaska cards. Same-airline isolation is therefore
-        done in the scenario via applyFacet() (untick "Multiple airlines") + the
-        Cheapest sort, which is reliable across dates.
+        Filters (proven 2026-06-07 with a full filter matrix, see memory
+        flylocal-and-extraction-verified / mult-url-is-accurate-applyfacet):
+
+        - airlines=-MULT      : exclude the "Multiple airlines" mixed-carrier
+          bucket so only single-carrier (same-airline) fares remain.
+        - flylocal            : REQUIRED. -MULT *alone* hides cheaper single-
+          carrier fares (e.g. it returned AC C$2,381 while ANA C$2,089 existed).
+          Adding flylocal restores them: -MULT,flylocal gives the SAME cheapest as
+          the plain stops-only view (ANA C$2,089), i.e. the true cheapest. The
+          flylocal cards here are genuine single-carrier fares (no self-transfer
+          badge), so the same-airline filter still keeps only valid ones.
+        - stops=...           : per-leg stop limit (0 = direct only, 0,1 = direct
+          or 1-stop). Omitted for max_stops>=2 (no stop restriction).
+
+        sort=price_a puts the cheapest first; the scenario re-asserts the Cheapest
+        sort and the extractor independently picks the min-price same-airline card.
+        Far-future dates (beyond Kayak's ~330-day horizon) return unstable
+        inventory; the scheduler's scrape_max_days_ahead cap excludes them, and
+        near (in-horizon) dates are stable (verified: identical price across runs).
         """
-        query = "?sort=price_a"
+        filters: list[str] = ["airlines=-MULT,flylocal"]
         if max_stops is not None and max_stops <= 1:
-            query += f"&fs=stops={'0' if max_stops <= 0 else '0,1'}"
-        return query
+            filters.append(f"stops={'0' if max_stops <= 0 else '0,1'}")
+        return "?sort=price_a&fs=" + ";".join(filters)
 
     def _build_search_url(
         self,
@@ -553,12 +583,12 @@ class ScrapingBeeProvider:
             "f.o=()=>Array.from(document.querySelectorAll(d)).filter(e=>f.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;"
             "f.x=()=>{const r=f.o();if(!r)return[];const s=new Map();for(const e of Array.from(r.querySelectorAll(q+',div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),p=f.p(t);if(p===null)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n))continue;const k=n.toLowerCase(),u=s.get(k),z=e.closest(q)||e;if(!u||p<u.p)s.set(k,{n,p,e:z})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
             "f.a=()=>{const o=f.x();f.g={s:o.length?(o[__FACET_INDEX__]||o[0]).n:'',o:o.map(v=>({n:v.n,p:v.p}))};const r=f.o();if(!r)return 0;let n=0;for(const e of Array.from(r.querySelectorAll(q))){if(!f.v(e))continue;if(/(multiple|mixed|various) airlines/i.test(f.t(e.innerText))){const h=e.querySelector('input[type=\"checkbox\"]');if(!h||h.checked){(h||e).click();n++}}}return n};"
-            "f.l=()=>Array.from(document.querySelectorAll('[role=\"progressbar\"],progress,[aria-busy=\"true\"],[class*=\"loading\"],[class*=\"progress\"]')).some(f.v);"
+            "f.l=()=>Array.from(document.querySelectorAll('[role=\"progressbar\"][aria-valuenow]:not([aria-valuenow=\"100\"]),progress:not([value=\"\"]),[aria-busy=\"true\"]')).some(f.v);"
             "f.cheap=()=>{const e=Array.from(document.querySelectorAll(b)).find(x=>f.v(x)&&/^cheapest$/i.test(f.n(x.innerText)[0]||''));if(e){e.click();return 1}return 0};"
             "f.empty=()=>!f.r().length&&/no result|no flight|no match|couldn.t f|adjust your f/i.test(document.body?.innerText||'');"
             "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll(j).length>=g).filter((n,i,a)=>!a.some((o,k)=>k!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll(j).length>=g));"
-            "f.s=()=>{const z=Array.from(document.querySelectorAll(p)).map(n=>f.t(n.innerText)).filter(Boolean).slice(0,6).join('|'),m=(f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))).map(v=>`${v.n}:${v.p}`).join('|'),k=[f.l()?1:0,f.t(f.g?.s||''),z,m,f.r().length].join('||'),st=f.u||{k:'',h:0};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=f.l()?1:0;f.u=st;return !st.b&&(z||m)&&st.h>=3};"
-            "f.e=()=>{const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll(j)).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:f.t(f.g?.s||''),o:f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(f.u&&f.u.h>=3&&!f.u.b),np:f.empty(),sm:true})};f.applyFacet=f.a;f.settle=f.s;f.extract=f.e;f.cheapest=f.cheap;return true})()"
+            "f.s=()=>{const z=Array.from(document.querySelectorAll(p)).map(n=>f.t(n.innerText)).filter(Boolean).slice(0,6).join('|'),m=(f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))).map(v=>`${v.n}:${v.p}`).join('|'),k=[f.l()?1:0,f.t(f.g?.s||''),z,m,f.r().length].join('||'),st=f.u||{k:'',h:0};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=f.l()?1:0;f.u=st;const ok=!st.b&&(z||m)&&st.h>=2;if(ok)document.body.setAttribute('data-fh-st','1');return ok};"
+            "f.e=()=>{const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll(j)).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:f.t(f.g?.s||''),o:f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(f.u&&f.u.h>=2&&!f.u.b),np:f.empty(),sm:true})};f.applyFacet=f.a;f.settle=f.s;f.extract=f.e;f.cheapest=f.cheap;return true})()"
         )
         helper_script = (
             helper_script.replace("__LIMIT__", str(card_limit))
@@ -567,49 +597,36 @@ class ScrapingBeeProvider:
             .replace("__PRICE_SELECTOR__", _RESULT_PRICE_SELECTOR)
         )
 
-        # Stops are applied via the URL (fs=stops=...). The scenario only needs to
-        # remove the "Multiple airlines" mixed-carrier bucket (applyFacet) so the
-        # cheapest SAME-airline card sorts to the top under sort=price_a.
+        # Same-airline isolation AND stops are now both carried in the URL
+        # (fs=airlines=-MULT;stops=...). The page therefore loads already filtered
+        # to single-carrier fares within the stop limit, so the scenario no longer
+        # needs applyFacet() -- it only re-asserts the Cheapest sort so the lowest
+        # same-airline fare is at the top, then settles before extracting.
+        # (Proven: -MULT URL reproduces the browser Cheapest price exactly; the old
+        # applyFacet untick landed on a wrong/smaller result set. See memory
+        # mult-url-is-accurate-applyfacet.)
         instructions: list[dict[str, object]] = [
             {"evaluate": helper_script},
             {"wait_for": _RESULT_PRICE_SELECTOR},
             {"wait": effective_wait_ms},
+            # Re-assert the Cheapest sort so the lowest same-airline fare is on top.
+            {"evaluate": "window.FH.cheapest()"},
         ]
-        instructions.extend(
-            [
-                # Same-airline isolation: untick "Multiple airlines" via the
-                # facet, then re-assert the Cheapest sort. This is done in the
-                # scenario (NOT via an airlines=-MULT URL param) because the URL
-                # param glitched some dates to 0 cards; the facet untick + sort
-                # reliably surfaces the cheapest same-airline card. (The page is
-                # loaded WITHOUT -MULT, so the "Multiple airlines" checkbox is
-                # present and applyFacet unticks it correctly.)
-                {"evaluate": "window.FH.applyFacet()"},
-                {"wait": 1200},
-                {"evaluate": "window.FH.cheapest()"},
-                {"wait": 1000},
-                {"scroll_y": 1200},
-                {"wait": 700},
-                {"evaluate": "window.FH.settle()"},
-                {"wait": 900},
-                {"evaluate": "window.FH.settle()"},
-                {"wait": 900},
-                {"evaluate": "window.FH.settle()"},
-            ]
-        )
-        if deep:
-            instructions.extend(
-                [
-                    {"scroll_y": 2000},
-                    {"wait": 700},
-                    {"evaluate": "window.FH.settle()"},
-                ]
-            )
-        instructions.extend(
-            [
-                {"wait": 1600},
-            ]
-        )
+        # The Cheapest-sort click triggers an async re-render. A single fixed wait
+        # is wrong for every group (too short on slow renders -> empty/unsettled
+        # data; too long on fast ones -> wasted time), so we poll: short wait,
+        # re-check stability via settle(), repeat for a bounded number of pairs.
+        # settle() also stamps <body data-fh-st="1"> when stable so a future
+        # adaptive wait_for can early-exit once f.l() (loading detector) is
+        # reliable. We do NOT wait_for that marker yet: ScrapingBee has no
+        # per-instruction wait_for timeout, so a marker that fails to appear would
+        # block the whole render budget. The bounded poll always completes and
+        # gives enough settle time (~3.6s fast / ~4.5s deep), verified live.
+        # No scroll is needed: leg details hydrate without it.
+        poll_pairs = 5 if deep else 4
+        for _ in range(poll_pairs):
+            instructions.append({"wait": 900})
+            instructions.append({"evaluate": "window.FH.settle()"})
         instructions.append({"evaluate": "window.FH.extract()"})
 
         return {
@@ -902,6 +919,19 @@ class ScrapingBeeProvider:
             return False
         return bool(payload.get("no_results"))
 
+    def _no_cards_error(self, rendered: dict, genuine_empty: bool) -> Exception:
+        """Build the 'no extractable cards' error, choosing whether it is worth a
+        retry. A genuine "no matching results" page (Kayak really has nothing) is
+        a plain non-retryable error -- retrying just burns credits. A page that
+        did NOT say "no results" but still yielded no cards is a flaky render
+        (probes showed the same date flip 0<->50 cards across attempts), so we
+        raise the retryable transient error to give it one more shot.
+        """
+        message = "KAYAK rendered page did not expose extractable result cards."
+        if genuine_empty:
+            return ValueError(message)
+        return ScrapingBeeTransientError(message)
+
     def _strong_retry_worthwhile(self, rendered: dict) -> bool:
         """Whether a second (slower) render is likely to recover results.
 
@@ -1099,6 +1129,35 @@ class ScrapingBeeProvider:
             and current_price >= facet_floor + 75
         )
         return clearly_high or sparse_and_high
+
+    def _render_missed_cheapest(
+        self,
+        rendered: dict,
+        eligible_results: list[ProviderResult],
+    ) -> bool:
+        """True when our cheapest same-airline fare sits clearly ABOVE the cheapest
+        airline-facet price Kayak displayed -- a sign the render was PARTIAL and
+        loaded a result set missing the cheapest airline's cards.
+
+        The Airlines-facet panel (and its per-airline floor prices) loads even when
+        some result cards don't, so facet_floor reflects the TRUE cheapest airline
+        price. If our saved cheapest is well above it, we grabbed an incomplete
+        page and should re-render. Tolerance avoids false positives from normal
+        rounding / fare-class differences.
+        """
+        if not eligible_results:
+            return False
+        current = self._cheapest_result_price(eligible_results)
+        facet_prices = self._facet_option_prices(rendered)
+        if current is None or not facet_prices:
+            return False
+        facet_floor = min(facet_prices)
+        if facet_floor <= 0:
+            return False
+        # Partial-render signal: our cheapest is more than ~3% AND >= C$40 above
+        # the facet floor. Small enough to catch a missed cheaper airline, large
+        # enough to ignore fare-class / rounding noise.
+        return current >= facet_floor + 40 and current >= facet_floor * 1.03
 
     def _summary_lowest_price(self, summary_prices: dict[str, str]) -> float | None:
         prices = [
@@ -1838,15 +1897,77 @@ class ScrapingBeeProvider:
             else:
                 eligible_results = []
 
+        # Render-quality retry (smart, bounded, SHARED budget): if our cheapest
+        # same-airline fare is clearly above the facet floor, the render was
+        # PARTIAL (missed the cheapest airline's cards). Re-render once more and
+        # keep whichever run gives the lowest valid same-airline price.
+        #
+        # HARD CAP of 2 renders/date: this retry is SKIPPED if an extra render was
+        # already spent above (the alternate-facet probe or the strong-empty
+        # retry). Those share the same single budget, so a date never costs more
+        # than 2 renders regardless of how many things looked wrong. The loop also
+        # self-stops the instant we match the facet floor (best possible).
+        already_used_extra_render = used_strong_retry or used_alternate_facet
+        quality_budget = 0 if already_used_extra_render else (_MAX_RENDERS_PER_SEARCH - 1)
+        completeness_attempts = 0
+        while (
+            eligible_results
+            and completeness_attempts < quality_budget
+            and self._render_missed_cheapest(rendered, eligible_results)
+        ):
+            completeness_attempts += 1
+            log.info(
+                "scrapingbee_completeness_retry",
+                trip_type=trip_type,
+                target_url=target_url,
+                attempt=completeness_attempts,
+                saved_price=self._cheapest_result_price(eligible_results),
+                facet_floor=(min(self._facet_option_prices(rendered)) if self._facet_option_prices(rendered) else None),
+            )
+            (
+                guard_rendered,
+                guard_summary_prices,
+                guard_results,
+                guard_card_count,
+                guard_captured_count,
+            ) = await self._render_results_attempt(
+                target_url=target_url,
+                country_code=market_country_code,
+                currency=requested_currency,
+                trip_type=trip_type,
+                minimum_leg_count=minimum_leg_count,
+                deep=True,
+                same_airline_only=True,
+                max_stops=max_stops,
+                same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+            )
+            guard_eligible = self._eligible_same_airline_results(guard_results, max_stops)
+            new_price = self._cheapest_result_price(guard_eligible)
+            old_price = self._cheapest_result_price(eligible_results)
+            # Keep the run with the lower valid same-airline price (the more
+            # complete render). If the retry is worse/empty, keep what we had.
+            if new_price is not None and (old_price is None or new_price < old_price):
+                rendered = guard_rendered
+                summary_prices = guard_summary_prices
+                results = guard_results
+                card_count = guard_card_count
+                captured_count = guard_captured_count
+                eligible_results = guard_eligible
+                raw_offers_found = max(raw_offers_found, len(guard_results))
+                used_strong_retry = True
+            else:
+                break
+
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            genuine_empty = self._rendered_payload_reports_no_results(rendered)
             log.warning(
                 "scrapingbee_render_no_cards",
                 trip_type=trip_type,
                 target_url=target_url,
-                no_results=self._rendered_payload_reports_no_results(rendered),
+                no_results=genuine_empty,
                 **self._render_failure_snapshot(rendered),
             )
-            raise ValueError("KAYAK rendered page did not expose extractable result cards.")
+            raise self._no_cards_error(rendered, genuine_empty)
 
         selected_facet, facet_option_count = self._multi_city_facet_snapshot(rendered)
         visible_results_found = card_count > 0 or facet_option_count > 0
@@ -2072,14 +2193,15 @@ class ScrapingBeeProvider:
                 eligible_results = []
 
         if not results and card_count == 0 and not self._rendered_payload_has_summary_prices(rendered):
+            genuine_empty = self._rendered_payload_reports_no_results(rendered)
             log.warning(
                 "scrapingbee_render_no_cards",
                 trip_type="multi_city",
                 target_url=target_url,
-                no_results=self._rendered_payload_reports_no_results(rendered),
+                no_results=genuine_empty,
                 **self._render_failure_snapshot(rendered),
             )
-            raise ValueError("KAYAK rendered page did not expose extractable result cards.")
+            raise self._no_cards_error(rendered, genuine_empty)
         self._log_multi_city_debug_snapshot(
             outbound_origin=outbound_origin,
             outbound_destination=outbound_destination,
@@ -2224,7 +2346,7 @@ class ScrapingBeeProvider:
         same_airline_only = True
 
         async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(self._max_retries),
+            stop=stop_after_attempt(max(self._max_retries, self._transient_retries)),
             wait=wait_exponential_jitter(initial=2, max=12),
             retry=retry_if_exception_type(RuntimeError)
             & retry_if_exception(self._should_retry),
@@ -2259,7 +2381,7 @@ class ScrapingBeeProvider:
         same_airline_only = True
 
         async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(self._max_retries),
+            stop=stop_after_attempt(max(self._max_retries, self._transient_retries)),
             wait=wait_exponential_jitter(initial=2, max=12),
             retry=retry_if_exception_type(RuntimeError)
             & retry_if_exception(self._should_retry),

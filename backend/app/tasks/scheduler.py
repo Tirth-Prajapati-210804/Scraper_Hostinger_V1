@@ -393,11 +393,14 @@ class FlightScheduler:
         self,
         group_id: UUID,
         target_dates: list[date] | None = None,
+        bypass_caps: bool = False,
     ) -> bool:
         if self._active_task is not None and not self._active_task.done():
             return False
 
-        task = asyncio.create_task(self.trigger_single_group(group_id, target_dates))
+        task = asyncio.create_task(
+            self.trigger_single_group(group_id, target_dates, bypass_caps=bypass_caps)
+        )
         self._track_task(task)
         return True
 
@@ -463,6 +466,13 @@ class FlightScheduler:
             return False
         dates = self._group_dates(group)
         if not dates:
+            return False
+        # With a rolling horizon, a group whose range extends PAST today+horizon
+        # is never "fully processed" -- more dates become collectible each day as
+        # the horizon advances. Pausing it would freeze it before those dates can
+        # be picked up, so only auto-pause groups whose entire range is already
+        # within the horizon (nothing further will ever roll in).
+        if self._group_reaches_beyond_horizon(group):
             return False
         async with self.session_factory() as session:
             for segment in iter_group_segments(group):
@@ -830,6 +840,21 @@ class FlightScheduler:
     # DATES
     # --------------------------------------------------
 
+    def _group_reaches_beyond_horizon(self, group: RouteGroup) -> bool:
+        """Whether the group's configured range extends past today+horizon, i.e.
+        it still has future dates that will roll into the horizon on later days.
+        Used so auto-pause doesn't freeze a group with pending future work."""
+        max_days_ahead = int(getattr(self.settings, "scrape_max_days_ahead", 0) or 0)
+        if max_days_ahead <= 0:
+            return False
+        today = date.today()
+        horizon = today + timedelta(days=max_days_ahead)
+        configured_start = group.start_date or today
+        start = max(configured_start, today)
+        date_count = max(1, min(group.days_ahead, self._MAX_DATES))
+        end = group.end_date or (start + timedelta(days=date_count - 1))
+        return end > horizon
+
     def _group_dates(self, group: RouteGroup) -> list[date]:
         today = date.today()
 
@@ -837,6 +862,16 @@ class FlightScheduler:
         start = max(configured_start, today)
         date_count = max(1, min(group.days_ahead, self._MAX_DATES))
         end = group.end_date or (start + timedelta(days=date_count - 1))
+
+        # Rolling horizon: never reach past today + scrape_max_days_ahead. Dates
+        # beyond Kayak's ~330-day schedule window have no inventory yet, so we
+        # skip them now and pick them up automatically as the horizon advances.
+        max_days_ahead = int(getattr(self.settings, "scrape_max_days_ahead", 0) or 0)
+        if max_days_ahead > 0:
+            horizon = today + timedelta(days=max_days_ahead)
+            if end > horizon:
+                end = horizon
+
         if end < start:
             return []
 
@@ -1073,6 +1108,7 @@ class FlightScheduler:
         self,
         group_id: UUID,
         target_dates: list[date] | None = None,
+        bypass_caps: bool = False,
     ) -> dict[str, int]:
 
         stats = {
@@ -1141,14 +1177,21 @@ class FlightScheduler:
                     route_failed = 0
 
                     for segment in iter_group_segments(group):
-                        remaining = await self._filter_already_scraped(
-                            session=session,
-                            route_group_id=group.id,
-                            origin=segment.origin,
-                            destinations=segment.destinations,
-                            dates=dates,
-                            respect_no_fare_skip=True,
-                        )
+                        if bypass_caps:
+                            # No-cap on-demand scrape (e.g. clicking a date in the
+                            # Collection Progress grid): always (re)attempt the
+                            # chosen dates, ignoring empty/error retry caps and the
+                            # no-fare skip. Lets the user force-refresh any date.
+                            remaining = list(dates)
+                        else:
+                            remaining = await self._filter_already_scraped(
+                                session=session,
+                                route_group_id=group.id,
+                                origin=segment.origin,
+                                destinations=segment.destinations,
+                                dates=dates,
+                                respect_no_fare_skip=True,
+                            )
 
                         if not remaining:
                             continue

@@ -20,6 +20,7 @@ def make_settings(**overrides) -> MagicMock:
     settings.scrapingbee_multi_city_debug = False
     settings.provider_timeout_seconds = 30
     settings.provider_max_retries = 3
+    settings.provider_transient_retries = 2
     settings.provider_concurrency_limit = 2
     settings.provider_rendered_concurrency_limit = 1
     settings.provider_min_delay_seconds = 0.5

@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_interval_minutes: int = 60
     scrape_days_ahead: int = 365
+    # Rolling search horizon: never attempt a depart_date more than this many days
+    # from today. Kayak only opens schedules ~330 days out ("Searches beyond 330
+    # days may have limited inventory"), so dates past this horizon genuinely have
+    # no fares -- attempting them only burns ScrapingBee credits and produces
+    # provider_error / lone junk-card saves. Those dates become collectible
+    # automatically as the horizon rolls forward day by day. 0 disables the cap.
+    scrape_max_days_ahead: int = 325
     scrape_batch_size: int = 1
     scrape_route_parallelism: int = 3
     scrape_delay_seconds: float = 1.0
@@ -88,6 +95,13 @@ class Settings(BaseSettings):
     scrape_error_cap_since: str = ""
     provider_timeout_seconds: int = 60
     provider_max_retries: int = 1
+    # Total attempts for TRANSIENT render failures (ScrapingBee HTTP 5xx and
+    # flaky empty renders where the page momentarily shows no cards even though
+    # fares exist). Kept separate from provider_max_retries so transient flakiness
+    # gets a 2nd shot without changing the general retry budget. Probes showed the
+    # same date flips between 0-cards / 50-cards / HTTP-500 across attempts, so one
+    # retry recovers most. 1 disables the extra transient retry.
+    provider_transient_retries: int = 2
     provider_concurrency_limit: int = 3
     provider_rendered_concurrency_limit: int = 1
     provider_min_delay_seconds: float = 1.0

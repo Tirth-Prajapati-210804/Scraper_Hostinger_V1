@@ -49,6 +49,7 @@ class ProviderRegistry:
                 base_url=settings.scrapingbee_base_url,
                 timeout=settings.provider_timeout_seconds,
                 max_retries=settings.provider_max_retries,
+                transient_retries=settings.provider_transient_retries,
                 concurrency_limit=concurrency_limit,
                 rendered_concurrency_limit=rendered_concurrency_limit,
                 min_delay_seconds=settings.provider_min_delay_seconds,
