@@ -131,12 +131,25 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 # Kayak is sorted cheapest-first with the airline facet isolated, so the cheapest
 # valid same-airline fare is near the top. Smaller windows = far less DOM work and
 # serialization per render = faster scrapes.
-_FAST_MULTI_CITY_CARD_LIMIT = 8
-_DEEP_MULTI_CITY_CARD_LIMIT = 12
+# Cards serialized by f.e(). The page is price-sorted and the cheapest eligible
+# fare sits at/near the top, so the exact limit barely matters; deep==fast now (the
+# only old difference was an extra scroll/settle, since removed). 40 is a wide,
+# sort-independent safety margin with a still-small response.
+_FAST_MULTI_CITY_CARD_LIMIT = 40
+_DEEP_MULTI_CITY_CARD_LIMIT = 40
 _MAX_AIRLINE_FACET_ATTEMPTS = 3
 _RESULT_PRICE_SELECTOR = ".nrc6-price-section .e2GB-price-text"
 _SAME_AIRLINE_INITIAL_WAIT_MS = 5_000
 _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
+# Round-trip smart load gate (window.FH.waitLoaded): poll every _POLL_MS and resolve
+# the INSTANT top-eligible price + 'N of M flights' counter are unchanged for
+# _STABLE_CHECKS consecutive polls AND at least _MIN_FLIGHTS have streamed in (the
+# min-flights guard prevents locking onto a tiny mid-load first batch). Hard cap
+# _MAX_MS. These are ceilings -- a fast render exits in a few polls.
+_LOAD_GATE_POLL_MS = 700
+_LOAD_GATE_STABLE_CHECKS = 4
+_LOAD_GATE_MIN_FLIGHTS = 150
+_LOAD_GATE_MAX_MS = 38_000
 # ScrapingBee's internal render budget must stay BELOW the httpx client timeout so
 # a render that legitimately uses most of its budget still returns (with proxy /
 # browser-startup / response-transfer overhead) before the client gives up.
@@ -461,22 +474,31 @@ class ScrapingBeeProvider:
 
         return data
 
-    def _kayak_query(self, max_stops: int | None) -> str:
+    def _kayak_query(self, max_stops: int | None, *, same_airline: bool = False) -> str:
         """Kayak results query. The per-leg stop filter is carried in the URL
         (fs=stops=...), like Kayak's own UI, e.g. ?sort=price_a&fs=stops=0,1.
 
-        We intentionally do NOT put airlines=-MULT in the URL. It was tried
-        (commit 6847a1a) and worked on some dates, but on others the -MULT URL
-        parameter put Kayak into a broken "No matching results" state (0 cards)
-        even though same-airline fares existed -- verified on YEG-KEF 2026-10-19,
-        where the -MULT URL returned 0 but the facet-untick workflow below
-        returned 3 same-airline Alaska cards. Same-airline isolation is therefore
-        done in the scenario via applyFacet() (untick "Multiple airlines") + the
-        Cheapest sort, which is reliable across dates.
+        same_airline=True (ROUND-TRIP path): also carry airlines=-MULT,flylocal in
+        the URL so the page loads already isolated to single-carrier fares -- no
+        in-scenario applyFacet() needed. -MULT excludes the "Multiple airlines"
+        mixed bucket; flylocal is REQUIRED (re-verified 2026-06-08: -MULT alone hid
+        ANA C$1,291, showing AC C$1,405 -- flylocal restores the true cheapest).
+        The render path has a 0-card fallback: if the -MULT URL returns no cards
+        (the historical YEG-KEF glitch), it re-renders without -MULT and the Python
+        same-airline filter handles isolation.
+
+        same_airline=False (MULTI-CITY path, unchanged): NO airlines param in the
+        URL; isolation is done in the scenario via applyFacet() (untick "Multiple
+        airlines"), because -MULT on the multi-leg URL form is unverified.
         """
-        query = "?sort=price_a"
+        filters: list[str] = []
+        if same_airline:
+            filters.append("airlines=-MULT,flylocal")
         if max_stops is not None and max_stops <= 1:
-            query += f"&fs=stops={'0' if max_stops <= 0 else '0,1'}"
+            filters.append(f"stops={'0' if max_stops <= 0 else '0,1'}")
+        query = "?sort=price_a"
+        if filters:
+            query += "&fs=" + ";".join(filters)
         return query
 
     def _build_search_url(
@@ -489,10 +511,13 @@ class ScrapingBeeProvider:
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
+        same_airline_url: bool = True,
     ) -> str:
+        # Round-trip carries -MULT,flylocal in the URL by default (same_airline_url).
+        # The 0-card fallback rebuilds with same_airline_url=False (no -MULT).
         route = f"{origin.upper()}-{destination.upper()}"
         base_url = self._kayak_site_base(currency, market)
-        query = self._kayak_query(max_stops)
+        query = self._kayak_query(max_stops, same_airline=same_airline_url)
         if return_date:
             return (
                 f"{base_url}/flights/{route}/"
@@ -522,7 +547,7 @@ class ScrapingBeeProvider:
             f"{outbound_origin.upper()}-{outbound_destination.upper()}/"
             f"{outbound_date.isoformat()}/"
             f"{inbound_origin.upper()}-{inbound_destination.upper()}/"
-            f"{inbound_date.isoformat()}{self._kayak_query(max_stops)}"
+            f"{inbound_date.isoformat()}{self._kayak_query(max_stops, same_airline=True)}"
         )
 
     def _build_results_scenario(
@@ -535,86 +560,61 @@ class ScrapingBeeProvider:
         airline_facet_index: int = 0,
         max_stops: int | None = None,
     ) -> dict[str, object]:
-        del same_airline_only
+        # same_airline_only / same_airline_wait_ms / airline_facet_index are legacy
+        # knobs from the old applyFacet flow; kept in the signature so existing
+        # callers don't break, but unused now that filtering is URL-side.
+        del same_airline_only, same_airline_wait_ms, airline_facet_index
         card_limit = _DEEP_MULTI_CITY_CARD_LIMIT if deep else _FAST_MULTI_CITY_CARD_LIMIT
-        facet_index = max(0, min(int(airline_facet_index), _MAX_AIRLINE_FACET_ATTEMPTS - 1))
-        effective_wait_ms = (
-            same_airline_wait_ms
-            if same_airline_wait_ms is not None
-            else _SAME_AIRLINE_INITIAL_WAIT_MS
-        )
+        # JS-side per-leg stop cap for f.top() (cheapest eligible same-airline).
+        leg_stop_cap = 2 if (max_stops is None or max_stops >= 2) else (1 if max_stops == 1 else 0)
 
+        # UNIVERSAL path (round-trip AND multi-city): the URL carries the filters
+        # (sort=price_a & airlines=-MULT,flylocal [& stops]), so the page loads
+        # already same-airline-isolated and Cheapest-sorted. No applyFacet()/
+        # cheapest()/scroll/old-settle -- just a LEAN helper + ONE smart wait
+        # (waitLoaded) that resolves the instant the top-eligible price AND the
+        # 'N of M flights' counter are stable for several consecutive checks (and
+        # enough flights have streamed in), then extract. ScrapingBee's evaluate
+        # awaits the Promise, so this early-exits on fast pages and only spends the
+        # full window on slow heavy ones. (The old applyFacet/fixed-wait flow and
+        # the broken settle()/f.l() loading detector were removed -- git history has
+        # them if a rollback is ever needed.)
         helper_script = (
-            "(()=>{const l=__LIMIT__,g=__MIN_LEGS__,p='__PRICE_SELECTOR__',j='ol.hJSA-list > li',q='label,button,[role=\"button\"],li',d='section,aside,div',c='div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]',b='button,a,[role=\"button\"],div,span',f=window.FH||(window.FH={});"
+            "(()=>{const l=__LIMIT__,g=__MIN_LEGS__,p='__PRICE_SELECTOR__',j='ol.hJSA-list > li',d='section,aside,div',q='label,button,[role=\"button\"],li',c='div[aria-label^=\"Result item\"],div[data-resultid],div.nrc6,div[class*=\"nrc6\"]',f=window.FH||(window.FH={});"
             "f.t=v=>(v||'').toString().replace(/\\s+/g,' ').trim();"
             "f.n=v=>(v||'').toString().replace(/\\u00a0/g,' ').split(/\\n+/).map(f.t).filter(Boolean);"
             "f.v=e=>{if(!e)return 0;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none'};"
             "f.p=v=>{const m=f.t(v).replace(/,/g,'').match(/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*([0-9]+(?:\\.[0-9]+)?)/i);return m?Number(m[1]):null};"
             "f.o=()=>Array.from(document.querySelectorAll(d)).filter(e=>f.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;"
-            "f.x=()=>{const r=f.o();if(!r)return[];const s=new Map();for(const e of Array.from(r.querySelectorAll(q+',div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),p=f.p(t);if(p===null)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n))continue;const k=n.toLowerCase(),u=s.get(k),z=e.closest(q)||e;if(!u||p<u.p)s.set(k,{n,p,e:z})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
-            "f.a=()=>{const o=f.x();f.g={s:o.length?(o[__FACET_INDEX__]||o[0]).n:'',o:o.map(v=>({n:v.n,p:v.p}))};const r=f.o();if(!r)return 0;let n=0;for(const e of Array.from(r.querySelectorAll(q))){if(!f.v(e))continue;if(/(multiple|mixed|various) airlines/i.test(f.t(e.innerText))){const h=e.querySelector('input[type=\"checkbox\"]');if(!h||h.checked){(h||e).click();n++}}}return n};"
-            "f.l=()=>Array.from(document.querySelectorAll('[role=\"progressbar\"],progress,[aria-busy=\"true\"],[class*=\"loading\"],[class*=\"progress\"]')).some(f.v);"
-            "f.cheap=()=>{const e=Array.from(document.querySelectorAll(b)).find(x=>f.v(x)&&/^cheapest$/i.test(f.n(x.innerText)[0]||''));if(e){e.click();return 1}return 0};"
-            "f.empty=()=>!f.r().length&&/no result|no flight|no match|couldn.t f|adjust your f/i.test(document.body?.innerText||'');"
+            "f.x=()=>{const r=f.o();if(!r)return[];const s=new Map();for(const e of Array.from(r.querySelectorAll(q+',div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),pr=f.p(t);if(pr===null)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n))continue;const k=n.toLowerCase(),u=s.get(k),z=e.closest(q)||e;if(!u||pr<u.p)s.set(k,{n,p:pr,e:z})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
             "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll(j).length>=g).filter((n,i,a)=>!a.some((o,k)=>k!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll(j).length>=g));"
-            "f.s=()=>{const z=Array.from(document.querySelectorAll(p)).map(n=>f.t(n.innerText)).filter(Boolean).slice(0,6).join('|'),m=(f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))).map(v=>`${v.n}:${v.p}`).join('|'),k=[f.l()?1:0,f.t(f.g?.s||''),z,m,f.r().length].join('||'),st=f.u||{k:'',h:0};st.h=k&&k===st.k?st.h+1:0;st.k=k;st.b=f.l()?1:0;f.u=st;return !st.b&&(z||m)&&st.h>=3};"
-            "f.e=()=>{const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll(j)).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:f.t(f.g?.s||''),o:f.g?.o||f.x().map(v=>({n:v.n,p:v.p}))},e:!!(f.u&&f.u.h>=3&&!f.u.b),np:f.empty(),sm:true})};f.applyFacet=f.a;f.settle=f.s;f.extract=f.e;f.cheapest=f.cheap;return true})()"
+            "f.empty=()=>!f.r().length&&/no result|no flight|no match|couldn.t f|adjust your f/i.test(document.body?.innerText||'');"
+            "f.fn=()=>{const m=(document.body?.innerText||'').match(/(\\d[\\d,]*)\\s+of\\s+(\\d[\\d,]*)\\s+flights/i);return m?Number(m[1].replace(/,/g,'')):null};"
+            "f.sc=v=>{v=(v||'').toLowerCase();if(!v)return null;if(/nonstop|direct/.test(v))return 0;const mm=v.match(/(\\d+)\\s*stop/);return mm?Number(mm[1]):null};"
+            "f.top=()=>{let best=null;for(const nd of f.r()){const pr=f.p(f.t(nd.querySelector(p)?.innerText));if(pr==null)continue;const L=Array.from(nd.querySelectorAll(j));const air=L.map(i=>f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt'))).filter(Boolean);const st=L.map(i=>f.sc(i.querySelector('.JWEO .vmXl')?.innerText));const kn=st.filter(x=>x!=null);const same=air.length>=2&&new Set(air.map(a=>a.toLowerCase())).size===1;const ok=kn.length>0&&kn.every(x=>x<=__MAXSTOPS__);if(same&&ok&&(best==null||pr<best))best=pr}return best};"
+            "f.wl=(maxMs,iv,need,minF)=>new Promise(res=>{const t0=Date.now();let lp=null,ln=null,h=0;const tick=()=>{const pr=f.top(),n=f.fn();const grown=(n!=null&&n>=minF);if(grown&&pr!=null&&pr===lp&&n===ln)h++;else h=0;lp=pr;ln=n;const done=h>=need;if(done)document.body.setAttribute('data-fh-st','1');if(done||Date.now()-t0>=maxMs){res(done);return}setTimeout(tick,iv)};tick()});"
+            "f.e=()=>{const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll(j)).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:'',o:f.x().map(v=>({n:v.n,p:v.p}))},e:document.body?.getAttribute('data-fh-st')==='1',np:f.empty(),sm:true})};f.extract=f.e;f.waitLoaded=f.wl;return true})()"
         )
         helper_script = (
             helper_script.replace("__LIMIT__", str(card_limit))
             .replace("__MIN_LEGS__", str(max(1, minimum_leg_count)))
-            .replace("__FACET_INDEX__", str(facet_index))
             .replace("__PRICE_SELECTOR__", _RESULT_PRICE_SELECTOR)
+            .replace("__MAXSTOPS__", str(leg_stop_cap))
         )
-
-        # Stops are applied via the URL (fs=stops=...). The scenario only needs to
-        # remove the "Multiple airlines" mixed-carrier bucket (applyFacet) so the
-        # cheapest SAME-airline card sorts to the top under sort=price_a.
-        instructions: list[dict[str, object]] = [
-            {"evaluate": helper_script},
-            {"wait_for": _RESULT_PRICE_SELECTOR},
-            {"wait": effective_wait_ms},
-        ]
-        instructions.extend(
-            [
-                # Same-airline isolation: untick "Multiple airlines" via the
-                # facet, then re-assert the Cheapest sort. This is done in the
-                # scenario (NOT via an airlines=-MULT URL param) because the URL
-                # param glitched some dates to 0 cards; the facet untick + sort
-                # reliably surfaces the cheapest same-airline card. (The page is
-                # loaded WITHOUT -MULT, so the "Multiple airlines" checkbox is
-                # present and applyFacet unticks it correctly.)
-                {"evaluate": "window.FH.applyFacet()"},
-                {"wait": 1200},
-                {"evaluate": "window.FH.cheapest()"},
-                {"wait": 1000},
-                {"scroll_y": 1200},
-                {"wait": 700},
-                {"evaluate": "window.FH.settle()"},
-                {"wait": 900},
-                {"evaluate": "window.FH.settle()"},
-                {"wait": 900},
-                {"evaluate": "window.FH.settle()"},
-            ]
-        )
-        if deep:
-            instructions.extend(
-                [
-                    {"scroll_y": 2000},
-                    {"wait": 700},
-                    {"evaluate": "window.FH.settle()"},
-                ]
-            )
-        instructions.extend(
-            [
-                {"wait": 1600},
-            ]
-        )
-        instructions.append({"evaluate": "window.FH.extract()"})
 
         return {
             "strict": False,
-            "instructions": instructions,
+            "instructions": [
+                {"evaluate": helper_script},
+                {"wait_for": _RESULT_PRICE_SELECTOR},
+                {
+                    "evaluate": (
+                        f"window.FH.waitLoaded({_LOAD_GATE_MAX_MS},"
+                        f"{_LOAD_GATE_POLL_MS},{_LOAD_GATE_STABLE_CHECKS},{_LOAD_GATE_MIN_FLIGHTS})"
+                    )
+                },
+                {"evaluate": "window.FH.extract()"},
+            ],
         }
 
     async def _parse_rendered_payload(
@@ -1722,6 +1722,37 @@ class ScrapingBeeProvider:
             same_airline_only=same_airline_only,
             max_stops=max_stops,
         )
+        # 0-card fallback: the URL carries airlines=-MULT,flylocal, which on rare
+        # dates puts Kayak in a "no matching results" state (the historical YEG-KEF
+        # glitch). If the -MULT URL rendered ZERO cards (and didn't explicitly say
+        # "no results"), re-render WITHOUT -MULT so a filter glitch never costs us
+        # the whole date; the Python same-airline filter still isolates carriers.
+        if (
+            "airlines=-MULT" in target_url
+            and card_count == 0
+            and not results
+            and not self._rendered_payload_reports_no_results(rendered)
+        ):
+            # Drop the airlines=-MULT,flylocal token from the fs= clause; if that
+            # leaves fs= empty, remove fs= entirely. Leaves any stops= clause intact.
+            fallback_url = re.sub(r"airlines=-MULT,flylocal;?", "", target_url)
+            fallback_url = re.sub(r"[?&]fs=(?=&|$)", "", fallback_url)
+            log.info(
+                "scrapingbee_mult_zero_cards_fallback",
+                trip_type=trip_type,
+                target_url=target_url,
+                fallback_url=fallback_url,
+            )
+            rendered, summary_prices, results, card_count, captured_count = await self._render_results_attempt(
+                target_url=fallback_url,
+                country_code=market_country_code,
+                currency=requested_currency,
+                trip_type=trip_type,
+                minimum_leg_count=minimum_leg_count,
+                deep=initial_deep,
+                same_airline_only=same_airline_only,
+                max_stops=max_stops,
+            )
         eligible_results = self._eligible_same_airline_results(results, max_stops)
         raw_offers_found = len(results)
         used_strong_retry = False

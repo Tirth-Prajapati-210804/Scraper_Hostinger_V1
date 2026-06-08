@@ -9,7 +9,6 @@ import pytest
 from app.providers.base import ProviderResult
 from app.providers.scrapingbee import (
     _RESULT_PRICE_SELECTOR,
-    _SAME_AIRLINE_INITIAL_WAIT_MS,
     ScrapingBeeProvider,
 )
 
@@ -26,65 +25,64 @@ def make_provider(api_key: str = "test-key") -> ScrapingBeeProvider:
     )
 
 
-def test_rendered_results_scenario_uses_facet_primary_flow() -> None:
+def test_rendered_results_scenario_uses_smart_load_gate() -> None:
+    """The scenario carries filters in the URL (sort + -MULT,flylocal [+ stops]) and
+    uses ONE smart wait: inject helper -> wait_for price -> waitLoaded() -> extract.
+    No applyFacet()/cheapest()/scroll/fixed-wait/old-settle steps."""
     provider = make_provider()
 
     scenario = provider._build_results_scenario(
         deep=True,
         same_airline_only=True,
         minimum_leg_count=2,
+        max_stops=2,
     )
 
     instructions = scenario["instructions"]
     helper_script = instructions[0]["evaluate"]
 
     assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
-    assert instructions[2] == {"wait": _SAME_AIRLINE_INITIAL_WAIT_MS}
-    assert "f.applyFacet=f.a" in helper_script
-    assert "f.settle=f.s" in helper_script
-    assert "f.extract=f.e" in helper_script
-    assert "o[0]||o[0]" in helper_script
-    # Same-airline isolation is done in the SCENARIO: applyFacet() unticks
-    # "Multiple airlines", then cheapest() re-asserts the Cheapest sort. The URL
-    # does NOT carry airlines=-MULT (that param glitched some dates to 0 cards),
-    # so the facet untick is the reliable mechanism and must be CALLED.
-    assert "multiple|mixed|various" in helper_script
-    assert {"wait": 1600} in instructions
-    assert any(
-        instruction.get("evaluate") == "window.FH.applyFacet()"
-        for instruction in instructions
-        if isinstance(instruction, dict)
-    )
+    # Exactly 4 steps: helper, wait_for, waitLoaded, extract.
+    assert len(instructions) == 4
+    evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
+    assert any(e and e.startswith("window.FH.waitLoaded(") for e in evals)
     assert instructions[-1] == {"evaluate": "window.FH.extract()"}
 
-    # applyFacet (untick Multiple airlines) runs BEFORE cheapest (re-sort), and
-    # cheapest before extract, so the cheapest same-airline card is at the top.
-    evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
-    assert "window.FH.cheapest()" in evals
-    assert evals.index("window.FH.applyFacet()") < evals.index("window.FH.cheapest()")
-    assert evals.index("window.FH.cheapest()") < evals.index("window.FH.extract()")
-    assert "f.cheap=" in helper_script
+    # The new lean helper exposes the smart gate + extract; the old applyFacet /
+    # cheapest / loading-flag settle helpers are GONE.
+    assert "f.waitLoaded=f.wl" in helper_script
+    assert "f.extract=f.e" in helper_script
+    assert "f.top=" in helper_script and "f.fn=" in helper_script
+    assert "applyFacet" not in helper_script
+    assert "f.cheap=" not in helper_script
+    assert "f.settle" not in helper_script
+    # No fixed waits / scrolls anywhere in the scenario.
+    assert not any("wait" in i for i in instructions if isinstance(i, dict) and "wait_for" not in i)
+    assert not any("scroll_y" in i for i in instructions if isinstance(i, dict))
 
 
-def test_rendered_results_scenario_can_select_later_airline_facet() -> None:
+def test_smart_gate_per_leg_stop_cap_is_embedded() -> None:
+    """f.top() (cheapest eligible same-airline) caps each leg at the group's stop
+    limit: direct->0, 1-stop->1, 2-stop->2. The cap is baked into the helper."""
     provider = make_provider()
 
-    scenario = provider._build_results_scenario(
-        deep=True,
-        same_airline_only=True,
-        minimum_leg_count=2,
-        airline_facet_index=2,
-    )
+    def cap_in(max_stops: int) -> str:
+        s = provider._build_results_scenario(
+            deep=True, same_airline_only=True, minimum_leg_count=2, max_stops=max_stops
+        )
+        return s["instructions"][0]["evaluate"]
 
-    helper_script = scenario["instructions"][0]["evaluate"]
-    assert "o[2]||o[0]" in helper_script
+    assert "x<=0" in cap_in(0)
+    assert "x<=1" in cap_in(1)
+    assert "x<=2" in cap_in(2)
+    # >=2 all collapse to a per-leg cap of 2 (legs need not match each other).
+    assert "x<=2" in cap_in(5)
 
 
-def test_stop_filter_is_carried_in_kayak_url() -> None:
-    """The per-leg stop filter is carried in the Kayak URL (fs=stops=...), like
-    Kayak's own UI. Same-airline isolation is NOT in the URL (airlines=-MULT was
-    tried but glitched some dates to 0 cards); it is done in the scenario via
-    applyFacet() + Cheapest sort instead. The URL must never carry -MULT."""
+def test_same_airline_filters_are_carried_in_kayak_url() -> None:
+    """Round-trip URL carries sort=price_a & airlines=-MULT,flylocal, plus stops=
+    only when the group caps at <=1 stop. flylocal is REQUIRED (re-verified: -MULT
+    alone hides the cheapest carrier). Multi-city carries the same filters."""
     provider = make_provider()
 
     url1 = provider._build_search_url(
@@ -92,33 +90,42 @@ def test_stop_filter_is_carried_in_kayak_url() -> None:
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=1,
     )
-    assert url1.endswith("?sort=price_a&fs=stops=0,1")
+    assert url1.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;stops=0,1")
 
     url0 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=0,
     )
-    assert url0.endswith("?sort=price_a&fs=stops=0")
+    assert url0.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;stops=0")
 
     url2 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=2,
     )
-    # No stop filter when max_stops >= 2.
-    assert url2.endswith("?sort=price_a")
+    # No stops= clause when max_stops >= 2, but airlines filter still present.
+    assert url2.endswith("?sort=price_a&fs=airlines=-MULT,flylocal")
     assert "stops=" not in url2
-    # The URL must NOT carry same-airline isolation (done in the scenario).
-    assert "airlines=-MULT" not in url1 and "airlines=-MULT" not in url2
-    assert "flylocal" not in url2
+    assert "airlines=-MULT,flylocal" in url1 and "airlines=-MULT,flylocal" in url2
 
-    # The scenario no longer clicks the stop facet.
-    scenario = provider._build_results_scenario(
-        deep=True, same_airline_only=True, minimum_leg_count=2, max_stops=1
+    # The 0-card fallback URL (same_airline_url=False) drops -MULT entirely.
+    fb = provider._build_search_url(
+        origin="MIA", destination="MLA",
+        depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
+        max_stops=2, same_airline_url=False,
     )
-    evals = [i.get("evaluate") for i in scenario["instructions"] if isinstance(i, dict)]
-    assert not any(e and "window.FH.w(" in e for e in evals)
+    assert fb.endswith("?sort=price_a")
+    assert "-MULT" not in fb and "flylocal" not in fb
+
+    # Multi-city carries the same same-airline filter.
+    mc = provider._build_multi_city_results_url(
+        outbound_origin="DEN", outbound_destination="EDI",
+        outbound_date=date(2026, 10, 12),
+        inbound_origin="ROM", inbound_destination="DEN",
+        inbound_date=date(2026, 10, 21), max_stops=1,
+    )
+    assert "airlines=-MULT,flylocal" in mc and "stops=0,1" in mc
 
 
 def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:
