@@ -141,15 +141,21 @@ _MAX_AIRLINE_FACET_ATTEMPTS = 3
 _RESULT_PRICE_SELECTOR = ".nrc6-price-section .e2GB-price-text"
 _SAME_AIRLINE_INITIAL_WAIT_MS = 5_000
 _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
-# Round-trip smart load gate (window.FH.waitLoaded): poll every _POLL_MS and resolve
-# the INSTANT top-eligible price + 'N of M flights' counter are unchanged for
-# _STABLE_CHECKS consecutive polls AND at least _MIN_FLIGHTS have streamed in (the
-# min-flights guard prevents locking onto a tiny mid-load first batch). Hard cap
-# _MAX_MS. These are ceilings -- a fast render exits in a few polls.
-_LOAD_GATE_POLL_MS = 700
+# Smart load gate (window.FH.waitLoaded): poll every _POLL_MS (3s) and resolve the
+# INSTANT top-eligible price + 'N of M flights' counter + cleaned airline facet
+# floor are ALL unchanged for _STABLE_CHECKS consecutive polls (4 => ~12s of
+# steadiness) AND at least _MIN_FLIGHTS have streamed in (guards against locking
+# onto a tiny mid-load first batch). A 3s cadence gives each load-wave time to
+# arrive between checks, so a slow price isn't read mid-load. Hard cap _MAX_MS --
+# heavy pages keep polling (counter resets while anything changes) until quiesced.
+_LOAD_GATE_POLL_MS = 3_000
 _LOAD_GATE_STABLE_CHECKS = 4
 _LOAD_GATE_MIN_FLIGHTS = 150
-_LOAD_GATE_MAX_MS = 38_000
+# Ceiling for the load gate. Heavy ~1500-flight pages can need longer to fully
+# settle, so give them room (50s) before we give up and extract. Only effective if
+# the render budget (provider_timeout_seconds) exceeds this + page load -- see
+# config (raised to 120 -> ~85s budget).
+_LOAD_GATE_MAX_MS = 50_000
 # ScrapingBee's internal render budget must stay BELOW the httpx client timeout so
 # a render that legitimately uses most of its budget still returns (with proxy /
 # browser-startup / response-transfer overhead) before the client gives up.
@@ -586,13 +592,29 @@ class ScrapingBeeProvider:
             "f.v=e=>{if(!e)return 0;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none'};"
             "f.p=v=>{const m=f.t(v).replace(/,/g,'').match(/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*([0-9]+(?:\\.[0-9]+)?)/i);return m?Number(m[1]):null};"
             "f.o=()=>Array.from(document.querySelectorAll(d)).filter(e=>f.v(e)&&/(^|\\n)\\s*Airlines\\s*($|\\n)/i.test(e.innerText||'')&&/(?:[A-Z]{0,3}\\$|[$\\u20ac\\u00a3\\u20b9])\\s*\\d/.test(e.innerText||'')).sort((a,b)=>(b.innerText||'').length-(a.innerText||'').length)[0]||null;"
-            "f.x=()=>{const r=f.o();if(!r)return[];const s=new Map();for(const e of Array.from(r.querySelectorAll(q+',div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),pr=f.p(t);if(pr===null)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n))continue;const k=n.toLowerCase(),u=s.get(k),z=e.closest(q)||e;if(!u||pr<u.p)s.set(k,{n,p:pr,e:z})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
+            # Cheapest visible result-card price (for the junk-facet floor below).
+            "f.cp=()=>{let b=null;for(const nd of f.r()){const pr=f.p(f.t(nd.querySelector(p)?.innerText));if(pr!=null&&(b==null||pr<b))b=pr}return b};"
+            # Airline facet options [{name,price}]. Junk guard: skip entries whose
+            # name is empty/'book now'/payment-plan ('/mo','month','per') and entries
+            # whose price is implausibly far below the cheapest result card (e.g. a
+            # 'from $181/mo' financing element) -- a real airline floor is never well
+            # below the cheapest visible fare.
+            "f.x=()=>{const r=f.o();if(!r)return[];const cp=f.cp();const s=new Map();for(const e of Array.from(r.querySelectorAll(q+',div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),pr=f.p(t);if(pr===null)continue;if(cp!=null&&pr<cp*0.6)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more|book now)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n)||/(\\/mo|month|per\\b)/i.test(t))continue;const k=n.toLowerCase(),u=s.get(k),z=e.closest(q)||e;if(!u||pr<u.p)s.set(k,{n,p:pr,e:z})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
             "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll(j).length>=g).filter((n,i,a)=>!a.some((o,k)=>k!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll(j).length>=g));"
             "f.empty=()=>!f.r().length&&/no result|no flight|no match|couldn.t f|adjust your f/i.test(document.body?.innerText||'');"
             "f.fn=()=>{const m=(document.body?.innerText||'').match(/(\\d[\\d,]*)\\s+of\\s+(\\d[\\d,]*)\\s+flights/i);return m?Number(m[1].replace(/,/g,'')):null};"
             "f.sc=v=>{v=(v||'').toLowerCase();if(!v)return null;if(/nonstop|direct/.test(v))return 0;const mm=v.match(/(\\d+)\\s*stop/);return mm?Number(mm[1]):null};"
             "f.top=()=>{let best=null;for(const nd of f.r()){const pr=f.p(f.t(nd.querySelector(p)?.innerText));if(pr==null)continue;const L=Array.from(nd.querySelectorAll(j));const air=L.map(i=>f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt'))).filter(Boolean);const st=L.map(i=>f.sc(i.querySelector('.JWEO .vmXl')?.innerText));const kn=st.filter(x=>x!=null);const same=air.length>=2&&new Set(air.map(a=>a.toLowerCase())).size===1;const ok=kn.length>0&&kn.every(x=>x<=__MAXSTOPS__);if(same&&ok&&(best==null||pr<best))best=pr}return best};"
-            "f.wl=(maxMs,iv,need,minF)=>new Promise(res=>{const t0=Date.now();let lp=null,ln=null,h=0;const tick=()=>{const pr=f.top(),n=f.fn();const grown=(n!=null&&n>=minF);if(grown&&pr!=null&&pr===lp&&n===ln)h++;else h=0;lp=pr;ln=n;const done=h>=need;if(done)document.body.setAttribute('data-fh-st','1');if(done||Date.now()-t0>=maxMs){res(done);return}setTimeout(tick,iv)};tick()});"
+            # f.ff: cleaned facet floor (cheapest airline-facet price), or null.
+            "f.ff=()=>{const o=f.x();return o.length?o[0].p:null};"
+            # f.wl (waitLoaded): resolve once top-eligible price AND flights-N counter
+            # AND the cleaned facet floor are ALL unchanged for `need` consecutive
+            # polls (>=3), and N has grown past minF. Including the facet floor means
+            # the page isn't called 'loaded' until the cheapest-airline floor agrees
+            # and has stopped moving -- a stronger completeness signal than price
+            # alone. Heavy pages naturally take more polls (up to maxMs); fast pages
+            # exit at `need`.
+            "f.wl=(maxMs,iv,need,minF)=>new Promise(res=>{const t0=Date.now();let lp=null,ln=null,lf=null,h=0;const tick=()=>{const pr=f.top(),n=f.fn(),ff=f.ff();const grown=(n!=null&&n>=minF);if(grown&&pr!=null&&pr===lp&&n===ln&&ff===lf)h++;else h=0;lp=pr;ln=n;lf=ff;const done=h>=need;if(done)document.body.setAttribute('data-fh-st','1');if(done||Date.now()-t0>=maxMs){res(done);return}setTimeout(tick,iv)};tick()});"
             "f.e=()=>{const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll(j)).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:'',o:f.x().map(v=>({n:v.n,p:v.p}))},e:document.body?.getAttribute('data-fh-st')==='1',np:f.empty(),sm:true})};f.extract=f.e;f.waitLoaded=f.wl;return true})()"
         )
         helper_script = (

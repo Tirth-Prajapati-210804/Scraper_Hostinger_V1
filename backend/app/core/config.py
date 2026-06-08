@@ -86,7 +86,11 @@ class Settings(BaseSettings):
     # surprise skip on existing live data. Set to the deploy time (ISO-8601, e.g.
     # "2026-06-03T00:00:00Z"); leave empty to count all history.
     scrape_error_cap_since: str = ""
-    provider_timeout_seconds: int = 60
+    # 120s -> ScrapingBee render budget ~85s ((timeout-35)*1000, clamped). Heavy
+    # ~1500-flight pages plus the smart-load gate (up to 50s) need well over the old
+    # ~25s budget (timeout=60), which caused 500/timeout renders before the page
+    # could settle. The httpx client timeout rises with this automatically.
+    provider_timeout_seconds: int = 120
     provider_max_retries: int = 1
     provider_concurrency_limit: int = 3
     provider_rendered_concurrency_limit: int = 1
