@@ -27,8 +27,10 @@ def make_provider(api_key: str = "test-key") -> ScrapingBeeProvider:
 
 def test_rendered_results_scenario_uses_smart_load_gate() -> None:
     """The scenario carries filters in the URL (sort + -MULT,flylocal [+ stops]) and
-    uses ONE smart wait: inject helper -> wait_for price -> waitLoaded() -> extract.
-    No applyFacet()/cheapest()/scroll/fixed-wait/old-settle steps."""
+    uses a STEPPED load gate: inject helper -> wait_for price -> repeated
+    [settle(), wait]* -> extract. The waits are ScrapingBee-driven steps (not a JS
+    Promise), so the gate can't hang; extract() always runs last. No applyFacet()/
+    cheapest()/scroll/old-loading-flag steps."""
     provider = make_provider()
 
     scenario = provider._build_results_scenario(
@@ -42,22 +44,24 @@ def test_rendered_results_scenario_uses_smart_load_gate() -> None:
     helper_script = instructions[0]["evaluate"]
 
     assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
-    # Exactly 4 steps: helper, wait_for, waitLoaded, extract.
-    assert len(instructions) == 4
     evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
-    assert any(e and e.startswith("window.FH.waitLoaded(") for e in evals)
-    assert instructions[-1] == {"evaluate": "window.FH.extract()"}
+    # Stepped gate: multiple settle() snapshots interleaved with wait steps.
+    assert evals.count("window.FH.s()") >= 2
+    # Fixed wait steps drive the polling cadence (ScrapingBee-controlled).
+    assert any("wait" in i and "wait_for" not in i for i in instructions if isinstance(i, dict))
+    # extract() always runs as the final step.
+    assert instructions[-1] == {"evaluate": "window.FH.e()"}
+    # No runaway Promise gate anymore.
+    assert not any(e and "waitLoaded" in e for e in evals if e)
 
-    # The new lean helper exposes the smart gate + extract; the old applyFacet /
-    # cheapest / loading-flag settle helpers are GONE.
-    assert "f.waitLoaded=f.wl" in helper_script
+    # The lean helper exposes the instant settle + extract; old applyFacet / cheapest
+    # / loading-flag helpers are GONE.
+    assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
     assert "f.top=" in helper_script and "f.fn=" in helper_script
     assert "applyFacet" not in helper_script
     assert "f.cheap=" not in helper_script
-    assert "f.settle" not in helper_script
-    # No fixed waits / scrolls anywhere in the scenario.
-    assert not any("wait" in i for i in instructions if isinstance(i, dict) and "wait_for" not in i)
+    # No scrolls anywhere in the scenario.
     assert not any("scroll_y" in i for i in instructions if isinstance(i, dict))
 
 

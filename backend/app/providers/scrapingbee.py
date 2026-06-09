@@ -149,7 +149,7 @@ _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
 # streamed in (guards against locking onto a tiny mid-load first batch). Fewer
 # required stable polls means less time spent polling -> more of the render budget
 # is left for the page to actually load, reducing timeouts. Hard cap _MAX_MS.
-_LOAD_GATE_POLL_MS = 10_000
+_LOAD_GATE_POLL_MS = 15_000
 _LOAD_GATE_STABLE_CHECKS = 2
 _LOAD_GATE_MIN_FLIGHTS = 150
 # Ceiling for the load gate. Pages typically settle in ~30-40s and the gate exits
@@ -610,37 +610,57 @@ class ScrapingBeeProvider:
             "f.top=()=>{let best=null;for(const nd of f.r()){const pr=f.p(f.t(nd.querySelector(p)?.innerText));if(pr==null)continue;const L=Array.from(nd.querySelectorAll(j));const air=L.map(i=>f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt'))).filter(Boolean);const st=L.map(i=>f.sc(i.querySelector('.JWEO .vmXl')?.innerText));const kn=st.filter(x=>x!=null);const same=air.length>=2&&new Set(air.map(a=>a.toLowerCase())).size===1;const ok=kn.length>0&&kn.every(x=>x<=__MAXSTOPS__);if(same&&ok&&(best==null||pr<best))best=pr}return best};"
             # f.ff: cleaned facet floor (cheapest airline-facet price), or null.
             "f.ff=()=>{const o=f.x();return o.length?o[0].p:null};"
-            # f.wl (waitLoaded): resolve once top-eligible price AND flights-N counter
-            # AND the cleaned facet floor are ALL unchanged for `need` consecutive
-            # polls (>=3), and N has grown past minF. Including the facet floor means
-            # the page isn't called 'loaded' until the cheapest-airline floor agrees
-            # and has stopped moving -- a stronger completeness signal than price
-            # alone. Heavy pages naturally take more polls (up to maxMs); fast pages
-            # exit at `need`.
-            "f.wl=(maxMs,iv,need,minF)=>new Promise(res=>{const t0=Date.now();let lp=null,ln=null,lf=null,h=0;const tick=()=>{const pr=f.top(),n=f.fn(),ff=f.ff();const grown=(n!=null&&n>=minF);if(grown&&pr!=null&&pr===lp&&n===ln&&ff===lf)h++;else h=0;lp=pr;ln=n;lf=ff;const done=h>=need;if(done)document.body.setAttribute('data-fh-st','1');if(done||Date.now()-t0>=maxMs){res(done);return}setTimeout(tick,iv)};tick()});"
-            "f.e=()=>{const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),h:f.t(n.querySelector('.nrc6-price-section a[href*=\"/book/\"]')?.getAttribute('href')),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),b:Array.from(n.querySelectorAll('span,div,button')).map(v=>f.t(v.innerText)).filter(v=>/^(best|cheapest|quickest)$/i.test(v)).slice(0,3),l:Array.from(n.querySelectorAll(j)).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:'',o:f.x().map(v=>({n:v.n,p:v.p}))},e:document.body?.getAttribute('data-fh-st')==='1',np:f.empty(),sm:true})};f.extract=f.e;f.waitLoaded=f.wl;return true})()"
+            # f.s (settle): ONE instant snapshot+compare. Reads top-eligible price +
+            # flights-N + facet floor, compares to the previous call's snapshot stored
+            # on f.u, and counts consecutive-stable. When stable for `need` checks (and
+            # N grown past minF) it stamps the page 'settled=natural'. Returns nothing
+            # blocking -- it CANNOT hang, so the page's busy thread can't starve it (the
+            # reason the old looping Promise timed out). The WAITING between snapshots
+            # is done by ScrapingBee's own `wait` steps in the scenario, not JS timers,
+            # so the gate is driven externally and always reaches extract.
+            "f.s=()=>{const need=__NEED__,minF=__MINF__,st=f.u||(f.u={h:0,lp:null,ln:null,lf:null});const pr=f.top(),n=f.fn(),ff=f.ff();const grown=(n!=null&&n>=minF);if(grown&&pr!=null&&pr===st.lp&&n===st.ln&&ff===st.lf)st.h++;else st.h=0;st.lp=pr;st.ln=n;st.lf=ff;if(st.h>=need){document.body.setAttribute('data-fh-st','1');document.body.setAttribute('data-fh-how','natural')}return st.h};"
+            # f.e (extract): if the page never stamped 'settled' during the poll steps,
+            # this is the FORCED path -- we extract whatever is loaded at the cap and
+            # mark how='forced' (vs 'natural'). e:true means a usable read either way;
+            # how: tells us if it was a clean settle or a give-up-at-cap, so forced rows
+            # can be cross-checked for accuracy. Always runs as its own scenario step.
+            # NOTE: dropped two accuracy-irrelevant fields to free request-line bytes:
+            #  - the /book/ href (h): a session-specific redirect that EXPIRES; the
+            #    stable search URL is saved as the deep link instead, so h was unused.
+            #  - the best/cheapest/quickest badges (b): stored but read by no selection/
+            #    filter/price/stop logic. Both removals are verified non-load-bearing.
+            "f.e=()=>{const stamped=document.body?.getAttribute('data-fh-st')==='1';if(!stamped){document.body.setAttribute('data-fh-st','1');document.body.setAttribute('data-fh-how','forced')}const r=f.r();return JSON.stringify({n:r.length,m:r.slice(0,l).length,c:r.slice(0,l).map(n=>({t:f.t(n.innerText),p:f.t(n.querySelector(p)?.innerText),a:f.t(n.querySelector('.J0g6-operator-text')?.innerText),l:Array.from(n.querySelectorAll(j)).slice(0,g).map(i=>({t:f.t(i.innerText),a:f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt')),tm:f.t(i.querySelector('.VY2U .vmXl')?.innerText),r:f.t(i.querySelector('.VY2U [dir=\"ltr\"]')?.innerText),s:f.t(i.querySelector('.JWEO .vmXl')?.innerText),ly:f.t(i.querySelector('.JWEO .c_cgF')?.innerText),d:f.t(i.querySelector('.xdW8 .vmXl')?.innerText)})).filter(i=>i.t)})),f:{s:'',o:f.x().map(v=>({n:v.n,p:v.p}))},e:stamped,how:document.body?.getAttribute('data-fh-how')||'forced',np:f.empty(),sm:true})};f.settle=f.s;f.extract=f.e;return true})()"
         )
         helper_script = (
             helper_script.replace("__LIMIT__", str(card_limit))
             .replace("__MIN_LEGS__", str(max(1, minimum_leg_count)))
             .replace("__PRICE_SELECTOR__", _RESULT_PRICE_SELECTOR)
             .replace("__MAXSTOPS__", str(leg_stop_cap))
+            .replace("__NEED__", str(_LOAD_GATE_STABLE_CHECKS))
+            .replace("__MINF__", str(_LOAD_GATE_MIN_FLIGHTS))
         )
 
-        return {
-            "strict": False,
-            "instructions": [
-                {"evaluate": helper_script},
-                {"wait_for": _RESULT_PRICE_SELECTOR},
-                {
-                    "evaluate": (
-                        f"window.FH.waitLoaded({_LOAD_GATE_MAX_MS},"
-                        f"{_LOAD_GATE_POLL_MS},{_LOAD_GATE_STABLE_CHECKS},{_LOAD_GATE_MIN_FLIGHTS})"
-                    )
-                },
-                {"evaluate": "window.FH.extract()"},
-            ],
-        }
+        # STEPPED load gate (not a runaway Promise): ScrapingBee drives the timing via
+        # its own `wait` steps, and each FH.settle() is an instant snapshot+compare, so
+        # the page's busy thread can't starve the gate (the cause of the old 140s
+        # hangs). settle() stamps 'settled' once the top price + flights-N + facet
+        # floor hold steady for _STABLE_CHECKS snapshots; extract() ALWAYS runs as the
+        # final step, returning data either way and recording how it stopped
+        # (natural = settled on its own, forced = gave up at the cap). The poll count
+        # = cap / interval, so the whole gate is bounded well below ScrapingBee's
+        # ~140s render wall. Pages typically settle in a few snapshots and the later
+        # settle() calls are cheap no-ops once stamped.
+        poll_steps = max(_LOAD_GATE_STABLE_CHECKS, _LOAD_GATE_MAX_MS // _LOAD_GATE_POLL_MS)
+        instructions: list[dict[str, object]] = [
+            {"evaluate": helper_script},
+            {"wait_for": _RESULT_PRICE_SELECTOR},
+            {"evaluate": "window.FH.s()"},
+        ]
+        for _ in range(poll_steps):
+            instructions.append({"wait": _LOAD_GATE_POLL_MS})
+            instructions.append({"evaluate": "window.FH.s()"})
+        instructions.append({"evaluate": "window.FH.e()"})
+        return {"strict": False, "instructions": instructions}
 
     async def _parse_rendered_payload(
         self,
