@@ -27,10 +27,13 @@ def make_provider(api_key: str = "test-key") -> ScrapingBeeProvider:
 
 def test_rendered_results_scenario_uses_smart_load_gate() -> None:
     """The scenario carries filters in the URL (sort + -MULT,flylocal [+ stops]) and
-    uses a STEPPED load gate: inject helper -> wait_for price -> repeated
-    [settle(), wait]* -> extract. The waits are ScrapingBee-driven steps (not a JS
-    Promise), so the gate can't hang; extract() always runs last. No applyFacet()/
-    cheapest()/scroll/old-loading-flag steps."""
+    uses an ADAPTIVE load gate that early-exits: inject helper -> wait_for price ->
+    arm() (self-firing settle interval) -> wait_for the settled-stamp -> extract.
+    wait_for is an EXTERNAL DOM poll (can't be starved like the old Promise) and
+    returns the INSTANT the page stamps settled, so the gate no longer burns a fixed
+    wait budget (the cause of the 137s HTTP500). extract() always runs last; a never-
+    settling page falls through to it (strict:False) as a forced read, not a timeout.
+    No fixed `wait` steps, no applyFacet/cheapest/scroll/old-loading-flag steps."""
     provider = make_provider()
 
     scenario = provider._build_results_scenario(
@@ -43,22 +46,33 @@ def test_rendered_results_scenario_uses_smart_load_gate() -> None:
     instructions = scenario["instructions"]
     helper_script = instructions[0]["evaluate"]
 
+    # strict:False is load-bearing -- it lets the settled-stamp wait_for be SKIPPED
+    # (not abort the scenario) on a page that never settles, so extract still runs.
+    assert scenario["strict"] is False
     assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
-    evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
-    # Stepped gate: multiple settle() snapshots interleaved with wait steps.
-    assert evals.count("window.FH.s()") >= 2
-    # Fixed wait steps drive the polling cadence (ScrapingBee-controlled).
-    assert any("wait" in i and "wait_for" not in i for i in instructions if isinstance(i, dict))
+    # arm() starts the self-firing settle checks, then the gate blocks on the stamp.
+    assert instructions[2] == {"evaluate": "window.FH.arm()"}
+    assert instructions[3] == {"wait_for": 'body[data-fh-st="1"]'}
     # extract() always runs as the final step.
     assert instructions[-1] == {"evaluate": "window.FH.e()"}
+    # No fixed `wait` steps anymore -- the gate is adaptive, not a fixed budget.
+    assert not any(
+        "wait" in i and "wait_for" not in i for i in instructions if isinstance(i, dict)
+    )
+    evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
     # No runaway Promise gate anymore.
     assert not any(e and "waitLoaded" in e for e in evals if e)
 
-    # The lean helper exposes the instant settle + extract; old applyFacet / cheapest
-    # / loading-flag helpers are GONE.
+    # The helper exposes arm + the SAME settle check (top price + flights-N + facet
+    # floor stable for N snapshots) + extract; old applyFacet/cheapest/loading-flag
+    # helpers are GONE. arm() re-fires settle on a JS interval while wait_for blocks.
+    assert "f.arm=" in helper_script
+    assert "setInterval" in helper_script
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
     assert "f.top=" in helper_script and "f.fn=" in helper_script
+    # settle() still stamps the body when stable -> that stamp is what wait_for awaits.
+    assert "data-fh-st" in helper_script
     assert "applyFacet" not in helper_script
     assert "f.cheap=" not in helper_script
     # No scrolls anywhere in the scenario.

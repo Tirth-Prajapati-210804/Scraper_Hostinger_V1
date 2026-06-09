@@ -620,11 +620,16 @@ class ScrapingBeeProvider:
             # flights-N + facet floor, compares to the previous call's snapshot stored
             # on f.u, and counts consecutive-stable. When stable for `need` checks (and
             # N grown past minF) it stamps the page 'settled=natural'. Returns nothing
-            # blocking -- it CANNOT hang, so the page's busy thread can't starve it (the
-            # reason the old looping Promise timed out). The WAITING between snapshots
-            # is done by ScrapingBee's own `wait` steps in the scenario, not JS timers,
-            # so the gate is driven externally and always reaches extract.
-            "f.s=()=>{const need=__NEED__,minF=__MINF__,st=f.u||(f.u={h:0,lp:null,ln:null,lf:null});const pr=f.top(),n=f.fn(),ff=f.ff();const grown=(n!=null&&n>=minF);if(grown&&pr!=null&&pr===st.lp&&n===st.ln&&ff===st.lf)st.h++;else st.h=0;st.lp=pr;st.ln=n;st.lf=ff;if(st.h>=need){document.body.setAttribute('data-fh-st','1');document.body.setAttribute('data-fh-how','natural')}return st.h};"
+            # blocking -- it CANNOT hang, so the page's busy thread can't starve it.
+            "f.s=()=>{const need=__NEED__,minF=__MINF__,st=f.u||(f.u={h:0,lp:null,ln:null,lf:null});const pr=f.top(),n=f.fn(),ff=f.ff();const grown=(n!=null&&n>=minF);if(grown&&pr!=null&&pr===st.lp&&n===st.ln&&ff===st.lf)st.h++;else st.h=0;st.lp=pr;st.ln=n;st.lf=ff;if(st.h>=need){document.body.setAttribute('data-fh-st','1');document.body.setAttribute('data-fh-how','natural');if(f._iv){clearInterval(f._iv);f._iv=0}}return st.h};"
+            # f.arm: fire f.s() now and re-fire it every _LOAD_GATE_POLL_MS on a JS
+            # interval, so the stability snapshots keep accruing WHILE ScrapingBee's
+            # external wait_for('body[data-fh-st="1"]') blocks. The waiting is done by
+            # wait_for (an EXTERNAL DOM poll that can't be starved by Kayak's busy
+            # thread -- the cause of the old looping-Promise 140s hang), and the gate
+            # EARLY-EXITS the instant the stamp lands (proven: 45s vs the fixed-step
+            # gate's 137s HTTP500). f.s() self-clears the interval once it stamps.
+            "f.arm=()=>{f.s();if(!f._iv)f._iv=setInterval(()=>{try{f.s()}catch(e){}},__POLLMS__);return true};"
             # f.e (extract): if the page never stamped 'settled' during the poll steps,
             # this is the FORCED path -- we extract whatever is loaded at the cap and
             # mark how='forced' (vs 'natural'). e:true means a usable read either way;
@@ -644,28 +649,42 @@ class ScrapingBeeProvider:
             .replace("__MAXSTOPS__", str(leg_stop_cap))
             .replace("__NEED__", str(_LOAD_GATE_STABLE_CHECKS))
             .replace("__MINF__", str(_LOAD_GATE_MIN_FLIGHTS))
+            .replace("__POLLMS__", str(_LOAD_GATE_POLL_MS))
         )
 
-        # STEPPED load gate (not a runaway Promise): ScrapingBee drives the timing via
-        # its own `wait` steps, and each FH.settle() is an instant snapshot+compare, so
-        # the page's busy thread can't starve the gate (the cause of the old 140s
-        # hangs). settle() stamps 'settled' once the top price + flights-N + facet
-        # floor hold steady for _STABLE_CHECKS snapshots; extract() ALWAYS runs as the
-        # final step, returning data either way and recording how it stopped
-        # (natural = settled on its own, forced = gave up at the cap). The poll count
-        # = cap / interval, so the whole gate is bounded well below ScrapingBee's
-        # ~140s render wall. Pages typically settle in a few snapshots and the later
-        # settle() calls are cheap no-ops once stamped.
-        poll_steps = max(_LOAD_GATE_STABLE_CHECKS, _LOAD_GATE_MAX_MS // _LOAD_GATE_POLL_MS)
+        # ADAPTIVE load gate (replaces the old fixed N x wait-step gate, which ALWAYS
+        # burned its full ~90s of `wait` steps because ScrapingBee `wait` is
+        # unconditional -- there is no way to break a scenario mid-flight, so even a
+        # page that settled at 30s ran the whole budget and blew ScrapingBee's ~140s
+        # render wall as an HTTP 500. Proven on the production key 2026-06-09: the
+        # fixed-step gate = HTTP500 at 137s; this adaptive gate = HTTP200 at 45s with
+        # full cards, same top price.)
+        #
+        # Flow: helper -> wait_for(first price card) -> FH.arm() (fires FH.s() now and
+        # re-fires it every _LOAD_GATE_POLL_MS on a JS interval) -> wait_for(settled
+        # stamp) -> FH.e().
+        #
+        # The "is it ready?" check is UNCHANGED: FH.s() still requires the top price +
+        # flights-N + facet floor to hold steady for _LOAD_GATE_STABLE_CHECKS snapshots
+        # (15s apart) before it stamps the body settled. The ONLY change is WHO drives
+        # the timing and that we can now stop early: FH.arm() runs FH.s() on a JS
+        # interval inside the page, while wait_for('body[data-fh-st="1"]') blocks
+        # EXTERNALLY (ScrapingBee polls the DOM for the stamp from outside, so it cannot
+        # be starved by Kayak's busy main thread -- the flaw in the old looping Promise)
+        # and returns the INSTANT the stamp lands -> true early exit instead of sleeping
+        # out the full budget.
+        #
+        # "strict": False is load-bearing: if a page never settles, the stamp wait_for
+        # fails, that one instruction is SKIPPED (not aborted), and FH.e() still runs as
+        # the forced extract (how='forced') -- returning whatever loaded instead of a
+        # timeout. The httpx render budget is the only hard cap.
         instructions: list[dict[str, object]] = [
             {"evaluate": helper_script},
             {"wait_for": _RESULT_PRICE_SELECTOR},
-            {"evaluate": "window.FH.s()"},
+            {"evaluate": "window.FH.arm()"},
+            {"wait_for": 'body[data-fh-st="1"]'},
+            {"evaluate": "window.FH.e()"},
         ]
-        for _ in range(poll_steps):
-            instructions.append({"wait": _LOAD_GATE_POLL_MS})
-            instructions.append({"evaluate": "window.FH.s()"})
-        instructions.append({"evaluate": "window.FH.e()"})
         return {"strict": False, "instructions": instructions}
 
     async def _parse_rendered_payload(
