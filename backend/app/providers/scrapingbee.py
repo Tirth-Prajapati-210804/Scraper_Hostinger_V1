@@ -143,19 +143,22 @@ _SAME_AIRLINE_INITIAL_WAIT_MS = 5_000
 _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
 # Smart load gate (window.FH.waitLoaded): poll every _POLL_MS (3s) and resolve the
 # INSTANT top-eligible price + 'N of M flights' counter + cleaned airline facet
-# floor are ALL unchanged for _STABLE_CHECKS consecutive polls (4 => ~12s of
-# steadiness) AND at least _MIN_FLIGHTS have streamed in (guards against locking
-# onto a tiny mid-load first batch). A 3s cadence gives each load-wave time to
-# arrive between checks, so a slow price isn't read mid-load. Hard cap _MAX_MS --
-# heavy pages keep polling (counter resets while anything changes) until quiesced.
-_LOAD_GATE_POLL_MS = 3_000
-_LOAD_GATE_STABLE_CHECKS = 4
+# floor are ALL unchanged for _STABLE_CHECKS consecutive polls (MINIMUM 2 => ~6s of
+# steadiness; the gate keeps polling beyond that whenever anything is still changing,
+# so slow pages still wait as long as they need) AND at least _MIN_FLIGHTS have
+# streamed in (guards against locking onto a tiny mid-load first batch). Fewer
+# required stable polls means less time spent polling -> more of the render budget
+# is left for the page to actually load, reducing timeouts. Hard cap _MAX_MS.
+_LOAD_GATE_POLL_MS = 10_000
+_LOAD_GATE_STABLE_CHECKS = 2
 _LOAD_GATE_MIN_FLIGHTS = 150
-# Ceiling for the load gate. Heavy ~1500-flight pages can need longer to fully
-# settle, so give them room (50s) before we give up and extract. Only effective if
-# the render budget (provider_timeout_seconds) exceeds this + page load -- see
-# config (raised to 120 -> ~85s budget).
-_LOAD_GATE_MAX_MS = 50_000
+# Ceiling for the load gate. Pages typically settle in ~30-40s and the gate exits
+# early once stable, so this cap only bites on pages that NEVER fully settle. Kept
+# at 90s: enough room for genuinely-slow pages to settle, while leaving a ~50s
+# margin below ScrapingBee's ~140s render wall so a never-settling page gives up and
+# extracts what's loaded BEFORE the wall (returns a result instead of a timeout).
+# (Pushing this toward 140s would drive those pages INTO the timeout error.)
+_LOAD_GATE_MAX_MS = 90_000
 # ScrapingBee's internal render budget must stay BELOW the httpx client timeout so
 # a render that legitimately uses most of its budget still returns (with proxy /
 # browser-startup / response-transfer overhead) before the client gives up.
