@@ -156,7 +156,9 @@ def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:
     params["block_resources"] = "True"
 
     assert params["wait"] == 0
-    assert params["wait_browser"] == "load"
+    # domcontentloaded (not 'load'): the full load event may never fire on Kayak's
+    # live SPA, which made ScrapingBee hang to the ~140s wall before the scenario ran.
+    assert params["wait_browser"] == "domcontentloaded"
     assert len(urlencode(params)) < 8190
 
 

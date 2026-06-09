@@ -371,7 +371,13 @@ class ScrapingBeeProvider:
             "device": "desktop",
             "timeout": self._render_budget_ms(),
             "wait": 0,
-            "wait_browser": "load",
+            # 'domcontentloaded', NOT 'load': Kayak is a live SPA that keeps loading
+            # in the background (streaming prices, ads, tracking), so the full 'load'
+            # event may never fire -> ScrapingBee waited for it until the ~140s wall
+            # and timed out BEFORE the scenario/gate ran. 'domcontentloaded' fires in
+            # a few seconds, then the scenario's wait_for(price) proceeds as soon as
+            # the first price card appears.
+            "wait_browser": "domcontentloaded",
             "window_width": 1600,
             "window_height": 2200,
         }
