@@ -100,7 +100,9 @@ def test_smart_gate_per_leg_stop_cap_is_embedded() -> None:
 def test_same_airline_filters_are_carried_in_kayak_url() -> None:
     """Round-trip URL carries sort=price_a & airlines=-MULT,flylocal, plus stops=
     only when the group caps at <=1 stop. flylocal is REQUIRED (re-verified: -MULT
-    alone hides the cheapest carrier). Multi-city carries the same filters."""
+    alone hides the cheapest carrier). The same-airline path ALSO always carries
+    baditin=baditin so Kayak shows longer flights (its default HIDES them, which was
+    dropping the true cheapest fare). Multi-city carries the same filters."""
     provider = make_provider()
 
     url1 = provider._build_search_url(
@@ -108,42 +110,56 @@ def test_same_airline_filters_are_carried_in_kayak_url() -> None:
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=1,
     )
-    assert url1.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;stops=0,1")
+    assert url1.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;baditin=baditin;stops=0,1")
 
     url0 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=0,
     )
-    assert url0.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;stops=0")
+    assert url0.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;baditin=baditin;stops=0")
 
     url2 = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=2,
     )
-    # No stops= clause when max_stops >= 2, but airlines filter still present.
-    assert url2.endswith("?sort=price_a&fs=airlines=-MULT,flylocal")
+    # No stops= clause when max_stops >= 2, but airlines + baditin still present.
+    assert url2.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;baditin=baditin")
     assert "stops=" not in url2
     assert "airlines=-MULT,flylocal" in url1 and "airlines=-MULT,flylocal" in url2
+    assert "baditin=baditin" in url1 and "baditin=baditin" in url2
 
-    # The 0-card fallback URL (same_airline_url=False) drops -MULT entirely.
+    # The 0-card fallback URL (same_airline_url=False) drops -MULT AND baditin.
     fb = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=2, same_airline_url=False,
     )
     assert fb.endswith("?sort=price_a")
-    assert "-MULT" not in fb and "flylocal" not in fb
+    assert "-MULT" not in fb and "flylocal" not in fb and "baditin" not in fb
 
-    # Multi-city carries the same same-airline filter.
+    # legdur=/layoverdur= tokens appear (minutes, '=-MAX' form) only when the group
+    # sets a cap; absent otherwise. Verified honored by Kayak server-side.
+    capped = provider._build_search_url(
+        origin="MIA", destination="MLA",
+        depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
+        max_stops=1, max_leg_duration_minutes=1440, max_layover_minutes=660,
+    )
+    assert "layoverdur=-660" in capped and "legdur=-1440" in capped
+    assert "layoverdur" not in url1 and "legdur" not in url1
+
+    # Multi-city carries the same same-airline + baditin filters and the caps.
     mc = provider._build_multi_city_results_url(
         outbound_origin="DEN", outbound_destination="EDI",
         outbound_date=date(2026, 10, 12),
         inbound_origin="ROM", inbound_destination="DEN",
         inbound_date=date(2026, 10, 21), max_stops=1,
+        max_leg_duration_minutes=1440, max_layover_minutes=660,
     )
     assert "airlines=-MULT,flylocal" in mc and "stops=0,1" in mc
+    assert "baditin=baditin" in mc
+    assert "layoverdur=-660" in mc and "legdur=-1440" in mc
 
 
 def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:

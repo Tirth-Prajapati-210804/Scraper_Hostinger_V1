@@ -45,6 +45,7 @@ interface ManualState {
   startDate: string;
   endDate: string;
   stops: StopModeId;
+  maxLayoverHours: string;
   maxLegDurationHours: string;
   isActive: boolean;
 }
@@ -91,6 +92,13 @@ const MAX_LEG_DURATION_OPTIONS = [
   { label: "16h", value: "16" },
   { label: "24h", value: "24" },
   { label: "36h", value: "36" },
+];
+const MAX_LAYOVER_OPTIONS = [
+  { label: "Any", value: "" },
+  { label: "6h", value: "6" },
+  { label: "8h", value: "8" },
+  { label: "11h", value: "11" },
+  { label: "16h", value: "16" },
 ];
 
 function tripTypeToUi(type?: TripType | null): UiTripType {
@@ -169,6 +177,9 @@ function buildInitialManualState(initial?: RouteGroup | null): ManualState {
     startDate: initial?.start_date ?? "",
     endDate: initial?.end_date ?? "",
     stops: stopModeToUi(initial?.max_stops),
+    maxLayoverHours: initial?.max_layover_minutes
+      ? String(Math.round(initial.max_layover_minutes / 60))
+      : "",
     maxLegDurationHours: initial?.max_leg_duration_minutes
       ? String(Math.round(initial.max_leg_duration_minutes / 60))
       : "",
@@ -399,6 +410,49 @@ function SameAirlineNotice() {
   );
 }
 
+function MaxLayoverSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <FieldLabel hint="Caps the halt/layover time at each stop. A halt longer than this is excluded as impractical. Applied by Kayak before results load.">
+        Max Layover
+      </FieldLabel>
+      <div className="flex flex-wrap items-center gap-2">
+        {MAX_LAYOVER_OPTIONS.map((option) => {
+          const active = value === option.value;
+          return (
+            <button
+              key={option.label}
+              type="button"
+              onClick={() => onChange(option.value)}
+              className={`h-10 rounded-2xl border px-4 text-[14px] font-medium transition ${
+                active
+                  ? "border-brand-500 bg-[#edf2ff] text-brand-700"
+                  : "border-[#dfe6f0] bg-white text-[#52637f] hover:border-[#cad5e7]"
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+        <input
+          type="text"
+          inputMode="numeric"
+          value={value}
+          onChange={(event) => onChange(event.target.value.replace(/\D/g, ""))}
+          placeholder="Custom hours"
+          className="h-10 w-36 rounded-2xl border border-[#dfe6f0] bg-white px-4 text-[14px] text-[#0f172a] outline-none placeholder:text-[#9ba8bf] focus:border-brand-500"
+        />
+      </div>
+    </div>
+  );
+}
+
 function MaxLegDurationSelector({
   value,
   onChange,
@@ -502,6 +556,11 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         Number.isFinite(maxLegDurationHours) && maxLegDurationHours > 0
           ? Math.min(maxLegDurationHours, 48) * 60
           : null;
+      const maxLayoverHours = Number.parseInt(state.maxLayoverHours, 10);
+      const maxLayoverMinutes =
+        Number.isFinite(maxLayoverHours) && maxLayoverHours > 0
+          ? Math.min(maxLayoverHours, 48) * 60
+          : null;
 
       if (state.tripType === "multicity") {
         const returnOrigins = normalizeCodes(state.returnLeg.from);
@@ -532,6 +591,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         max_stops: stopModeToApi(state.stops),
         same_airline_only: true,
         max_leg_duration_minutes: maxLegDurationMinutes,
+        max_layover_minutes: maxLayoverMinutes,
         start_date: resolvedStartDate,
         end_date: resolvedEndDate,
         trip_type: tripTypeToApi(state.tripType),
@@ -807,6 +867,11 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         />
 
         <SameAirlineNotice />
+
+        <MaxLayoverSelector
+          value={state.maxLayoverHours}
+          onChange={(maxLayoverHours) => setState((current) => ({ ...current, maxLayoverHours }))}
+        />
 
         <MaxLegDurationSelector
           value={state.maxLegDurationHours}

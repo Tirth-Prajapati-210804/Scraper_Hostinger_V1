@@ -94,6 +94,7 @@ class RouteGroupCreate(BaseModel):
     max_stops: int | None = Field(default=1, ge=0, le=2)
     same_airline_only: bool = True
     max_leg_duration_minutes: int | None = Field(default=None, ge=30, le=2880)
+    max_layover_minutes: int | None = Field(default=None, ge=30, le=2880)
     start_date: date | None = None
     end_date: date | None = None
     trip_type: str = Field(default="round_trip")
@@ -158,6 +159,7 @@ class RouteGroupUpdate(BaseModel):
     max_stops: int | None = Field(default=None, ge=0, le=2)
     same_airline_only: bool | None = None
     max_leg_duration_minutes: int | None = Field(default=None, ge=30, le=2880)
+    max_layover_minutes: int | None = Field(default=None, ge=30, le=2880)
     start_date: date | None = None
     end_date: date | None = None
     trip_type: str | None = None
@@ -231,6 +233,7 @@ class RouteGroupResponse(BaseModel):
     max_stops: int | None
     same_airline_only: bool
     max_leg_duration_minutes: int | None
+    max_layover_minutes: int | None
     start_date: date | None
     end_date: date | None
     created_at: datetime

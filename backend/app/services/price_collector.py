@@ -150,12 +150,20 @@ class PriceCollector:
         provider: FlightProvider,
         *,
         market: str | None,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> dict[str, object]:
         kwargs: dict[str, object] = {}
-        if market and getattr(provider, "name", "") == "scrapingbee":
-            kwargs["market"] = market
         if getattr(provider, "name", "") == "scrapingbee":
+            if market:
+                kwargs["market"] = market
             kwargs["same_airline_only"] = True
+            # Carried into the Kayak URL (legdur=/layoverdur=) so Kayak filters
+            # server-side before render -- fewer cards, faster extract.
+            if max_leg_duration_minutes:
+                kwargs["max_leg_duration_minutes"] = max_leg_duration_minutes
+            if max_layover_minutes:
+                kwargs["max_layover_minutes"] = max_layover_minutes
         return kwargs
 
     def _normalize_stop_mode(self, max_stops: int | None) -> int | None:
@@ -361,6 +369,8 @@ class PriceCollector:
         return_origin: str | None,
         return_date: date | None,
         same_airline_only: bool,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> ProviderSearchOutcome:
         if trip_type == "multi_city":
             method = getattr(provider, "search_multi_city_diagnostic", None)
@@ -384,6 +394,8 @@ class PriceCollector:
                     **self._provider_search_kwargs(
                         provider,
                         market=market,
+                        max_leg_duration_minutes=max_leg_duration_minutes,
+                        max_layover_minutes=max_layover_minutes,
                     ),
                 )
             results = await provider.search_multi_city(
@@ -408,6 +420,8 @@ class PriceCollector:
                     **self._provider_search_kwargs(
                         provider,
                         market=market,
+                        max_leg_duration_minutes=max_leg_duration_minutes,
+                        max_layover_minutes=max_layover_minutes,
                     ),
                 )
             results = await provider.search_round_trip(
@@ -454,6 +468,7 @@ class PriceCollector:
         return_origin: str | None = None,
         same_airline_only: bool = True,
         max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> CollectionResult:
 
         all_results: list[ProviderResult] = []
@@ -489,6 +504,8 @@ class PriceCollector:
                             return_origin=return_origin,
                             return_date=return_date,
                             same_airline_only=same_airline_only,
+                            max_leg_duration_minutes=max_leg_duration_minutes,
+                            max_layover_minutes=max_layover_minutes,
                         )
                     else:
                         stay_nights = nights or 3
@@ -506,6 +523,8 @@ class PriceCollector:
                             return_origin=return_origin,
                             return_date=return_date,
                             same_airline_only=same_airline_only,
+                            max_leg_duration_minutes=max_leg_duration_minutes,
+                            max_layover_minutes=max_layover_minutes,
                         )
 
                     raw_results = list(outcome.results)
@@ -680,6 +699,7 @@ class PriceCollector:
         return_origin: str | None = None,
         same_airline_only: bool = True,
         max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
         is_retry: bool = False,
     ) -> dict[str, int]:
 
@@ -742,6 +762,7 @@ class PriceCollector:
                             return_origin=return_origin,
                             same_airline_only=same_airline_only,
                             max_leg_duration_minutes=max_leg_duration_minutes,
+                            max_layover_minutes=max_layover_minutes,
                         )
                     )
                     if was_stopped or result is None:

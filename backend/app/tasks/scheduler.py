@@ -520,6 +520,7 @@ class FlightScheduler:
             max_stops=group.max_stops,
             same_airline_only=bool(getattr(group, "same_airline_only", False)),
             max_leg_duration_minutes=getattr(group, "max_leg_duration_minutes", None),
+            max_layover_minutes=getattr(group, "max_layover_minutes", None),
             trip_type=segment.trip_type,
             nights=segment.nights,
             return_origin=segment.return_origin,

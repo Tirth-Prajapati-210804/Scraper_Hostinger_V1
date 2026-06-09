@@ -489,7 +489,14 @@ class ScrapingBeeProvider:
 
         return data
 
-    def _kayak_query(self, max_stops: int | None, *, same_airline: bool = False) -> str:
+    def _kayak_query(
+        self,
+        max_stops: int | None,
+        *,
+        same_airline: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
+    ) -> str:
         """Kayak results query. The per-leg stop filter is carried in the URL
         (fs=stops=...), like Kayak's own UI, e.g. ?sort=price_a&fs=stops=0,1.
 
@@ -505,12 +512,33 @@ class ScrapingBeeProvider:
         same_airline=False (MULTI-CITY path, unchanged): NO airlines param in the
         URL; isolation is done in the scenario via applyFacet() (untick "Multiple
         airlines"), because -MULT on the multi-leg URL form is unverified.
+
+        Quality/duration tokens (all verified honored by Kayak on the production key
+        2026-06-09; values are MINUTES, form '=-MAX'):
+        - baditin=baditin: ALWAYS added on the same-airline path. It tells Kayak to
+          SHOW longer itineraries, which Kayak HIDES by default. Hiding them was
+          dropping the true cheapest fare on some routes (proven: YEG->FRA cheapest
+          was 1347 with longer hidden vs 1337 with baditin on), so we never want
+          Kayak silently pruning a cheap longer flight before we see it.
+        - layoverdur=-<min>: max layover/halt per stop. Client rule: a halt over
+          ~11h makes the journey impractical (layoverdur=-660). Pairs with baditin so
+          a longer flight that STILL has an acceptable halt stays eligible while the
+          impractical-halt ones are cut.
+        - legdur=-<min>: max single flight-leg duration (the group's Max Leg
+          Duration, moved from a Python post-filter to server-side here).
         """
         filters: list[str] = []
         if same_airline:
             filters.append("airlines=-MULT,flylocal")
+            # Show longer flights so a cheap longer fare is never hidden; the layover
+            # cap below keeps results practical.
+            filters.append("baditin=baditin")
         if max_stops is not None and max_stops <= 1:
             filters.append(f"stops={'0' if max_stops <= 0 else '0,1'}")
+        if isinstance(max_layover_minutes, int) and max_layover_minutes > 0:
+            filters.append(f"layoverdur=-{max_layover_minutes}")
+        if isinstance(max_leg_duration_minutes, int) and max_leg_duration_minutes > 0:
+            filters.append(f"legdur=-{max_leg_duration_minutes}")
         query = "?sort=price_a"
         if filters:
             query += "&fs=" + ";".join(filters)
@@ -527,12 +555,19 @@ class ScrapingBeeProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_url: bool = True,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> str:
         # Round-trip carries -MULT,flylocal in the URL by default (same_airline_url).
         # The 0-card fallback rebuilds with same_airline_url=False (no -MULT).
         route = f"{origin.upper()}-{destination.upper()}"
         base_url = self._kayak_site_base(currency, market)
-        query = self._kayak_query(max_stops, same_airline=same_airline_url)
+        query = self._kayak_query(
+            max_stops,
+            same_airline=same_airline_url,
+            max_leg_duration_minutes=max_leg_duration_minutes,
+            max_layover_minutes=max_layover_minutes,
+        )
         if return_date:
             return (
                 f"{base_url}/flights/{route}/"
@@ -555,14 +590,22 @@ class ScrapingBeeProvider:
         market: str | None = None,
         currency: str = "USD",
         max_stops: int | None = None,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> str:
         base_url = self._kayak_site_base(currency, market)
+        query = self._kayak_query(
+            max_stops,
+            same_airline=True,
+            max_leg_duration_minutes=max_leg_duration_minutes,
+            max_layover_minutes=max_layover_minutes,
+        )
         return (
             f"{base_url}/flights/"
             f"{outbound_origin.upper()}-{outbound_destination.upper()}/"
             f"{outbound_date.isoformat()}/"
             f"{inbound_origin.upper()}-{inbound_destination.upper()}/"
-            f"{inbound_date.isoformat()}{self._kayak_query(max_stops, same_airline=True)}"
+            f"{inbound_date.isoformat()}{query}"
         )
 
     def _build_results_scenario(
@@ -2005,6 +2048,8 @@ class ScrapingBeeProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> tuple[list[ProviderResult], ProviderSearchDiagnostics]:
         same_airline_only = True
         if self._quota_blocked():
@@ -2035,6 +2080,8 @@ class ScrapingBeeProvider:
             market=market,
             currency=currency,
             max_stops=max_stops,
+            max_leg_duration_minutes=max_leg_duration_minutes,
+            max_layover_minutes=max_layover_minutes,
         )
 
         used_deep_pass = True
@@ -2257,6 +2304,8 @@ class ScrapingBeeProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> ProviderSearchOutcome:
         same_airline_only = True
         market_country_code = self._market_country_code(currency, market)
@@ -2268,6 +2317,8 @@ class ScrapingBeeProvider:
             market=market,
             currency=currency,
             max_stops=max_stops,
+            max_leg_duration_minutes=max_leg_duration_minutes,
+            max_layover_minutes=max_layover_minutes,
         )
         return await self._search_rendered_itinerary_diagnostic(
             trip_type="round_trip",
@@ -2288,6 +2339,8 @@ class ScrapingBeeProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> ProviderSearchOutcome:
         del same_airline_only
         results, diagnostics = await self._search_multi_city_once(
@@ -2296,6 +2349,8 @@ class ScrapingBeeProvider:
             currency=currency,
             max_stops=max_stops,
             same_airline_only=True,
+            max_leg_duration_minutes=max_leg_duration_minutes,
+            max_layover_minutes=max_layover_minutes,
         )
         return ProviderSearchOutcome(results=results, diagnostics=diagnostics)
 
@@ -2320,6 +2375,8 @@ class ScrapingBeeProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> list[ProviderResult]:
         del adults, cabin
         same_airline_only = True
@@ -2341,6 +2398,8 @@ class ScrapingBeeProvider:
                     currency=currency,
                     max_stops=max_stops,
                     same_airline_only=same_airline_only,
+                    max_leg_duration_minutes=max_leg_duration_minutes,
+                    max_layover_minutes=max_layover_minutes,
                 )
                 return self._filter_results_by_stops(outcome.results, max_stops)
 
@@ -2355,6 +2414,8 @@ class ScrapingBeeProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> list[ProviderResult]:
         del adults, cabin
         same_airline_only = True
@@ -2373,6 +2434,8 @@ class ScrapingBeeProvider:
                     currency=currency,
                     max_stops=max_stops,
                     same_airline_only=same_airline_only,
+                    max_leg_duration_minutes=max_leg_duration_minutes,
+                    max_layover_minutes=max_layover_minutes,
                 )
                 results = outcome.results
                 if max_stops is None:
@@ -2446,6 +2509,8 @@ class ScrapingBeePoolProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> ProviderSearchOutcome:
         return await self._search_outcome_with_failover(
             lambda provider: provider.search_round_trip_diagnostic(
@@ -2457,6 +2522,8 @@ class ScrapingBeePoolProvider:
                 currency=currency,
                 max_stops=max_stops,
                 same_airline_only=True,
+                max_leg_duration_minutes=max_leg_duration_minutes,
+                max_layover_minutes=max_layover_minutes,
             )
         )
 
@@ -2468,6 +2535,8 @@ class ScrapingBeePoolProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> ProviderSearchOutcome:
         return await self._search_outcome_with_failover(
             lambda provider: provider.search_multi_city_diagnostic(
@@ -2476,6 +2545,8 @@ class ScrapingBeePoolProvider:
                 currency=currency,
                 max_stops=max_stops,
                 same_airline_only=True,
+                max_leg_duration_minutes=max_leg_duration_minutes,
+                max_layover_minutes=max_layover_minutes,
             )
         )
 
@@ -2491,6 +2562,8 @@ class ScrapingBeePoolProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> list[ProviderResult]:
         return await self._search_with_failover(
             lambda provider: provider.search_round_trip(
@@ -2504,6 +2577,8 @@ class ScrapingBeePoolProvider:
                 currency=currency,
                 max_stops=max_stops,
                 same_airline_only=True,
+                max_leg_duration_minutes=max_leg_duration_minutes,
+                max_layover_minutes=max_layover_minutes,
             )
         )
 
@@ -2516,6 +2591,8 @@ class ScrapingBeePoolProvider:
         currency: str = "USD",
         max_stops: int | None = None,
         same_airline_only: bool = False,
+        max_leg_duration_minutes: int | None = None,
+        max_layover_minutes: int | None = None,
     ) -> list[ProviderResult]:
         return await self._search_with_failover(
             lambda provider: provider.search_multi_city(
@@ -2526,6 +2603,8 @@ class ScrapingBeePoolProvider:
                 currency=currency,
                 max_stops=max_stops,
                 same_airline_only=True,
+                max_leg_duration_minutes=max_leg_duration_minutes,
+                max_layover_minutes=max_layover_minutes,
             )
         )
 

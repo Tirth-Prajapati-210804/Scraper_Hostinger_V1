@@ -124,6 +124,7 @@ async def create(
         max_stops=data.max_stops,
         same_airline_only=True,
         max_leg_duration_minutes=data.max_leg_duration_minutes,
+        max_layover_minutes=data.max_layover_minutes,
         start_date=data.start_date,
         end_date=data.end_date,
         user_id=owner_id,

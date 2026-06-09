@@ -34,6 +34,9 @@ class RouteGroup(Base):
     max_stops: Mapped[int | None] = mapped_column(Integer, nullable=True)
     same_airline_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     max_leg_duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Max layover/halt minutes per stop (NULL = no cap). Client rule: a halt over
+    # ~11h makes the journey impractical. Applied via Kayak layoverdur=-<min>.
+    max_layover_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     trip_type: Mapped[str] = mapped_column(String(20), nullable=False, default="round_trip")

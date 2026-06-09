@@ -277,6 +277,14 @@ export function RouteGroupDetailPage() {
               </p>
             </div>
             <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Max Layover</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-800">
+                {group.max_layover_minutes
+                  ? `${Math.round(group.max_layover_minutes / 60)}h`
+                  : "Any"}
+              </p>
+            </div>
+            <div>
               <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Max Leg Duration</p>
               <p className="mt-0.5 text-sm font-semibold text-slate-800">
                 {group.max_leg_duration_minutes
