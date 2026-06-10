@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-import type { RouteGroupProgress } from "../types/route-group";
+import type { DateStatusSummary, RouteGroupProgress } from "../types/route-group";
 import { formatDisplayDate, formatFreshnessLabel, formatNumber } from "../utils/format";
 
 interface DateCoverageGridProps {
@@ -20,13 +20,55 @@ function toIso(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+type CellKind = "collected" | "no_fare" | "empty" | "error" | "pending";
+
+const CELL_STYLE: Record<CellKind, string> = {
+  collected: "bg-brand-500 hover:bg-brand-600",
+  no_fare: "bg-amber-400 hover:bg-amber-500",
+  empty: "bg-slate-400 hover:bg-slate-500",
+  error: "bg-red-400 hover:bg-red-500",
+  pending: "bg-slate-200 hover:bg-slate-300",
+};
+
+const CELL_LABEL: Record<CellKind, string> = {
+  collected: "Collected",
+  no_fare: "No valid fare (filters excluded all options)",
+  empty: "No flights on Kayak",
+  error: "Scrape error — retried until capped",
+  pending: "Not yet attempted",
+};
+
+function cellKindFor(
+  iso: string,
+  scrapedSet: Set<string>,
+  statuses: Record<string, DateStatusSummary>,
+): CellKind {
+  if (scrapedSet.has(iso)) return "collected";
+  const summary = statuses[iso];
+  if (!summary) return "pending";
+  if (summary.status === "no_fare" || summary.status === "empty" || summary.status === "error") {
+    return summary.status;
+  }
+  return "pending";
+}
+
+function cellTitle(iso: string, kind: CellKind, statuses: Record<string, DateStatusSummary>): string {
+  const base = `${formatDisplayDate(iso)} — ${CELL_LABEL[kind]}`;
+  const attempts = statuses[iso]?.attempts ?? 0;
+  if (kind !== "collected" && kind !== "pending" && attempts > 0) {
+    return `${base} (tried ${attempts}×)`;
+  }
+  return base;
+}
+
 interface MonthGroup {
   label: string;
-  days: { iso: string; hasData: boolean; isToday: boolean }[];
+  days: { iso: string; kind: CellKind; isToday: boolean }[];
 }
 
 export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
   const scrapedSet = useMemo(() => new Set(progress.scraped_dates), [progress.scraped_dates]);
+  const dateStatuses = useMemo(() => progress.date_statuses ?? {}, [progress.date_statuses]);
 
   const originCount = Object.keys(progress.per_origin).length || 1;
   const daySpan = useMemo(() => {
@@ -68,14 +110,14 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
         group = { label: monthKey, days: [] };
         groups.push(group);
       }
-      group.days.push({ iso, hasData: scrapedSet.has(iso), isToday });
+      group.days.push({ iso, kind: cellKindFor(iso, scrapedSet, dateStatuses), isToday });
       current = addDays(current, 1);
     }
 
     return groups;
-  }, [daySpan, scrapedSet, startDate, today]);
+  }, [dateStatuses, daySpan, scrapedSet, startDate, today]);
 
-  if (progress.scraped_dates.length === 0) {
+  if (progress.scraped_dates.length === 0 && Object.keys(dateStatuses).length === 0) {
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between text-sm">
@@ -114,9 +156,21 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
             <span className="inline-block h-3 w-3 rounded-sm bg-brand-500" />
             Collected
           </span>
+          <span className="flex items-center gap-1" title={CELL_LABEL.no_fare}>
+            <span className="inline-block h-3 w-3 rounded-sm bg-amber-400" />
+            No valid fare
+          </span>
+          <span className="flex items-center gap-1" title={CELL_LABEL.empty}>
+            <span className="inline-block h-3 w-3 rounded-sm bg-slate-400" />
+            No flights
+          </span>
+          <span className="flex items-center gap-1" title={CELL_LABEL.error}>
+            <span className="inline-block h-3 w-3 rounded-sm bg-red-400" />
+            Error
+          </span>
           <span className="flex items-center gap-1">
             <span className="inline-block h-3 w-3 rounded-sm bg-slate-200" />
-            Not yet collected
+            Not attempted
           </span>
         </div>
       </div>
@@ -126,13 +180,13 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
           <div key={month.label}>
             <p className="mb-1.5 text-xs font-medium text-slate-500">{month.label}</p>
             <div className="flex flex-wrap gap-1">
-              {month.days.map(({ iso, hasData, isToday }) => (
+              {month.days.map(({ iso, kind, isToday }) => (
                 <div
                   key={iso}
-                  title={formatDisplayDate(iso)}
+                  title={cellTitle(iso, kind, dateStatuses)}
                   className={[
                     "h-4 w-4 rounded-[4px] transition-colors",
-                    hasData ? "bg-brand-500 hover:bg-brand-600" : "bg-slate-200 hover:bg-slate-300",
+                    CELL_STYLE[kind],
                     isToday ? "ring-2 ring-amber-400 ring-offset-1" : "",
                   ]
                     .filter(Boolean)

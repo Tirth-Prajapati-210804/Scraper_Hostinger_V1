@@ -52,6 +52,13 @@ export interface ScrapeHealth {
   successes_last_hour: number;
 }
 
+export type DateStatusKind = "no_fare" | "empty" | "error";
+
+export interface DateStatusSummary {
+  status: DateStatusKind | string;
+  attempts: number;
+}
+
 export interface RouteGroupProgress {
   route_group_id: string;
   name: string;
@@ -61,5 +68,7 @@ export interface RouteGroupProgress {
   last_scraped_at: string | null;
   per_origin: Record<string, { total: number; collected: number }>;
   scraped_dates: string[];
+  /** Attempted-but-uncollected dates: ISO date -> why it is blank. */
+  date_statuses?: Record<string, DateStatusSummary>;
   health: ScrapeHealth;
 }

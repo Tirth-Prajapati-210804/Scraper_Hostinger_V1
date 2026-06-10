@@ -15,6 +15,7 @@ import {
 } from "../api/route-groups";
 import { DateCoverageGrid } from "../components/DateCoverageGrid";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { ScrapeHealthPanel } from "../components/ScrapeHealthPanel";
 import { PriceChart } from "../components/PriceChart";
 import { PriceTable } from "../components/PriceTable";
 import { RouteGroupForm } from "../components/RouteGroupForm";
@@ -342,6 +343,11 @@ export function RouteGroupDetailPage() {
               </div>
             ) : null}
           </div>
+        </Card>
+
+        <Card className="w-full min-w-0 max-w-full overflow-hidden p-6">
+          <h3 className="mb-4 text-[15px] font-semibold text-slate-900">Scrape Health</h3>
+          <ScrapeHealthPanel groupId={group.id} health={progressQuery.data?.health} />
         </Card>
 
         <Card className="w-full min-w-0 max-w-full overflow-hidden p-6">

@@ -246,6 +246,18 @@ class PerOriginProgress(BaseModel):
     collected: int
 
 
+class DateStatusSummary(BaseModel):
+    """Why an attempted date has no saved price yet.
+
+    status values: "no_fare" (Kayak had flights but none passed the group's
+    filters), "empty" (Kayak itself had no flights for the date), "error"
+    (render/extract failed and the date will be retried until capped).
+    """
+
+    status: str
+    attempts: int = 0
+
+
 class ScrapeHealth(BaseModel):
     """Summary of recent scrape activity for a route group.
 
@@ -270,4 +282,8 @@ class RouteGroupProgress(BaseModel):
     last_scraped_at: datetime | None
     per_origin: dict[str, PerOriginProgress]
     scraped_dates: list[str] = Field(default_factory=list)
+    # Outcome of attempted-but-uncollected dates (ISO date -> summary), so the
+    # UI can distinguish "no valid fare" / "no flights" / "error" from "not
+    # yet attempted". Collected dates are NOT listed here.
+    date_statuses: dict[str, DateStatusSummary] = Field(default_factory=dict)
     health: ScrapeHealth = Field(default_factory=lambda: ScrapeHealth(status="never_scraped"))

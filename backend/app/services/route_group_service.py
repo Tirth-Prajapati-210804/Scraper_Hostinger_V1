@@ -10,6 +10,7 @@ from app.models.daily_cheapest import DailyCheapestPrice
 from app.models.route_group import RouteGroup
 from app.models.scrape_log import ScrapeLog
 from app.schemas.route_group import (
+    DateStatusSummary,
     PerOriginProgress,
     RouteGroupCreate,
     RouteGroupProgress,
@@ -244,6 +245,8 @@ async def get_progress(session: AsyncSession, group_id: uuid.UUID) -> RouteGroup
     )
     scraped_dates = [d.isoformat() for (d,) in dates_result.fetchall()]
 
+    date_statuses = await _compute_date_statuses(session, group_id, set(scraped_dates))
+
     health = await _compute_scrape_health(session, group_id, has_any_data=dates_with_data > 0)
 
     return RouteGroupProgress(
@@ -255,8 +258,73 @@ async def get_progress(session: AsyncSession, group_id: uuid.UUID) -> RouteGroup
         last_scraped_at=last_scraped_at,
         per_origin=per_origin,
         scraped_dates=scraped_dates,
+        date_statuses=date_statuses,
         health=health,
     )
+
+
+def _classify_attempt(status: str, result_reason: str | None) -> str | None:
+    """Map one scrape_log outcome to a date-level bucket (or None to ignore).
+
+    "no_fare": Kayak rendered flights but none passed the group's filters.
+    "empty":   Kayak itself had no flights for the date.
+    "error":   the render/extract failed (extract_failed/market_mismatch end up
+               here too — the page never produced a trustworthy read).
+    """
+    if status == "success":
+        return None
+    if status == "no_results":
+        if result_reason == "filtered_out":
+            return "no_fare"
+        if result_reason == "page_empty":
+            return "empty"
+        return "error"
+    return "error"
+
+
+async def _compute_date_statuses(
+    session: AsyncSession,
+    group_id: uuid.UUID,
+    scraped_dates: set[str],
+) -> dict[str, DateStatusSummary]:
+    """Aggregate scrape_logs into a per-date 'why is this date blank' summary.
+
+    Only attempted-but-uncollected dates are returned; the most informative
+    bucket wins (no_fare > empty > error), and attempts counts every log row
+    for the date so the UI can show how often it was tried.
+    """
+    rows = (
+        await session.execute(
+            select(
+                ScrapeLog.depart_date,
+                ScrapeLog.status,
+                ScrapeLog.result_reason,
+                func.count(),
+            )
+            .where(ScrapeLog.route_group_id == group_id)
+            .group_by(ScrapeLog.depart_date, ScrapeLog.status, ScrapeLog.result_reason)
+        )
+    ).all()
+
+    precedence = {"no_fare": 0, "empty": 1, "error": 2}
+    buckets: dict[str, str] = {}
+    attempts: dict[str, int] = {}
+    for depart_date, status, result_reason, count in rows:
+        iso = depart_date.isoformat()
+        if iso in scraped_dates:
+            continue
+        attempts[iso] = attempts.get(iso, 0) + int(count)
+        bucket = _classify_attempt(str(status), result_reason)
+        if bucket is None:
+            continue
+        current = buckets.get(iso)
+        if current is None or precedence[bucket] < precedence[current]:
+            buckets[iso] = bucket
+
+    return {
+        iso: DateStatusSummary(status=bucket, attempts=attempts.get(iso, 0))
+        for iso, bucket in buckets.items()
+    }
 
 
 def _group_dates(group: RouteGroup) -> list[date]:

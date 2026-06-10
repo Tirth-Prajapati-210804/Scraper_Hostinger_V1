@@ -154,6 +154,44 @@ function deriveName(origins: string[], destinations: string[]) {
   return `${origins.join(", ")} to ${destinations.join(", ")}`;
 }
 
+interface RoutePayload {
+  origins: string[];
+  destinations: string[];
+  nights: number;
+  days_ahead: number;
+  trip_type: TripType;
+  market: string;
+  currency: string;
+  start_date: string;
+  end_date: string;
+  special_sheets: SpecialSheet[];
+}
+
+// Mirrors the backend's route-identity rule: changing any of these fields on an
+// existing group CLEARS all its collected prices/results/logs server-side, so
+// the user must be warned first. Returns human-readable labels of the changed
+// fields (empty = safe edit).
+function dataWipingChanges(initial: RouteGroup, payload: RoutePayload): string[] {
+  const codes = (values: string[]) => values.map((v) => v.trim().toUpperCase()).join(",");
+  const sheets = (list: SpecialSheet[]) =>
+    (list ?? [])
+      .map((s) => `${(s.origin ?? "").toUpperCase()}:${codes(s.destinations ?? [])}`)
+      .join("|");
+
+  const changes: string[] = [];
+  if (codes(initial.origins) !== codes(payload.origins)) changes.push("Origins");
+  if (codes(initial.destinations) !== codes(payload.destinations)) changes.push("Destinations");
+  if (initial.nights !== payload.nights) changes.push("Nights");
+  if (initial.days_ahead !== payload.days_ahead) changes.push("Booking window (days)");
+  if (initial.trip_type !== payload.trip_type) changes.push("Trip type");
+  if (initial.market !== payload.market) changes.push("Market");
+  if (initial.currency !== payload.currency) changes.push("Currency");
+  if ((initial.start_date ?? "") !== payload.start_date) changes.push("Travel window from");
+  if ((initial.end_date ?? "") !== payload.end_date) changes.push("Travel window to");
+  if (sheets(initial.special_sheets) !== sheets(payload.special_sheets)) changes.push("Return leg");
+  return changes;
+}
+
 function buildInitialManualState(initial?: RouteGroup | null): ManualState {
   const tripType = tripTypeToUi(initial?.trip_type);
   const returnSheet = initial?.special_sheets[0];
@@ -502,6 +540,10 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
   const [state, setState] = useState<ManualState>(() => buildInitialManualState(initial));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [pendingWipe, setPendingWipe] = useState<{
+    payload: Partial<RouteGroup> & RoutePayload;
+    changes: string[];
+  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -530,6 +572,34 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
     await qc.invalidateQueries({ queryKey: ["route-groups"] });
     if (groupId) {
       await qc.invalidateQueries({ queryKey: ["route-group", groupId] });
+    }
+  }
+
+  async function persist(payload: Partial<RouteGroup> & RoutePayload) {
+    if (initial) {
+      await updateRouteGroup(initial.id, payload);
+      await refreshQueries(initial.id);
+      showToast("Route group saved", "success");
+    } else {
+      const created = await createRouteGroup(payload);
+      await refreshQueries(created.id);
+      showToast(`Created: ${created.name}`, "success");
+    }
+    onClose();
+  }
+
+  async function confirmWipeAndSave() {
+    if (!pendingWipe) return;
+    setSaving(true);
+    setError("");
+    try {
+      await persist(pendingWipe.payload);
+      setPendingWipe(null);
+    } catch (err) {
+      setPendingWipe(null);
+      setError(getErrorMessage(err, "Failed to save route group."));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -599,16 +669,16 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
       };
 
       if (initial) {
-        await updateRouteGroup(initial.id, payload);
-        await refreshQueries(initial.id);
-        showToast("Route group saved", "success");
-      } else {
-        const created = await createRouteGroup(payload);
-        await refreshQueries(created.id);
-        showToast(`Created: ${created.name}`, "success");
+        const changes = dataWipingChanges(initial, payload);
+        if (changes.length > 0) {
+          // Route identity changed: the backend will clear all collected data
+          // for this group. Hold the save until the user explicitly confirms.
+          setPendingWipe({ payload, changes });
+          return;
+        }
       }
 
-      onClose();
+      await persist(payload);
     } catch (err) {
       setError(getErrorMessage(err, "Failed to save route group."));
     } finally {
@@ -921,6 +991,38 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
             </Button>
           </div>
         </div>
+
+        {pendingWipe ? (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+            <div className="mx-4 w-full max-w-md rounded-[24px] bg-white p-6 shadow-xl">
+              <h3 className="text-base font-semibold text-slate-900">
+                This edit clears collected data
+              </h3>
+              <p className="mt-2 text-sm text-slate-500">
+                You changed:{" "}
+                <span className="font-medium text-slate-700">{pendingWipe.changes.join(", ")}</span>.
+              </p>
+              <p className="mt-2 text-sm text-slate-500">
+                Changing the route definition deletes <span className="font-medium">all</span>{" "}
+                prices, results and scrape history already collected for this group. Collection
+                starts over from scratch on the next scrape.
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={() => setPendingWipe(null)}>
+                  Go back
+                </Button>
+                <button
+                  type="button"
+                  onClick={confirmWipeAndSave}
+                  disabled={saving}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Clear data & save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </form>
     </Modal>
   );
