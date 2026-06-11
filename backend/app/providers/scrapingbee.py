@@ -166,6 +166,16 @@ _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
 _LOAD_GATE_POLL_MS = 10_000
 _LOAD_GATE_STABLE_CHECKS = 2
 _LOAD_GATE_MAX_POLLS = 4  # 4 x 10s = 40s scenario cap (the documented js_scenario max)
+# Hard cap on CHARGED (successful) ScrapingBee renders per date per run. Each
+# render = 5 credits; the optional retry/fallback layers (hollow-retry, -MULT
+# 0-card fallback, strong-retry, two-witness re-render) could otherwise STACK to
+# ~5 charged renders = ~25 credits for a single entry on the hard HAN/long-haul
+# routes -- the "~20 credits per entry / 3.5x usual" the client flagged. Capping
+# the budget at 2 keeps the initial render + at most ONE corrective retry, so a
+# date costs ~5-10 credits instead of 20-25. Failed (5xx) renders are free and
+# are NOT counted against this budget. A date that still hasn't resolved within
+# the budget falls through to its normal cross-cycle retry under the error caps.
+_MAX_RENDERS_PER_SEARCH = 2
 # ScrapingBee's internal render budget must stay BELOW the httpx client timeout so
 # a render that legitimately uses most of its budget still returns (with proxy /
 # browser-startup / response-transfer overhead) before the client gives up.
@@ -174,6 +184,26 @@ _LOAD_GATE_MAX_POLLS = 4  # 4 x 10s = 40s scenario cap (the documented js_scenar
 _RENDER_TIMEOUT_HEADROOM_SECONDS = 35
 _MIN_RENDER_TIMEOUT_MS = 20_000
 _MAX_RENDER_TIMEOUT_MS = 140_000
+
+
+class _RenderBudget:
+    """Per-search counter for CHARGED (successful) renders, so the layered retry/
+    fallback paths can't stack into ~25 credits for one date. One instance is
+    created per search (NOT shared across concurrent dates), so it is concurrency-
+    safe. Only successful renders consume budget; failures are free and uncounted.
+    """
+
+    __slots__ = ("used", "cap")
+
+    def __init__(self, cap: int) -> None:
+        self.used = 0
+        self.cap = max(1, cap)
+
+    def has_room(self) -> bool:
+        return self.used < self.cap
+
+    def consume(self) -> None:
+        self.used += 1
 
 
 def _clean_text(value: object) -> str:
@@ -1397,6 +1427,7 @@ class ScrapingBeeProvider:
         captured_count: int,
         eligible_results: list[ProviderResult],
         retry_allowed: bool,
+        budget: "_RenderBudget | None" = None,
     ) -> tuple[dict, dict[str, str], list[ProviderResult], int, int, list[ProviderResult], bool, bool]:
         """Two-witness accuracy gate (scrape_enforce_poll_agreement).
 
@@ -1445,6 +1476,7 @@ class ScrapingBeeProvider:
                 deep=True,
                 same_airline_only=same_airline_only,
                 max_stops=max_stops,
+                budget=budget,
             )
             eligible_results = self._eligible_same_airline_results(
                 results, max_stops, same_airline_only
@@ -1934,6 +1966,7 @@ class ScrapingBeeProvider:
         same_airline_only: bool,
         max_stops: int | None = None,
         same_airline_wait_ms: int | None = None,
+        budget: "_RenderBudget | None" = None,
     ) -> tuple[dict, dict[str, str], list[ProviderResult], int, int]:
         rendered = await self._get_rendered_payload(
             target_url,
@@ -1946,6 +1979,11 @@ class ScrapingBeeProvider:
             ),
             country_code=country_code,
         )
+        # A render that returned (no exception) is a CHARGED render -- count it
+        # against the per-search budget. (Failures raise above and never reach here,
+        # so they stay free and uncounted.)
+        if budget is not None:
+            budget.consume()
         summary_prices = self._multi_city_summary_prices(rendered)
         results, card_count, captured_count = await self._parse_rendered_payload(
             rendered,
@@ -1972,6 +2010,9 @@ class ScrapingBeeProvider:
         same_airline_only = bool(same_airline_only)
         initial_deep = True
         used_hollow_retry = False
+        # Per-search charged-render budget (caps credits/entry; see
+        # _MAX_RENDERS_PER_SEARCH). The initial render below consumes 1.
+        budget = _RenderBudget(_MAX_RENDERS_PER_SEARCH)
         rendered, summary_prices, results, card_count, captured_count = await self._render_results_attempt(
             target_url=target_url,
             country_code=market_country_code,
@@ -1981,6 +2022,7 @@ class ScrapingBeeProvider:
             deep=initial_deep,
             same_airline_only=same_airline_only,
             max_stops=max_stops,
+            budget=budget,
         )
         # Hollow-render retry: the session got NO inventory at all (no cards, no
         # 'no results' page, empty poll JSON) -- a dud proxy/browser session, not a
@@ -1988,7 +2030,7 @@ class ScrapingBeeProvider:
         # IP) is the proven fix; without it the dud either errors out or, worse,
         # the -MULT fallback below re-renders a hopeless session with looser
         # filters.
-        if self._looks_hollow_render(rendered, results, card_count):
+        if budget.has_room() and self._looks_hollow_render(rendered, results, card_count):
             used_hollow_retry = True
             log.warning(
                 "scrapingbee_hollow_render_retry",
@@ -2004,6 +2046,7 @@ class ScrapingBeeProvider:
                 deep=initial_deep,
                 same_airline_only=same_airline_only,
                 max_stops=max_stops,
+                budget=budget,
             )
         # 0-card fallback: if the -MULT URL rendered ZERO cards (and Kayak didn't
         # explicitly say "no results"), re-render WITHOUT -MULT; the Python
@@ -2019,7 +2062,8 @@ class ScrapingBeeProvider:
         # and a third render this attempt would be credit burn (the date retries
         # next cycle under the error caps instead).
         if (
-            "airlines=-MULT" in target_url
+            budget.has_room()
+            and "airlines=-MULT" in target_url
             and card_count == 0
             and not results
             and not self._rendered_payload_reports_no_results(rendered)
@@ -2047,6 +2091,7 @@ class ScrapingBeeProvider:
                 deep=initial_deep,
                 same_airline_only=same_airline_only,
                 max_stops=max_stops,
+                budget=budget,
             )
         eligible_results = self._eligible_same_airline_results(
             results, max_stops, same_airline_only
@@ -2060,7 +2105,8 @@ class ScrapingBeeProvider:
         # times on sparse/high-price dates -- pure credit burn with zero effect.
 
         if (
-            not eligible_results
+            budget.has_room()
+            and not eligible_results
             and not results
             and card_count == 0
             and not self._rendered_payload_has_summary_prices(rendered)
@@ -2076,6 +2122,7 @@ class ScrapingBeeProvider:
                 same_airline_only=same_airline_only,
                 max_stops=max_stops,
                 same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+                budget=budget,
             )
             raw_offers_found = max(raw_offers_found, len(retry_results))
             if retry_results or retry_card_count > 0 or self._rendered_payload_has_summary_prices(retry_rendered):
@@ -2115,7 +2162,8 @@ class ScrapingBeeProvider:
             card_count=card_count,
             captured_count=captured_count,
             eligible_results=eligible_results,
-            retry_allowed=not (used_hollow_retry or used_strong_retry),
+            retry_allowed=not (used_hollow_retry or used_strong_retry) and budget.has_room(),
+            budget=budget,
         )
         used_strong_retry = used_strong_retry or poll_retried
         if poll_refused:
@@ -2240,6 +2288,10 @@ class ScrapingBeeProvider:
         card_count = 0
         captured_count = 0
         used_hollow_retry = False
+        # Per-search charged-render budget (caps credits/entry; see
+        # _MAX_RENDERS_PER_SEARCH). Shared across this date's retry layers so they
+        # cannot stack -- once the cap is hit, every further retry is skipped.
+        budget = _RenderBudget(_MAX_RENDERS_PER_SEARCH)
 
         rendered, summary_prices, results, card_count, captured_count = await self._render_results_attempt(
             target_url=target_url,
@@ -2250,10 +2302,11 @@ class ScrapingBeeProvider:
             deep=used_deep_pass,
             same_airline_only=same_airline_only,
             max_stops=max_stops,
+            budget=budget,
         )
         # Hollow-render retry (see _search_rendered_itinerary_diagnostic): a dud
         # session saw no inventory at all; retry ONCE (fresh proxy IP).
-        if self._looks_hollow_render(rendered, results, card_count):
+        if budget.has_room() and self._looks_hollow_render(rendered, results, card_count):
             used_hollow_retry = True
             log.warning(
                 "scrapingbee_hollow_render_retry",
@@ -2269,6 +2322,7 @@ class ScrapingBeeProvider:
                 deep=used_deep_pass,
                 same_airline_only=same_airline_only,
                 max_stops=max_stops,
+                budget=budget,
             )
         eligible_results = self._eligible_same_airline_results(
             results, max_stops, same_airline_only
@@ -2280,7 +2334,8 @@ class ScrapingBeeProvider:
         # see _search_rendered_itinerary_diagnostic for the rationale.
 
         if (
-            not eligible_results
+            budget.has_room()
+            and not eligible_results
             and not results
             and card_count == 0
             and not self._rendered_payload_has_summary_prices(rendered)
@@ -2296,6 +2351,7 @@ class ScrapingBeeProvider:
                 same_airline_only=same_airline_only,
                 max_stops=max_stops,
                 same_airline_wait_ms=_SAME_AIRLINE_RETRY_WAIT_MS,
+                budget=budget,
             )
             raw_offers_found = max(raw_offers_found, len(retry_results))
             if (
@@ -2339,7 +2395,8 @@ class ScrapingBeeProvider:
             card_count=card_count,
             captured_count=captured_count,
             eligible_results=eligible_results,
-            retry_allowed=not (used_hollow_retry or used_strong_retry),
+            retry_allowed=not (used_hollow_retry or used_strong_retry) and budget.has_room(),
+            budget=budget,
         )
         used_strong_retry = used_strong_retry or poll_retried
         if poll_refused:

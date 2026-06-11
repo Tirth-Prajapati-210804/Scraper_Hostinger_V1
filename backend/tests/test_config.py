@@ -102,7 +102,10 @@ def test_no_fare_skip_window_defaults_to_two_days() -> None:
     settings = _settings()
 
     assert settings.scrape_no_fare_skip_hours == 48
-    assert settings.scrape_max_empty_attempts == 2
+    # No-data outcomes (filtered_out / page_empty) are stable answers, so they
+    # scrape ONCE then wait for a manual run / Reset Retry Caps (no credit-wasting
+    # auto-retry). Transient errors still get one retry (2).
+    assert settings.scrape_max_empty_attempts == 1
     assert settings.scrape_max_error_attempts == 2
     # Disabled by default so the error brake never skips historical live data
     # until an operator sets the deploy cutoff.

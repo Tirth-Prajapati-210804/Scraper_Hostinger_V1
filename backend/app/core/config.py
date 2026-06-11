@@ -71,10 +71,14 @@ class Settings(BaseSettings):
     scrape_no_fare_skip_hours: int = 48
     # Smart empty-date handling (replaces the clock-based skip as the brake on the
     # empty-date credit leak). Total number of times the scheduler will scrape a
-    # date that keeps coming back empty/no-fare before it STOPS auto-retrying it
-    # (a manual run always re-checks regardless). 2 = first scrape + one retry,
-    # then leave it. Bump to 3 if one retry proves insufficient.
-    scrape_max_empty_attempts: int = 2
+    # date that keeps coming back empty/no-fare before it STOPS auto-retrying it.
+    # 1 = scrape ONCE then never auto-retry: filtered_out (Kayak had flights but
+    # none matched the group's filters) and page_empty (Kayak genuinely has no
+    # flights) are STABLE answers -- re-scraping just burns credits for the same
+    # result. They only re-collect on a manual run or the "Reset Retry Caps" button
+    # (both pass respect_no_fare_skip=False). Bump to 2 only if you want one auto
+    # re-check of no-data dates.
+    scrape_max_empty_attempts: int = 1
     # Same idea for transient scrape errors (provider_error / extract_failed /
     # parse_error): scrape once + retry once, then stop auto-retrying. Hard
     # errors (rate_limited / market_mismatch) use a cap of 1 = never retry, and
