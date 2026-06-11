@@ -408,6 +408,7 @@ async def test_trigger_single_group_collects_multi_city_special_sheets(
     group.start_date = None
     group.end_date = None
     group.days_ahead = 5
+    group.multi_city_legs = None  # legacy 2-leg group (special_sheets return leg)
     group.special_sheets = [
         {
             "name": "Return Leg",

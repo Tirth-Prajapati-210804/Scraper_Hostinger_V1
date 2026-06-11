@@ -108,3 +108,30 @@ def test_group_dates_returns_empty_when_explicit_end_is_in_past() -> None:
         end_date=date.today() - timedelta(days=1),
     )
     assert scheduler._group_dates(group) == []
+
+
+def test_group_dates_capped_at_booking_horizon() -> None:
+    """scrape_max_days_ahead (the Kayak ~330-day booking horizon, 325 on the VPS)
+    caps the END of the window: beyond-horizon dates are skipped without a render.
+    Probed 2026-06-10: those dates genuinely have no fares."""
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_max_days_ahead = 10
+    group = make_group(days_ahead=365)
+    dates = scheduler._group_dates(group)
+    assert dates[0] == date.today()
+    assert dates[-1] == date.today() + timedelta(days=10)
+
+
+def test_group_dates_horizon_disabled_when_zero() -> None:
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_max_days_ahead = 0
+    group = make_group(days_ahead=30)
+    assert len(scheduler._group_dates(group)) == 30
+
+
+def test_group_dates_horizon_ignores_invalid_setting() -> None:
+    """A MagicMock/garbage value must fail safe (no cap), like the other knobs."""
+    scheduler = make_scheduler()
+    scheduler.settings.scrape_max_days_ahead = "not-a-number"
+    group = make_group(days_ahead=15)
+    assert len(scheduler._group_dates(group)) == 15

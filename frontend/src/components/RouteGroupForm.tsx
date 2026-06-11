@@ -12,7 +12,7 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "re
 import { getErrorMessage } from "../api/client";
 import { createRouteGroup, updateRouteGroup } from "../api/route-groups";
 import { useToast } from "../context/ToastContext";
-import type { RouteGroup, RouteMarket, SpecialSheet, TripType } from "../types/route-group";
+import type { MultiCityLegConfig, RouteGroup, RouteMarket, SpecialSheet, TripType } from "../types/route-group";
 import { STOP_MODE_OPTIONS, stopModeToApi, stopModeToUi, type StopModeId } from "../utils/stopModes";
 import { Button } from "./ui/Button";
 import { Modal } from "./ui/Modal";
@@ -32,12 +32,21 @@ interface ManualLeg {
   to: string[];
 }
 
+/** Editable extra leg (legs 2-4 of a multi-city itinerary). */
+interface UiExtraLeg {
+  origin: string;
+  destination: string; // "" on the last leg = back to the group origin
+  nights: string; // nights BETWEEN legs = exact day offset (min 1 = next day)
+}
+
 interface ManualState {
   tripType: UiTripType;
   groupName: string;
   outboundLabel: string;
   mainLeg: ManualLeg;
   returnLeg: ManualLeg;
+  extraLegs: UiExtraLeg[];
+  sameAirline: boolean;
   nights: string;
   days: string;
   market: RouteMarket;
@@ -165,6 +174,27 @@ interface RoutePayload {
   start_date: string;
   end_date: string;
   special_sheets: SpecialSheet[];
+  multi_city_legs?: MultiCityLegConfig[] | null;
+  same_airline_only: boolean;
+}
+
+/** Canonical signature of the multi-city leg chain so a legacy group
+ *  (special_sheets + nights) and its new-style equivalent compare EQUAL. */
+function chainSignature(
+  legs: MultiCityLegConfig[] | null | undefined,
+  specialSheets: SpecialSheet[] | undefined,
+  nights: number,
+  tripType: TripType,
+): string {
+  if (tripType !== "multi_city") return "";
+  if (legs?.length) {
+    return legs
+      .map((l) => `${l.origin.toUpperCase()}>${(l.destination ?? "").toUpperCase()}@${l.nights_before}`)
+      .join("|");
+  }
+  const sheet = specialSheets?.[0];
+  if (!sheet) return "";
+  return `${sheet.origin.toUpperCase()}>@${nights}`;
 }
 
 // Mirrors the backend's route-identity rule: changing any of these fields on an
@@ -188,8 +218,33 @@ function dataWipingChanges(initial: RouteGroup, payload: RoutePayload): string[]
   if (initial.currency !== payload.currency) changes.push("Currency");
   if ((initial.start_date ?? "") !== payload.start_date) changes.push("Travel window from");
   if ((initial.end_date ?? "") !== payload.end_date) changes.push("Travel window to");
-  if (sheets(initial.special_sheets) !== sheets(payload.special_sheets)) changes.push("Return leg");
+  if (payload.trip_type === "multi_city") {
+    const before = chainSignature(initial.multi_city_legs, initial.special_sheets, initial.nights, initial.trip_type);
+    const after = chainSignature(payload.multi_city_legs, payload.special_sheets, payload.nights, payload.trip_type);
+    if (before !== after) changes.push("Trip legs");
+  } else if (sheets(initial.special_sheets) !== sheets(payload.special_sheets)) {
+    changes.push("Return leg");
+  }
+  if (Boolean(initial.same_airline_only) !== payload.same_airline_only) changes.push("Same airline rule");
   return changes;
+}
+
+function buildInitialExtraLegs(initial?: RouteGroup | null): UiExtraLeg[] {
+  if (initial?.multi_city_legs?.length) {
+    return initial.multi_city_legs.map((leg) => ({
+      origin: leg.origin,
+      destination: leg.destination ?? "",
+      nights: String(leg.nights_before),
+    }));
+  }
+  const returnSheet = initial?.special_sheets?.[0];
+  if (returnSheet) {
+    // Legacy 2-leg group: its return rule is depart + nights + 1, while leg
+    // nights are EXACT day offsets -- synthesize nights+1 so converting the
+    // group keeps identical dates.
+    return [{ origin: returnSheet.origin, destination: "", nights: String((initial?.nights ?? 10) + 1) }];
+  }
+  return [{ origin: "", destination: "", nights: "10" }];
 }
 
 function buildInitialManualState(initial?: RouteGroup | null): ManualState {
@@ -208,6 +263,8 @@ function buildInitialManualState(initial?: RouteGroup | null): ManualState {
       from: returnSheet ? [returnSheet.origin] : [],
       to: returnSheet?.destinations ?? initial?.origins ?? [],
     },
+    extraLegs: buildInitialExtraLegs(initial),
+    sameAirline: initial?.same_airline_only ?? true,
     nights: String(initial?.nights ?? 10),
     days: String(initial?.days_ahead ?? 365),
     market: initial?.market ?? "us",
@@ -434,17 +491,31 @@ function ConnectionSelector({
   );
 }
 
-function SameAirlineNotice() {
+function SameAirlineToggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
   return (
-    <div className="rounded-[24px] border border-[#dfe6f0] bg-[#f8fbff] px-5 py-4 text-[14px] text-[#47556f]">
+    <label className="flex cursor-pointer items-start gap-3 rounded-[24px] border border-[#dfe6f0] bg-[#f8fbff] px-5 py-4 text-[14px] text-[#47556f]">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 h-4 w-4 rounded border-[#c7d2e4] text-brand-600"
+      />
       <span>
         <span className="block font-medium text-[#12203f]">Same airline only</span>
         <span className="mt-1 block text-[13px] leading-6 text-[#7b8aa4]">
-          Same-airline collection is always enabled. Only itineraries where the outbound and return
-          airline match will be saved, and the cheapest valid same-airline result is used.
+          ON: only itineraries flown by ONE airline on every leg qualify, and the
+          cheapest of those is saved. OFF: the cheapest itinerary is saved
+          regardless of airline mix. Changing this on an existing group clears its
+          collected data (the qualifying fares change completely).
         </span>
       </span>
-    </div>
+    </label>
   );
 }
 
@@ -551,19 +622,6 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
     setError("");
   }, [initial, open]);
 
-  useEffect(() => {
-    if (state.tripType !== "multicity") return;
-
-    setState((current) => ({
-      ...current,
-      returnLeg: {
-        from: current.returnLeg.from,
-        to: current.mainLeg.from,
-      },
-      stops: current.stops,
-    }));
-  }, [state.tripType, state.mainLeg.from]);
-
   const isEditing = Boolean(initial);
   const normalizedOrigins = useMemo(() => normalizeCodes(state.mainLeg.from), [state.mainLeg.from]);
   const normalizedDestinations = useMemo(() => normalizeCodes(state.mainLeg.to), [state.mainLeg.to]);
@@ -632,19 +690,53 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
           ? Math.min(maxLayoverHours, 48) * 60
           : null;
 
+      let multiCityLegs: MultiCityLegConfig[] | undefined;
+      let multiCityNights = parsePositiveInt(state.nights, 10);
       if (state.tripType === "multicity") {
-        const returnOrigins = normalizeCodes(state.returnLeg.from);
-        if (!returnOrigins.length) {
-          throw new Error("Add at least one return origin for the multi-city route.");
+        const cleanedLegs = state.extraLegs.map((leg, index) => ({
+          origin: leg.origin.trim().toUpperCase(),
+          destination: leg.destination.trim().toUpperCase(),
+          nights_before: Math.max(1, Number.parseInt(leg.nights, 10) || 1),
+          isLast: index === state.extraLegs.length - 1,
+        }));
+        if (cleanedLegs.some((leg) => !leg.origin)) {
+          throw new Error("Every leg needs a departure airport.");
+        }
+        if (cleanedLegs.some((leg) => !leg.isLast && !leg.destination)) {
+          throw new Error(
+            "Only the last leg may leave its destination empty (= back to the origin).",
+          );
         }
 
-        specialSheets.push({
-          name: "Return Leg",
-          origin: returnOrigins[0],
-          destination_label: state.outboundLabel.trim() || mainOrigins.join("/"),
-          destinations: mainOrigins,
-          columns: 4,
-        });
+        // Nights shown on sheets/detail = nights before the FIRST extra leg
+        // (the stay at the outbound destination), like the legacy field.
+        multiCityNights = Math.max(1, cleanedLegs[0]?.nights_before ?? 1);
+
+        const isLegacyShape =
+          initial &&
+          !initial.multi_city_legs?.length &&
+          cleanedLegs.length === 1 &&
+          !cleanedLegs[0].destination &&
+          cleanedLegs[0].origin === (initial.special_sheets?.[0]?.origin ?? "").toUpperCase() &&
+          cleanedLegs[0].nights_before === initial.nights + 1;
+
+        if (isLegacyShape) {
+          // Unchanged legacy 2-leg group: keep the legacy shape so a no-op edit
+          // doesn't convert the config (and trigger a data wipe).
+          specialSheets.push({
+            name: "Return Leg",
+            origin: cleanedLegs[0].origin,
+            destination_label: state.outboundLabel.trim() || mainOrigins.join("/"),
+            destinations: mainOrigins,
+            columns: 4,
+          });
+        } else {
+          multiCityLegs = cleanedLegs.map(({ origin, destination, nights_before }) => ({
+            origin,
+            destination,
+            nights_before,
+          }));
+        }
       }
 
       const payload = {
@@ -652,14 +744,15 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         destination_label: state.outboundLabel.trim() || mainDestinations.join("/"),
         origins: mainOrigins,
         destinations: mainDestinations,
-        nights: parsePositiveInt(state.nights, 10),
+        nights: state.tripType === "multicity" ? multiCityNights : parsePositiveInt(state.nights, 10),
         days_ahead: resolvedDayCount,
         sheet_name_map: Object.fromEntries(mainOrigins.map((origin) => [origin, origin])),
         special_sheets: specialSheets,
+        ...(multiCityLegs ? { multi_city_legs: multiCityLegs } : {}),
         market: state.market,
         currency: state.currency,
         max_stops: stopModeToApi(state.stops),
-        same_airline_only: true,
+        same_airline_only: state.sameAirline,
         max_leg_duration_minutes: maxLegDurationMinutes,
         max_layover_minutes: maxLayoverMinutes,
         start_date: resolvedStartDate,
@@ -758,11 +851,17 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                   placeholder="e.g. London"
                 />
               </div>
-              <StepperField
-                label="Nights at destination"
-                value={state.nights}
-                onChange={(nights) => setState((current) => ({ ...current, nights }))}
-              />
+              {state.tripType === "multicity" ? (
+                <div className="rounded-2xl border border-[#dfe6f0] bg-[#f8fbff] px-4 py-3 text-[13px] text-[#7b8aa4]">
+                  Nights are set per leg in the Trip Legs panel.
+                </div>
+              ) : (
+                <StepperField
+                  label="Nights at destination"
+                  value={state.nights}
+                  onChange={(nights) => setState((current) => ({ ...current, nights }))}
+                />
+              )}
             </div>
           </RoutePanel>
 
@@ -797,36 +896,118 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
               </div>
             </RoutePanel>
           ) : (
-            <RoutePanel title="Return Leg">
-              <AirportField
-                label="From (Origin Airport)"
-                value={state.returnLeg.from}
-                onChange={(tags) =>
-                  setState((current) => ({
-                    ...current,
-                    returnLeg: {
-                      ...current.returnLeg,
-                      from: tags,
-                      to: current.mainLeg.from,
-                    },
-                  }))
-                }
-                placeholder="Search return origin airport..."
-                hint="Where the itinerary returns from after the stay."
-              />
-
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <FieldLabel>To (Destination Airport)</FieldLabel>
-                  <span className="text-[12px] font-medium text-brand-600">Auto linked</span>
-                </div>
-                <div className="rounded-2xl border border-[#dfe6f0] bg-[#f8fbff] px-4 py-[14px] text-[15px] text-[#47556f]">
-                  {normalizedOrigins.length ? normalizedOrigins.join(", ") : "Original outbound origin"}
-                </div>
-                <p className="mt-2 text-[12px] text-[#92a0b7]">
-                  Multi-city return always connects back to the outbound origin.
-                </p>
-              </div>
+            <RoutePanel title={`Trip Legs (${state.extraLegs.length + 1} flights)`}>
+              <p className="-mt-1 text-[13px] text-[#7b8aa4]">
+                Leg 1 is the outbound above. Add up to 3 more flights. &quot;Nights
+                before&quot; = nights between legs: fly 01 Jul + 2 nights = next
+                flight 03 Jul. Minimum 1 (next-day departure).
+              </p>
+              {state.extraLegs.map((leg, index) => {
+                const isLast = index === state.extraLegs.length - 1;
+                return (
+                  <div
+                    key={index}
+                    className="rounded-2xl border border-[#e3eaf4] bg-[#f8fbff] p-4"
+                  >
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-[13px] font-semibold text-[#3f4e6e]">
+                        Leg {index + 2}
+                      </span>
+                      {state.extraLegs.length > 1 ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setState((current) => ({
+                              ...current,
+                              extraLegs: current.extraLegs.filter((_, i) => i !== index),
+                            }))
+                          }
+                          className="text-[12px] font-medium text-red-500 hover:text-red-600"
+                        >
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div>
+                        <FieldLabel>From</FieldLabel>
+                        <TextInput
+                          value={leg.origin}
+                          onChange={(e) =>
+                            setState((current) => ({
+                              ...current,
+                              extraLegs: current.extraLegs.map((l, i) =>
+                                i === index ? { ...l, origin: e.target.value.toUpperCase() } : l,
+                              ),
+                            }))
+                          }
+                          placeholder="e.g. SAI"
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel>{isLast ? "To (blank = home)" : "To"}</FieldLabel>
+                        <TextInput
+                          value={leg.destination}
+                          onChange={(e) =>
+                            setState((current) => ({
+                              ...current,
+                              extraLegs: current.extraLegs.map((l, i) =>
+                                i === index ? { ...l, destination: e.target.value.toUpperCase() } : l,
+                              ),
+                            }))
+                          }
+                          placeholder={
+                            isLast
+                              ? normalizedOrigins.join(", ") || "back to origin"
+                              : "e.g. YYC"
+                          }
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel>Nights before</FieldLabel>
+                        <TextInput
+                          inputMode="numeric"
+                          value={leg.nights}
+                          onChange={(e) =>
+                            setState((current) => ({
+                              ...current,
+                              extraLegs: current.extraLegs.map((l, i) =>
+                                i === index
+                                  ? { ...l, nights: e.target.value.replace(/\D/g, "") }
+                                  : l,
+                              ),
+                            }))
+                          }
+                          placeholder="e.g. 9"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {state.extraLegs.length < 3 ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setState((current) => ({
+                      ...current,
+                      extraLegs: [
+                        ...current.extraLegs.slice(0, -1),
+                        {
+                          origin: "",
+                          destination: current.extraLegs[current.extraLegs.length - 1]?.origin ?? "",
+                          nights: "3",
+                        },
+                        ...current.extraLegs.slice(-1),
+                      ],
+                    }))
+                  }
+                  className="flex items-center gap-1.5 rounded-2xl border border-dashed border-[#c7d2e4] px-4 py-2.5 text-[13px] font-medium text-brand-600 hover:border-brand-400"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add a leg ({state.extraLegs.length + 1}/4 flights)
+                </button>
+              ) : null}
             </RoutePanel>
           )}
         </div>
@@ -936,7 +1117,10 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
           onChange={(stops) => setState((current) => ({ ...current, stops }))}
         />
 
-        <SameAirlineNotice />
+        <SameAirlineToggle
+          checked={state.sameAirline}
+          onChange={(sameAirline) => setState((current) => ({ ...current, sameAirline }))}
+        />
 
         <MaxLayoverSelector
           value={state.maxLayoverHours}

@@ -69,7 +69,19 @@ export function RouteGroupDetailPage() {
   const activeOrigin = selectedOrigin || group?.origins[0] || "";
   const originForQuery = activeOrigin;
   const destForQuery = group?.destinations[0] || "";
-  const returnOrigin = group?.trip_type === "multi_city" ? (group.special_sheets[0]?.origin ?? null) : null;
+  const chainLegs = group?.trip_type === "multi_city" ? (group.multi_city_legs ?? null) : null;
+  const returnOrigin =
+    group?.trip_type === "multi_city"
+      ? chainLegs?.length
+        ? chainLegs[chainLegs.length - 1].origin
+        : (group.special_sheets[0]?.origin ?? null)
+      : null;
+  // Days from depart to the FINAL homebound flight: leg nights are EXACT day
+  // offsets (nights between legs), so the total shift is their sum. PriceTable
+  // renders return date as depart + nights + 1, so pass shift - 1.
+  const effectiveNights = chainLegs?.length
+    ? chainLegs.reduce((days, leg) => days + leg.nights_before, 0) - 1
+    : (group?.nights ?? 0);
 
   const trendQuery = useQuery({
     queryKey: ["price-trend", id, originForQuery, destForQuery],
@@ -274,7 +286,7 @@ export function RouteGroupDetailPage() {
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Airline Match</p>
               <p className="mt-0.5 text-sm font-semibold text-slate-800">
-                Same airline only
+                {group.same_airline_only ? "Same airline only" : "Any airline mix"}
               </p>
             </div>
             <div>
@@ -323,7 +335,41 @@ export function RouteGroupDetailPage() {
               </div>
             </div>
 
-            {group.trip_type === "multi_city" && returnOrigin ? (
+            {group.trip_type === "multi_city" && chainLegs?.length ? (
+              <div className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-400">
+                  Onward Legs ({chainLegs.length + 1} flights total)
+                </p>
+                <div className="space-y-1.5">
+                  {chainLegs.map((leg, index) => (
+                    <div key={`leg-${index}`} className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-medium text-slate-400">Leg {index + 2}:</span>
+                      <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
+                        {leg.origin}
+                      </span>
+                      <span className="text-slate-300">-&gt;</span>
+                      {leg.destination ? (
+                        <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                          {leg.destination}
+                        </span>
+                      ) : (
+                        group.origins.map((code) => (
+                          <span
+                            key={`home-${code}`}
+                            className="rounded-md border border-brand-200 bg-brand-50 px-2 py-0.5 font-semibold text-brand-700"
+                          >
+                            {code}
+                          </span>
+                        ))
+                      )}
+                      <span className="text-slate-400">
+                        after {leg.nights_before} night{leg.nights_before === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : group.trip_type === "multi_city" && returnOrigin ? (
               <div className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
                 <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-400">Return</p>
                 <div className="flex max-w-full flex-wrap items-center gap-2 overflow-x-hidden">
@@ -438,7 +484,7 @@ export function RouteGroupDetailPage() {
             loadingMore={pricesLoading && allPrices.length > 0}
             groupCurrency={group.currency}
             tripType={group.trip_type}
-            nights={group.nights}
+            nights={effectiveNights}
             returnOrigin={returnOrigin}
           />
         </Card>

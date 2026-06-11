@@ -36,10 +36,12 @@ _ROUTE_IDENTITY_FIELDS = (
     "days_ahead",
     "trip_type",
     "special_sheets",
+    "multi_city_legs",
     "market",
     "currency",
     "start_date",
     "end_date",
+    "same_airline_only",
 )
 
 
@@ -58,6 +60,21 @@ def _normalize_identity_value(field: str, value):
             )
             normalized.append((origin, destinations))
         return tuple(normalized)
+    if field == "multi_city_legs":
+        if not value:
+            return ()
+        legs: list[tuple[str, str, int]] = []
+        for leg in value:
+            if hasattr(leg, "model_dump"):
+                leg = leg.model_dump()
+            legs.append(
+                (
+                    str((leg or {}).get("origin") or "").strip().upper(),
+                    str((leg or {}).get("destination") or "").strip().upper(),
+                    int((leg or {}).get("nights_before") or 0),
+                )
+            )
+        return tuple(legs)
     return value
 
 
@@ -120,10 +137,20 @@ async def create(
         trip_type=data.trip_type,
         sheet_name_map=data.sheet_name_map or {o: o for o in data.origins},
         special_sheets=[s.model_dump() if hasattr(s, "model_dump") else s for s in (data.special_sheets or [])],
+        multi_city_legs=(
+            [
+                leg.model_dump() if hasattr(leg, "model_dump") else leg
+                for leg in data.multi_city_legs
+            ]
+            if data.multi_city_legs
+            else None
+        ),
         market=data.market,
         currency=data.currency,
         max_stops=data.max_stops,
-        same_airline_only=True,
+        # Per-group toggle (client-requested): ON = only same-carrier itineraries
+        # qualify; OFF = cheapest itinerary regardless of carrier mix.
+        same_airline_only=bool(data.same_airline_only),
         max_leg_duration_minutes=data.max_leg_duration_minutes,
         max_layover_minutes=data.max_layover_minutes,
         start_date=data.start_date,
@@ -151,7 +178,7 @@ async def update(
     route_identity_changed = False
 
     for field, value in payload.items():
-        if field == "special_sheets" and value is not None:
+        if field in {"special_sheets", "multi_city_legs"} and value is not None:
             value = [s if isinstance(s, dict) else s.model_dump() for s in value]
         if field in _ROUTE_IDENTITY_FIELDS:
             previous = _normalize_identity_value(field, getattr(group, field))
@@ -159,8 +186,6 @@ async def update(
             if previous != incoming:
                 route_identity_changed = True
         setattr(group, field, value)
-
-    group.same_airline_only = True
 
     if route_identity_changed:
         await _clear_group_collection_data(session, group_id)

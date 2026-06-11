@@ -57,6 +57,9 @@ class ProviderRegistry:
                 stealth_proxy=settings.scrapingbee_stealth_proxy,
                 multi_city_debug=settings.scrapingbee_multi_city_debug,
                 user_agent=settings.scrapingbee_user_agent,
+                enforce_poll_agreement=getattr(
+                    settings, "scrape_enforce_poll_agreement", False
+                ),
             )
 
     # --------------------------------------------------

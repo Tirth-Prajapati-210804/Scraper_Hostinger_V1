@@ -28,6 +28,11 @@ class RouteGroup(Base):
     days_ahead: Mapped[int] = mapped_column(Integer, nullable=False, default=365)
     sheet_name_map: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     special_sheets: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Multi-city EXTRA legs beyond the first origin->destination leg: ordered
+    # list of {"origin", "destination" ("" = back to the group origin),
+    # "nights_before" (nights spent at the previous stop)}. 1-3 entries = 2-4
+    # total legs. NULL = legacy 2-leg open-jaw from special_sheets + nights.
+    multi_city_legs: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     market: Mapped[str] = mapped_column(String(8), nullable=False, default="us")
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")

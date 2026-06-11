@@ -25,15 +25,18 @@ def make_provider(api_key: str = "test-key") -> ScrapingBeeProvider:
     )
 
 
-def test_rendered_results_scenario_uses_smart_load_gate() -> None:
+def test_rendered_results_scenario_uses_stepped_load_gate() -> None:
     """The scenario carries filters in the URL (sort + -MULT,flylocal [+ stops]) and
-    uses an ADAPTIVE load gate that early-exits: inject helper -> wait_for price ->
-    arm() (self-firing settle interval) -> wait_for the settled-stamp -> extract.
-    wait_for is an EXTERNAL DOM poll (can't be starved like the old Promise) and
-    returns the INSTANT the page stamps settled, so the gate no longer burns a fixed
-    wait budget (the cause of the 137s HTTP500). extract() always runs last; a never-
-    settling page falls through to it (strict:False) as a forced read, not a timeout.
-    No fixed `wait` steps, no applyFacet/cheapest/scroll/old-loading-flag steps."""
+    uses the STEPPED load gate, bounded to ScrapingBee's documented ~40s js_scenario
+    limit: helper -> [wait 10s -> FH.s()] x 4 -> FH.e(). The timing is driven by
+    fixed `wait` steps (ScrapingBee-controlled) so the scenario can never overshoot
+    into "the API will timeout" (the old ~2m HAN Provider Errors). FH.s() stamps
+    'settled=natural' once the top eligible price AND the rendered card count hold
+    steady for 2 consecutive 10s-apart polls (the streaming 'N of M flights' counter
+    and the facet floor are GONE from the stability tuple -- the counter never holds
+    and blocked settle forever; the card count is the honest equivalent). FH.e()
+    always runs last as the forced fallback. Proven live 2026-06-10: 16/16 HTTP 200
+    on the previously-timing-out HAN group."""
     provider = make_provider()
 
     scenario = provider._build_results_scenario(
@@ -46,35 +49,47 @@ def test_rendered_results_scenario_uses_smart_load_gate() -> None:
     instructions = scenario["instructions"]
     helper_script = instructions[0]["evaluate"]
 
-    # strict:False is load-bearing -- it lets the settled-stamp wait_for be SKIPPED
-    # (not abort the scenario) on a page that never settles, so extract still runs.
+    # strict:False is load-bearing -- a failing step is SKIPPED (not aborted), so
+    # FH.e() still runs as the forced extract on a page that never settles.
     assert scenario["strict"] is False
-    assert instructions[1] == {"wait_for": _RESULT_PRICE_SELECTOR}
-    # arm() starts the self-firing settle checks, then the gate blocks on the stamp.
-    assert instructions[2] == {"evaluate": "window.FH.arm()"}
-    assert instructions[3] == {"wait_for": 'body[data-fh-st="1"]'}
-    # extract() always runs as the final step.
-    assert instructions[-1] == {"evaluate": "window.FH.e()"}
-    # No fixed `wait` steps anymore -- the gate is adaptive, not a fixed budget.
-    assert not any(
-        "wait" in i and "wait_for" not in i for i in instructions if isinstance(i, dict)
-    )
+    # Stepped structure: helper, then 4 x (wait 10s -> settle check), then extract.
+    assert instructions[1:] == [
+        {"wait": 10_000},
+        {"evaluate": "window.FH.s()"},
+        {"wait": 10_000},
+        {"evaluate": "window.FH.s()"},
+        {"wait": 10_000},
+        {"evaluate": "window.FH.s()"},
+        {"wait": 10_000},
+        {"evaluate": "window.FH.s()"},
+        {"evaluate": "window.FH.e()"},
+    ]
+    # Total scenario wait stays at the documented ~40s js_scenario ceiling.
+    total_wait_ms = sum(i["wait"] for i in instructions if isinstance(i, dict) and "wait" in i)
+    assert total_wait_ms == 40_000
+
+    # No open-ended waits that could overshoot the scenario ceiling.
+    assert not any("wait_for" in i for i in instructions if isinstance(i, dict))
     evals = [i.get("evaluate") for i in instructions if isinstance(i, dict)]
-    # No runaway Promise gate anymore.
     assert not any(e and "waitLoaded" in e for e in evals if e)
 
-    # The helper exposes arm + the SAME settle check (top price + flights-N + facet
-    # floor stable for N snapshots) + extract; old applyFacet/cheapest/loading-flag
-    # helpers are GONE. arm() re-fires settle on a JS interval while wait_for blocks.
-    assert "f.arm=" in helper_script
-    assert "setInterval" in helper_script
+    # Settle stability = top eligible price + card count ONLY. The streaming
+    # flights counter (f.fn) and facet floor (f.ff) must stay out of the helper:
+    # they never hold steady, which made every render force-extract (bug H1).
     assert "f.settle=f.s" in helper_script
     assert "f.extract=f.e" in helper_script
-    assert "f.top=" in helper_script and "f.fn=" in helper_script
-    # settle() still stamps the body when stable -> that stamp is what wait_for awaits.
+    assert "f.top=" in helper_script
+    assert "f.fn=" not in helper_script
+    assert "f.ff=" not in helper_script
+    assert "f.arm=" not in helper_script
+    assert "setInterval" not in helper_script
+    # settle() stamps the body 'natural' when stable; extract marks 'forced' if not.
     assert "data-fh-st" in helper_script
+    assert "data-fh-how" in helper_script
     assert "applyFacet" not in helper_script
     assert "f.cheap=" not in helper_script
+    # The price selector is still the card anchor inside the helper.
+    assert _RESULT_PRICE_SELECTOR in helper_script
     # No scrolls anywhere in the scenario.
     assert not any("scroll_y" in i for i in instructions if isinstance(i, dict))
 
@@ -130,14 +145,16 @@ def test_same_airline_filters_are_carried_in_kayak_url() -> None:
     assert "airlines=-MULT,flylocal" in url1 and "airlines=-MULT,flylocal" in url2
     assert "baditin=baditin" in url1 and "baditin=baditin" in url2
 
-    # The 0-card fallback URL (same_airline_url=False) drops -MULT AND baditin.
+    # The 0-card fallback URL (same_airline_url=False) drops -MULT but KEEPS
+    # baditin: showing longer flights is about never hiding a cheap fare and
+    # applies regardless of carrier isolation.
     fb = provider._build_search_url(
         origin="MIA", destination="MLA",
         depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
         max_stops=2, same_airline_url=False,
     )
-    assert fb.endswith("?sort=price_a")
-    assert "-MULT" not in fb and "flylocal" not in fb and "baditin" not in fb
+    assert fb.endswith("?sort=price_a&fs=baditin=baditin")
+    assert "-MULT" not in fb and "flylocal" not in fb
 
     # legdur=/layoverdur= tokens appear (minutes, '=-MAX' form) only when the group
     # sets a cap; absent otherwise. Verified honored by Kayak server-side.
@@ -366,7 +383,9 @@ def test_rendered_card_normalization_records_final_settled_price() -> None:
 
 
 @pytest.mark.asyncio
-async def test_round_trip_diagnostic_forces_same_airline_without_unbound_local() -> None:
+async def test_round_trip_diagnostic_honors_same_airline_toggle() -> None:
+    """The per-group toggle flows through: OFF means no -MULT in the URL and the
+    flag reaches the search path as False (it used to be force-overridden True)."""
     provider = make_provider()
     captured: dict[str, object] = {}
 
@@ -387,316 +406,22 @@ async def test_round_trip_diagnostic_forces_same_airline_without_unbound_local()
     )
 
     assert captured["trip_type"] == "round_trip"
-    assert captured["same_airline_only"] is True
+    assert captured["same_airline_only"] is False
     assert captured["minimum_leg_count"] == 2
+    assert "airlines=-MULT" not in str(captured["target_url"])
+    assert "baditin=baditin" in str(captured["target_url"])
 
-
-@pytest.mark.asyncio
-async def test_round_trip_diagnostic_tries_next_airline_facet_when_first_fails_stops() -> None:
-    provider = make_provider()
-    calls: list[int] = []
-    rendered = {
-        "evaluate_results": [
-            json.dumps(
-                {
-                    "c": [],
-                    "f": {
-                        "s": "Airline A",
-                        "o": [
-                            {"n": "Airline A", "p": 700},
-                            {"n": "Airline B", "p": 760},
-                        ],
-                    },
-                }
-            )
-        ]
-    }
-
-    first_result = ProviderResult(
-        price=700,
-        currency="USD",
-        airline="Airline A",
-        deep_link="https://example.com/a",
-        raw_data={
-            "legs": [
-                {"airline": "Airline A", "route_text": "Airline A"},
-                {"airline": "Airline A", "route_text": "Airline A"},
-            ],
-            "leg_stops": [2, 2],
-        },
-    )
-    second_result = ProviderResult(
-        price=760,
-        currency="USD",
-        airline="Airline B",
-        deep_link="https://example.com/b",
-        raw_data={
-            "legs": [
-                {"airline": "Airline B", "route_text": "Airline B"},
-                {"airline": "Airline B", "route_text": "Airline B"},
-            ],
-            "leg_stops": [1, 1],
-        },
-    )
-
-    async def fake_render_results_attempt(**kwargs):
-        calls.append(int(kwargs.get("airline_facet_index", 0)))
-        if len(calls) == 1:
-            return rendered, {}, [first_result], 1, 1
-        return rendered, {}, [second_result], 1, 1
-
-    provider._render_results_attempt = fake_render_results_attempt
-
-    outcome = await provider._search_rendered_itinerary_diagnostic(
-        trip_type="round_trip",
-        target_url="https://www.kayak.com/flights/DEN-MLA/2027-02-20/2027-03-01",
-        requested_market="us",
-        requested_currency="USD",
-        market_country_code="us",
-        max_stops=1,
-        same_airline_only=True,
-        minimum_leg_count=2,
-    )
-
-    assert calls == [0, 1]
-    assert [result.price for result in outcome.results] == [760]
-    assert outcome.diagnostics.raw_offers_found == 1
-    assert outcome.diagnostics.eligible_offers_found == 1
-
-
-@pytest.mark.asyncio
-async def test_round_trip_diagnostic_tries_next_airline_facet_when_first_price_is_suspiciously_high() -> None:
-    provider = make_provider()
-    calls: list[int] = []
-    rendered = {
-        "evaluate_results": [
-            json.dumps(
-                {
-                    "c": [],
-                    "f": {
-                        "s": "Airline A",
-                        "o": [
-                            {"n": "Airline A", "p": 900},
-                            {"n": "Airline B", "p": 950},
-                        ],
-                    },
-                }
-            )
-        ]
-    }
-
-    first_result = ProviderResult(
-        price=2500,
-        currency="USD",
-        airline="Airline A",
-        deep_link="https://example.com/a",
-        raw_data={
-            "legs": [
-                {"airline": "Airline A", "route_text": "Airline A"},
-                {"airline": "Airline A", "route_text": "Airline A"},
-            ],
-            "leg_stops": [1, 1],
-        },
-    )
-    second_result = ProviderResult(
-        price=950,
-        currency="USD",
-        airline="Airline B",
-        deep_link="https://example.com/b",
-        raw_data={
-            "legs": [
-                {"airline": "Airline B", "route_text": "Airline B"},
-                {"airline": "Airline B", "route_text": "Airline B"},
-            ],
-            "leg_stops": [1, 1],
-        },
-    )
-
-    async def fake_render_results_attempt(**kwargs):
-        calls.append(int(kwargs.get("airline_facet_index", 0)))
-        if len(calls) == 1:
-            return rendered, {}, [first_result], 1, 1
-        return rendered, {}, [second_result], 1, 1
-
-    provider._render_results_attempt = fake_render_results_attempt
-
-    outcome = await provider._search_rendered_itinerary_diagnostic(
-        trip_type="round_trip",
-        target_url="https://www.kayak.com/flights/LAS-MLA/2027-03-22/2027-03-30",
-        requested_market="us",
-        requested_currency="USD",
-        market_country_code="us",
-        max_stops=1,
-        same_airline_only=True,
-        minimum_leg_count=2,
-    )
-
-    assert calls == [0, 1]
-    assert [result.price for result in outcome.results] == [950]
-    assert outcome.diagnostics.raw_offers_found == 1
-    assert outcome.diagnostics.eligible_offers_found == 1
-
-
-@pytest.mark.asyncio
-async def test_multi_city_diagnostic_tries_next_airline_facet_when_first_fails_stops() -> None:
-    provider = make_provider()
-    calls: list[int] = []
-    rendered = {
-        "evaluate_results": [
-            json.dumps(
-                {
-                    "c": [],
-                    "f": {
-                        "s": "Airline A",
-                        "o": [
-                            {"n": "Airline A", "p": 700},
-                            {"n": "Airline B", "p": 760},
-                        ],
-                    },
-                }
-            )
-        ]
-    }
-
-    first_result = ProviderResult(
-        price=700,
-        currency="USD",
-        airline="Airline A",
-        deep_link="https://example.com/a",
-        raw_data={
-            "legs": [
-                {"airline": "Airline A", "route_text": "Airline A"},
-                {"airline": "Airline A", "route_text": "Airline A"},
-            ],
-            "leg_stops": [2, 2],
-        },
-    )
-    second_result = ProviderResult(
-        price=760,
-        currency="USD",
-        airline="Airline B",
-        deep_link="https://example.com/b",
-        raw_data={
-            "legs": [
-                {"airline": "Airline B", "route_text": "Airline B"},
-                {"airline": "Airline B", "route_text": "Airline B"},
-            ],
-            "leg_stops": [1, 1],
-        },
-    )
-
-    async def fake_render_results_attempt(**kwargs):
-        calls.append(int(kwargs.get("airline_facet_index", 0)))
-        if len(calls) == 1:
-            return rendered, {}, [first_result], 1, 1
-        return rendered, {}, [second_result], 1, 1
-
-    provider._render_results_attempt = fake_render_results_attempt
-
-    results, diagnostics = await provider._search_multi_city_once(
-        legs=[
-            {
-                "departure_id": "DEN",
-                "arrival_id": "MLA",
-                "outbound_date": date(2027, 2, 20),
-            },
-            {
-                "departure_id": "SPU",
-                "arrival_id": "DEN",
-                "outbound_date": date(2027, 3, 1),
-            },
-        ],
+    await provider.search_round_trip_diagnostic(
+        origin="MIA",
+        destination="MLA",
+        depart_date=date(2026, 6, 5),
+        return_date=date(2026, 6, 18),
         market="us",
         currency="USD",
-        max_stops=1,
         same_airline_only=True,
     )
-
-    assert calls == [0, 1]
-    assert [result.price for result in results] == [760]
-    assert diagnostics.raw_offers_found == 1
-    assert diagnostics.eligible_offers_found == 1
-
-
-@pytest.mark.asyncio
-async def test_multi_city_diagnostic_tries_next_airline_facet_when_first_price_is_suspiciously_high() -> None:
-    provider = make_provider()
-    calls: list[int] = []
-    rendered = {
-        "evaluate_results": [
-            json.dumps(
-                {
-                    "c": [],
-                    "f": {
-                        "s": "Airline A",
-                        "o": [
-                            {"n": "Airline A", "p": 900},
-                            {"n": "Airline B", "p": 950},
-                        ],
-                    },
-                }
-            )
-        ]
-    }
-
-    first_result = ProviderResult(
-        price=2500,
-        currency="USD",
-        airline="Airline A",
-        deep_link="https://example.com/a",
-        raw_data={
-            "legs": [
-                {"airline": "Airline A", "route_text": "Airline A"},
-                {"airline": "Airline A", "route_text": "Airline A"},
-            ],
-            "leg_stops": [1, 1],
-        },
-    )
-    second_result = ProviderResult(
-        price=950,
-        currency="USD",
-        airline="Airline B",
-        deep_link="https://example.com/b",
-        raw_data={
-            "legs": [
-                {"airline": "Airline B", "route_text": "Airline B"},
-                {"airline": "Airline B", "route_text": "Airline B"},
-            ],
-            "leg_stops": [1, 1],
-        },
-    )
-
-    async def fake_render_results_attempt(**kwargs):
-        calls.append(int(kwargs.get("airline_facet_index", 0)))
-        if len(calls) == 1:
-            return rendered, {}, [first_result], 1, 1
-        return rendered, {}, [second_result], 1, 1
-
-    provider._render_results_attempt = fake_render_results_attempt
-
-    results, diagnostics = await provider._search_multi_city_once(
-        legs=[
-            {
-                "departure_id": "LAS",
-                "arrival_id": "MLA",
-                "outbound_date": date(2027, 3, 22),
-            },
-            {
-                "departure_id": "SPU",
-                "arrival_id": "LAS",
-                "outbound_date": date(2027, 3, 30),
-            },
-        ],
-        market="us",
-        currency="USD",
-        max_stops=1,
-        same_airline_only=True,
-    )
-
-    assert calls == [0, 1]
-    assert [result.price for result in results] == [950]
-    assert diagnostics.raw_offers_found == 1
-    assert diagnostics.eligible_offers_found == 1
+    assert captured["same_airline_only"] is True
+    assert "airlines=-MULT,flylocal" in str(captured["target_url"])
 
 
 @pytest.mark.asyncio
@@ -868,56 +593,6 @@ def test_normalize_rejects_non_flight_transport_card() -> None:
     )
 
     assert [r.airline for r in results] == ["Lufthansa"]
-
-
-def test_should_probe_alternate_facets_when_price_clearly_above_floor() -> None:
-    """Stale-facet guard: a result >=20% AND >=$150 above the cheapest facet
-    floor should trigger probing other airline facets."""
-    provider = make_provider()
-    rendered = {
-        "evaluate_results": [
-            json.dumps({"c": [], "f": {"s": "A", "o": [{"n": "A", "p": 900}, {"n": "B", "p": 950}]}})
-        ]
-    }
-    eligible = [_round_trip_result(1200, [1, 1])]  # 1200 >= 900*1.2 (1080) and >= 900+150 (1050)
-
-    assert provider._should_probe_alternate_airline_facets(
-        rendered=rendered,
-        eligible_results=eligible,
-        facet_option_count=2,
-    ) is True
-
-
-def test_should_not_probe_alternate_facets_when_price_near_floor() -> None:
-    provider = make_provider()
-    rendered = {
-        "evaluate_results": [
-            json.dumps({"c": [], "f": {"s": "A", "o": [{"n": "A", "p": 900}, {"n": "B", "p": 950}]}})
-        ]
-    }
-    eligible = [_round_trip_result(1000, [1, 1])]  # below both clearly-high thresholds, and < 1500
-
-    assert provider._should_probe_alternate_airline_facets(
-        rendered=rendered,
-        eligible_results=eligible,
-        facet_option_count=2,
-    ) is False
-
-
-def test_should_not_probe_alternate_facets_with_single_option() -> None:
-    provider = make_provider()
-    rendered = {
-        "evaluate_results": [
-            json.dumps({"c": [], "f": {"s": "A", "o": [{"n": "A", "p": 900}]}})
-        ]
-    }
-    eligible = [_round_trip_result(5000, [1, 1])]
-
-    assert provider._should_probe_alternate_airline_facets(
-        rendered=rendered,
-        eligible_results=eligible,
-        facet_option_count=1,
-    ) is False
 
 
 def test_extract_rendered_cards_payload_decodes_short_keys() -> None:
@@ -1181,3 +856,26 @@ def test_normalize_surfaces_actual_airport_when_city_code_searched() -> None:
     assert raw["actual_return_destination"] == "IAD"
     assert raw["legs"][1]["actual_origin"] == "FCO"
     assert provider._actual_route_label(results) == "IAD->EDI / FCO->IAD"
+
+
+def test_tag_for_url_stays_within_scrapingbee_36_char_limit() -> None:
+    """ScrapingBee rejects tag > 36 chars with HTTP 400 (live-probed; not in the
+    docs). Dates compact to YYMMDD and the tag is hard-truncated."""
+    provider = make_provider()
+    mc = provider._build_multi_city_results_url(
+        outbound_origin="YEG", outbound_destination="HAN",
+        outbound_date=date(2026, 7, 2),
+        inbound_origin="SAI", inbound_destination="YEG",
+        inbound_date=date(2026, 7, 17), max_stops=2,
+    )
+    tag = provider._tag_for_url(mc)
+    assert tag == "YEG-HAN_260702_SAI-YEG_260717"
+    assert len(tag) <= 36
+
+    rt = provider._build_search_url(
+        origin="MIA", destination="MLA",
+        depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
+        max_stops=1,
+    )
+    assert provider._tag_for_url(rt) == "MIA-MLA_260605_260618"
+    assert provider._tag_for_url("https://example.com/nothing") == "kayak"

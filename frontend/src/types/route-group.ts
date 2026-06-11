@@ -12,6 +12,7 @@ export interface RouteGroup {
   trip_type: TripType;
   sheet_name_map: Record<string, string>;
   special_sheets: SpecialSheet[];
+  multi_city_legs: MultiCityLegConfig[] | null;
   is_active: boolean;
   market: RouteMarket;
   currency: string;
@@ -31,6 +32,15 @@ export interface SpecialSheet {
   destination_label: string;
   destinations: string[];
   columns: number;
+}
+
+/** One EXTRA leg of a multi-city itinerary (beyond the first leg).
+ *  destination "" on the LAST leg = back to the group origin.
+ *  nights_before = nights at the previous stop (0 = fly out the next day). */
+export interface MultiCityLegConfig {
+  origin: string;
+  destination: string;
+  nights_before: number;
 }
 
 export type ScrapeHealthStatus =

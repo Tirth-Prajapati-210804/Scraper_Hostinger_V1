@@ -55,6 +55,52 @@ def _normalize_market(value: object) -> str:
     return market
 
 
+class MultiCityLeg(BaseModel):
+    """One EXTRA leg of a multi-city itinerary (beyond the first
+    origin->destination leg).
+
+    destination "" (empty) is only valid on the LAST leg and means "back to the
+    group origin" -- resolved per-origin at collection time, like the legacy
+    return leg. nights_before = nights between the previous flight and this
+    one: the leg departs EXACTLY nights_before days after the previous flight
+    (client-validated: LON-KEF 01 Jul + 2 nights -> KEF-YYZ 03 Jul; Toronto 2
+    + New York 3 = 5 -> NYC-LON 08 Jul). Minimum 1 (next-day departure).
+    """
+
+    origin: str = Field(min_length=2, max_length=4, pattern=_IATA_PATTERN)
+    destination: str = ""
+    nights_before: int = Field(ge=1, le=90)
+
+    @field_validator("origin", mode="before")
+    @classmethod
+    def normalize_leg_origin(cls, value: object) -> str:
+        normalized = _normalize_iata_codes([value])
+        return normalized[0] if isinstance(normalized, list) else str(value)
+
+    @field_validator("destination", mode="before")
+    @classmethod
+    def normalize_leg_destination(cls, value: object) -> str:
+        cleaned = str(value or "").strip().upper()
+        if not cleaned:
+            return ""
+        normalized = _normalize_iata_codes([cleaned])
+        return normalized[0] if isinstance(normalized, list) else cleaned
+
+
+def _validate_multi_city_legs(legs: list[MultiCityLeg] | None) -> None:
+    if legs is None:
+        return
+    if not 1 <= len(legs) <= 3:
+        raise ValueError("multi_city_legs supports 1 to 3 extra legs (2-4 total legs)")
+    for index, leg in enumerate(legs):
+        is_last = index == len(legs) - 1
+        if not leg.destination and not is_last:
+            raise ValueError(
+                "only the LAST multi-city leg may leave destination empty "
+                "(empty = back to the group origin)"
+            )
+
+
 class SpecialSheetConfig(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     origin: str = Field(min_length=2, max_length=4, pattern=_IATA_PATTERN)
@@ -89,6 +135,7 @@ class RouteGroupCreate(BaseModel):
     days_ahead: int = Field(ge=1, le=730, default=365)
     sheet_name_map: dict[str, str] = Field(default_factory=dict)
     special_sheets: list[SpecialSheetConfig] = Field(default_factory=list)
+    multi_city_legs: list[MultiCityLeg] | None = None
     market: str = Field(default="us")
     currency: str = Field(default="USD", pattern=_CURRENCY_PATTERN)
     max_stops: int | None = Field(default=1, ge=0, le=2)
@@ -136,11 +183,17 @@ class RouteGroupCreate(BaseModel):
     def validate_dates(self) -> "RouteGroupCreate":
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
+        _validate_multi_city_legs(self.multi_city_legs)
         if self.trip_type == "multi_city":
-            if not self.special_sheets:
-                raise ValueError("multi_city requires a return leg configuration")
-            if len(self.special_sheets) != 1:
-                raise ValueError("multi_city supports exactly one return-leg configuration")
+            # New-style groups define the itinerary via multi_city_legs (2-4 total
+            # legs); legacy groups via exactly one special_sheets return leg.
+            if not self.multi_city_legs:
+                if not self.special_sheets:
+                    raise ValueError("multi_city requires a return leg configuration")
+                if len(self.special_sheets) != 1:
+                    raise ValueError("multi_city supports exactly one return-leg configuration")
+        elif self.multi_city_legs:
+            raise ValueError("multi_city_legs is only valid for multi_city groups")
         return self
 
 
@@ -153,6 +206,7 @@ class RouteGroupUpdate(BaseModel):
     days_ahead: int | None = Field(default=None, ge=1, le=730)
     sheet_name_map: dict[str, str] | None = None
     special_sheets: list[SpecialSheetConfig] | None = None
+    multi_city_legs: list[MultiCityLeg] | None = None
     is_active: bool | None = None
     market: str | None = None
     currency: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
@@ -209,7 +263,12 @@ class RouteGroupUpdate(BaseModel):
     def validate_dates(self) -> "RouteGroupUpdate":
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
-        if self.trip_type == "multi_city" and self.special_sheets is not None:
+        _validate_multi_city_legs(self.multi_city_legs)
+        if (
+            self.trip_type == "multi_city"
+            and self.special_sheets is not None
+            and not self.multi_city_legs
+        ):
             if len(self.special_sheets) != 1:
                 raise ValueError("multi_city supports exactly one return-leg configuration")
         return self
@@ -227,6 +286,7 @@ class RouteGroupResponse(BaseModel):
     days_ahead: int
     sheet_name_map: dict[str, str]
     special_sheets: list[SpecialSheetConfig]
+    multi_city_legs: list[MultiCityLeg] | None = None
     is_active: bool
     market: str
     currency: str

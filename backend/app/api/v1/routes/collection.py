@@ -184,17 +184,19 @@ async def reset_group_caps(
     _enforce_scrape_rate_limit(request, current_user, f"reset-caps:{group_id}")
     await _get_accessible_group(session, group_id)
 
+    # NOTE: extract_failed / market_mismatch are result_reason values under
+    # status='no_results', NOT statuses -- match them where they actually live
+    # (mirrors the scheduler's error-brake fix).
     result = await session.execute(
         text(
             """
             DELETE FROM scrape_logs
             WHERE route_group_id = :route_group_id
               AND (
-                (status = 'no_results' AND result_reason IN ('filtered_out', 'page_empty'))
-                OR status IN (
-                    'provider_error', 'extract_failed', 'parse_error',
-                    'rate_limited', 'market_mismatch'
-                )
+                (status = 'no_results' AND result_reason IN (
+                    'filtered_out', 'page_empty', 'extract_failed', 'market_mismatch'
+                ))
+                OR status IN ('provider_error', 'parse_error', 'rate_limited')
               )
             """
         ),

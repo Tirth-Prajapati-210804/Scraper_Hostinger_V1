@@ -43,6 +43,50 @@ def _derive_return_date(depart_date: date, nights: int) -> date:
     return depart_date + timedelta(days=max(1, nights + 1))
 
 
+def _build_multi_city_legs(
+    *,
+    origin: str,
+    destination: str,
+    depart_date: date,
+    extra_legs: list | None,
+    nights: int | None,
+    return_origin: str | None,
+) -> list[dict[str, object]]:
+    """The full 2-4 leg chain for one date.
+
+    Leg 1 is always origin->destination on depart_date. Each extra leg departs
+    nights_before days after the previous flight (client-validated example:
+    LON-KEF 01 Jul + 2 nights -> KEF-YYZ 03 Jul; +2 nights Toronto +3 nights
+    New York = 5 -> NYC-LON 08 Jul). An empty extra-leg destination means
+    "back to the group origin". Without extra_legs this reproduces the legacy
+    2-leg open-jaw exactly (which keeps its historical +nights+1 rule).
+    """
+    legs: list[dict[str, object]] = [
+        {"departure_id": origin, "arrival_id": destination, "outbound_date": depart_date},
+    ]
+    if extra_legs:
+        current = depart_date
+        for extra in extra_legs:
+            current = current + timedelta(days=max(1, int(extra.nights_before)))
+            legs.append(
+                {
+                    "departure_id": extra.origin,
+                    "arrival_id": extra.destination or origin,
+                    "outbound_date": current,
+                }
+            )
+        return legs
+
+    legs.append(
+        {
+            "departure_id": return_origin,
+            "arrival_id": origin,
+            "outbound_date": _derive_return_date(depart_date, nights or 1),
+        }
+    )
+    return legs
+
+
 def _classify_exception(exc: BaseException) -> str:
     if isinstance(exc, ProviderQuotaExhaustedError):
         return "quota_exhausted"
@@ -150,6 +194,7 @@ class PriceCollector:
         provider: FlightProvider,
         *,
         market: str | None,
+        same_airline_only: bool = True,
         max_leg_duration_minutes: int | None = None,
         max_layover_minutes: int | None = None,
     ) -> dict[str, object]:
@@ -157,7 +202,10 @@ class PriceCollector:
         if getattr(provider, "name", "") == "scrapingbee":
             if market:
                 kwargs["market"] = market
-            kwargs["same_airline_only"] = True
+            # Per-group toggle: ON = only same-carrier itineraries qualify
+            # (airlines=-MULT,flylocal in the URL + the Python carrier filter);
+            # OFF = cheapest itinerary regardless of carrier mix.
+            kwargs["same_airline_only"] = bool(same_airline_only)
             # Carried into the Kayak URL (legdur=/layoverdur=) so Kayak filters
             # server-side before render -- fewer cards, faster extract.
             if max_leg_duration_minutes:
@@ -369,23 +417,20 @@ class PriceCollector:
         return_origin: str | None,
         return_date: date | None,
         same_airline_only: bool,
+        extra_legs: list | None = None,
         max_leg_duration_minutes: int | None = None,
         max_layover_minutes: int | None = None,
     ) -> ProviderSearchOutcome:
         if trip_type == "multi_city":
             method = getattr(provider, "search_multi_city_diagnostic", None)
-            legs = [
-                {
-                    "departure_id": origin,
-                    "arrival_id": destination,
-                    "outbound_date": depart_date,
-                },
-                {
-                    "departure_id": return_origin,
-                    "arrival_id": origin,
-                    "outbound_date": return_date,
-                },
-            ]
+            legs = _build_multi_city_legs(
+                origin=origin,
+                destination=destination,
+                depart_date=depart_date,
+                extra_legs=extra_legs,
+                nights=nights,
+                return_origin=return_origin,
+            )
             if callable(method):
                 return await method(
                     legs=legs,
@@ -394,6 +439,7 @@ class PriceCollector:
                     **self._provider_search_kwargs(
                         provider,
                         market=market,
+                        same_airline_only=same_airline_only,
                         max_leg_duration_minutes=max_leg_duration_minutes,
                         max_layover_minutes=max_layover_minutes,
                     ),
@@ -405,6 +451,7 @@ class PriceCollector:
                 **self._provider_search_kwargs(
                     provider,
                     market=market,
+                    same_airline_only=same_airline_only,
                 ),
             )
         else:
@@ -467,6 +514,7 @@ class PriceCollector:
         nights: int | None = None,
         return_origin: str | None = None,
         same_airline_only: bool = True,
+        extra_legs: list | None = None,
         max_leg_duration_minutes: int | None = None,
         max_layover_minutes: int | None = None,
     ) -> CollectionResult:
@@ -478,7 +526,8 @@ class PriceCollector:
         return_date: date | None = None
         requested_stop_mode = self._normalize_stop_mode(max_stops)
         effective_trip_type = "multi_city" if trip_type == "multi_city" else "round_trip"
-        same_airline_only = True
+        # Honor the per-group toggle (it used to be force-overridden to True here).
+        same_airline_only = bool(same_airline_only)
 
         async with self.session_factory() as session:
             for provider in self.providers:
@@ -487,10 +536,19 @@ class PriceCollector:
                 try:
                     if effective_trip_type == "multi_city":
                         stay_nights = nights or 1
-                        if not return_origin:
+                        if not return_origin and not extra_legs:
                             raise RuntimeError("multi_city collection requires a return origin.")
 
-                        return_date = _derive_return_date(depart_date, stay_nights)
+                        if extra_legs:
+                            # Final homebound leg date = depart + each leg's
+                            # nights_before, chained (client's own arithmetic).
+                            return_date = depart_date
+                            for extra in extra_legs:
+                                return_date = return_date + timedelta(
+                                    days=max(1, int(extra.nights_before))
+                                )
+                        else:
+                            return_date = _derive_return_date(depart_date, stay_nights)
                         outcome = await self._search_with_diagnostics(
                             provider,
                             trip_type=effective_trip_type,
@@ -504,6 +562,7 @@ class PriceCollector:
                             return_origin=return_origin,
                             return_date=return_date,
                             same_airline_only=same_airline_only,
+                            extra_legs=extra_legs,
                             max_leg_duration_minutes=max_leg_duration_minutes,
                             max_layover_minutes=max_layover_minutes,
                         )
@@ -698,6 +757,7 @@ class PriceCollector:
         nights: int | None = None,
         return_origin: str | None = None,
         same_airline_only: bool = True,
+        extra_legs: list | None = None,
         max_leg_duration_minutes: int | None = None,
         max_layover_minutes: int | None = None,
         is_retry: bool = False,
@@ -761,6 +821,7 @@ class PriceCollector:
                             nights=nights,
                             return_origin=return_origin,
                             same_airline_only=same_airline_only,
+                            extra_legs=extra_legs,
                             max_leg_duration_minutes=max_leg_duration_minutes,
                             max_layover_minutes=max_layover_minutes,
                         )

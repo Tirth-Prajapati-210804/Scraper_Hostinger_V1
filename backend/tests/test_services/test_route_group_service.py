@@ -195,7 +195,7 @@ async def test_update_clears_collection_data_when_market_changes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_keeps_collection_data_when_same_airline_only_changes() -> None:
+async def test_update_clears_collection_data_when_same_airline_only_changes() -> None:
     session = AsyncMock()
     session.commit = AsyncMock()
     session.refresh = AsyncMock()
@@ -236,11 +236,13 @@ async def test_update_keeps_collection_data_when_same_airline_only_changes() -> 
 
     assert updated is group
     assert group.same_airline_only is True
-    clear_mock.assert_not_awaited()
+    # Flipping the airline rule changes which fares qualify, so the previously
+    # collected prices are no longer comparable -> route identity change, wipe.
+    clear_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_create_forces_same_airline_only_true() -> None:
+async def test_create_honors_same_airline_only_toggle() -> None:
     session = AsyncMock()
     session.add = Mock()
     session.commit = AsyncMock()
@@ -256,14 +258,16 @@ async def test_create_forces_same_airline_only_true() -> None:
 
     created = await route_group_service.create(session=session, data=payload)
 
-    assert created.same_airline_only is True
+    # Per-group toggle (client request): the requested value is PERSISTED, no
+    # longer force-overridden to True.
+    assert created.same_airline_only is False
     session.add.assert_called_once()
     session.commit.assert_awaited_once()
     session.refresh.assert_awaited_once_with(created)
 
 
 @pytest.mark.asyncio
-async def test_update_keeps_same_airline_only_true_when_false_is_requested() -> None:
+async def test_update_honors_same_airline_only_toggle_off() -> None:
     session = AsyncMock()
     session.commit = AsyncMock()
     session.refresh = AsyncMock()
@@ -291,14 +295,20 @@ async def test_update_keeps_same_airline_only_true_when_false_is_requested() -> 
     )
 
     with patch.object(route_group_service, "get_by_id", AsyncMock(return_value=group)):
-        updated = await route_group_service.update(
-            session=session,
-            group_id=group_id,
-            data=RouteGroupUpdate(same_airline_only=False),
-        )
+        with patch.object(
+            route_group_service,
+            "_clear_group_collection_data",
+            AsyncMock(),
+        ):
+            updated = await route_group_service.update(
+                session=session,
+                group_id=group_id,
+                data=RouteGroupUpdate(same_airline_only=False),
+            )
 
     assert updated is group
-    assert group.same_airline_only is True
+    # Per-group toggle: the requested value is persisted (no force-override).
+    assert group.same_airline_only is False
 
 
 @pytest.mark.asyncio

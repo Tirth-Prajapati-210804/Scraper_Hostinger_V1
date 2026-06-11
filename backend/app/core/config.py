@@ -86,6 +86,22 @@ class Settings(BaseSettings):
     # surprise skip on existing live data. Set to the deploy time (ISO-8601, e.g.
     # "2026-06-03T00:00:00Z"); leave empty to count all history.
     scrape_error_cap_since: str = ""
+    # Kayak's booking horizon: dates further out than ~330 days genuinely have no
+    # fares (probed), so rendering them burns credits to learn nothing. When set
+    # (the VPS uses 325) the scheduler skips beyond-horizon dates WITHOUT
+    # rendering; they become collectable as the horizon advances. 0 = disabled.
+    # (This env var was set on the VPS for weeks but had no Settings field, so it
+    # silently did nothing -- this wires it up for real.)
+    scrape_max_days_ahead: int = 0
+    # Two-witness accuracy enforcement. Every render already cross-checks the
+    # DOM-extracted cheapest eligible fare against Kayak's own poll JSON
+    # (dom_poll_agree in the logs; 17/17 agreement in 2026-06-10 probes). With
+    # this ON, a render whose witnesses DISAGREE gets one retry, and if they
+    # still disagree the price is NOT saved (logged as extract_failed; the date
+    # retries under the normal caps). Ship OFF first, watch dom_poll_agree in
+    # the logs for a few days, then flip on -- a route that systematically
+    # "disagrees" for a benign reason would otherwise blank out good dates.
+    scrape_enforce_poll_agreement: bool = False
     # 120s -> ScrapingBee render budget ~85s ((timeout-35)*1000, clamped). Heavy
     # ~1500-flight pages plus the smart-load gate (up to 50s) need well over the old
     # ~25s budget (timeout=60), which caused 500/timeout renders before the page
@@ -200,6 +216,7 @@ class Settings(BaseSettings):
         "scrapingbee_premium_proxy",
         "scrapingbee_stealth_proxy",
         "scrapingbee_multi_city_debug",
+        "scrape_enforce_poll_agreement",
         mode="before",
     )
     @classmethod

@@ -524,6 +524,7 @@ class FlightScheduler:
             trip_type=segment.trip_type,
             nights=segment.nights,
             return_origin=segment.return_origin,
+            extra_legs=segment.extra_legs,
         )
 
         stats["success"] += part["success"]
@@ -838,6 +839,22 @@ class FlightScheduler:
         start = max(configured_start, today)
         date_count = max(1, min(group.days_ahead, self._MAX_DATES))
         end = group.end_date or (start + timedelta(days=date_count - 1))
+        # Kayak booking-horizon cap (scrape_max_days_ahead, e.g. 325): dates beyond
+        # it genuinely have no fares, so don't even render them. The window slides
+        # forward daily, so capped dates become collectable as they enter the
+        # horizon (as long as the group is active).
+        raw_horizon = getattr(self.settings, "scrape_max_days_ahead", 0)
+        if isinstance(raw_horizon, bool) or not isinstance(raw_horizon, (int, str)):
+            horizon_days = 0  # unset/mock/garbage -> fail safe: no cap
+        else:
+            try:
+                horizon_days = int(raw_horizon)
+            except (TypeError, ValueError):
+                horizon_days = 0
+        if horizon_days > 0:
+            horizon_end = today + timedelta(days=horizon_days)
+            if end > horizon_end:
+                end = horizon_end
         if end < start:
             return []
 
@@ -943,12 +960,19 @@ class FlightScheduler:
             for depart_date, destination in no_fare_result.fetchall():
                 done_by_date.setdefault(depart_date, set()).add(destination)
 
-        # Error brake. Transient errors (provider_error / extract_failed /
-        # parse_error) get scrape_max_error_attempts tries; hard errors
-        # (rate_limited / market_mismatch) get 1 = never auto-retry. quota /
+        # Error brake. Transient errors get scrape_max_error_attempts tries; hard
+        # errors (rate_limited / market_mismatch) get 1 = never auto-retry. quota /
         # auth never reach here -- they halt the run instead, so their dates
         # stay collectable. Only errors created at/after scrape_error_cap_since
         # count, so historical rows don't trigger surprise skips on live data.
+        #
+        # IMPORTANT: 'extract_failed' and 'market_mismatch' are NOT statuses --
+        # the collector writes them as result_reason under status='no_results'
+        # (statuses are only success/no_results/quota_exhausted/auth_error/
+        # rate_limited/parse_error/provider_error). The old version matched them
+        # as statuses, which can never occur, so those dates retried EVERY cycle
+        # forever (live-confirmed 2026-06-10: the same HAN dates re-scraped
+        # hourly, 2-4 minutes + a fallback chain each time).
         max_error_attempts = int(
             getattr(self.settings, "scrape_max_error_attempts", 2) or 0
         )
@@ -964,13 +988,19 @@ class FlightScheduler:
                       AND destination = ANY(:destinations)
                       AND depart_date = ANY(:dates)
                       AND created_at >= :cap_since
-                      AND status IN (
-                        'provider_error', 'extract_failed', 'parse_error',
-                        'rate_limited', 'market_mismatch'
+                      AND (
+                        status IN ('provider_error', 'parse_error', 'rate_limited')
+                        OR (
+                          status = 'no_results'
+                          AND result_reason IN ('extract_failed', 'market_mismatch')
+                        )
                       )
                     GROUP BY depart_date, destination
                     HAVING COUNT(*) >= CASE
-                      WHEN BOOL_OR(status IN ('rate_limited', 'market_mismatch'))
+                      WHEN BOOL_OR(
+                        status = 'rate_limited'
+                        OR result_reason = 'market_mismatch'
+                      )
                       THEN 1 ELSE :max_attempts
                     END
                     """
