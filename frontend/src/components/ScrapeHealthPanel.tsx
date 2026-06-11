@@ -30,6 +30,21 @@ const STATUS_LABELS: Record<string, string> = {
   stopped: "Stopped",
 };
 
+// New errors are already stored short (backend _friendly_error), but LEGACY rows may
+// still hold a long raw ScrapingBee 500 body. Collapse those to a clean line and cap
+// length so the panel never shows the verbose "try premium_proxy ... 75 credits" blob.
+function shortenError(message: string): string {
+  const lowered = message.toLowerCase();
+  if (lowered.includes("error with your request") || lowered.includes("you will not be charged")) {
+    return "Kayak page did not render in time - will retry.";
+  }
+  if (lowered.includes("timed out") || lowered.includes("timeout")) {
+    return "Kayak render timed out - will retry.";
+  }
+  const trimmed = message.trim();
+  return trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed;
+}
+
 function outcomeLabel(log: ScrapeLogEntry): string {
   if (log.status === "success") return REASON_LABELS.success;
   if (log.status === "no_results") {
@@ -165,7 +180,7 @@ export function ScrapeHealthPanel({ groupId, health }: ScrapeHealthPanelProps) {
 
       {health?.last_error_message ? (
         <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">
-          Last error: {health.last_error_message}
+          Last error: {shortenError(health.last_error_message)}
         </p>
       ) : null}
     </div>

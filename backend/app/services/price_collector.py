@@ -100,6 +100,36 @@ def _classify_exception(exc: BaseException) -> str:
     return "provider_error"
 
 
+def _friendly_error(exc: BaseException, status: str) -> str:
+    """Short, plain-English error for the UI/logs.
+
+    Provider responses (esp. ScrapingBee's 500 body) are long and leak internal
+    advice like "try premium_proxy ... 75 credits". We never want that in the
+    dashboard, so map the raw text to a brief, user-meaningful reason. Falls back
+    to a trimmed redacted message for anything unrecognised.
+    """
+    raw = str(exc)
+    lowered = raw.lower()
+    if status == "quota_exhausted":
+        return "ScrapingBee credits exhausted - top up to resume collection."
+    if status == "auth_error":
+        return "ScrapingBee API key rejected - check the configured key."
+    if status == "rate_limited":
+        return "ScrapingBee rate limit hit - will retry shortly."
+    if status == "parse_error":
+        return "Could not read the rendered page - will retry."
+    # provider_error: the common ScrapingBee 500 / timeout family.
+    if "timed out" in lowered or "timeout" in lowered:
+        return "Kayak render timed out - will retry."
+    if "error with your request" in lowered or "you will not be charged" in lowered:
+        return "Kayak page did not render in time - will retry."
+    if "did not expose extractable" in lowered or "no result" in lowered:
+        return "Kayak returned no readable fares for this date."
+    # Unknown: keep it short and scrubbed instead of dumping the raw body.
+    cleaned = redact_text(raw).strip()
+    return (cleaned[:140] + "...") if len(cleaned) > 140 else (cleaned or "Scrape failed - will retry.")
+
+
 @dataclass
 class CollectionResult:
     origin: str
@@ -675,8 +705,11 @@ class PriceCollector:
 
                 except Exception as exc:
                     elapsed_ms = int((time.monotonic() - start) * 1000)
-                    safe_error = redact_text(str(exc))
                     status = _classify_exception(exc)
+                    # Store a SHORT, plain-English reason -- never the raw provider
+                    # body (ScrapingBee's 500 leaks long internal advice). Friendly
+                    # text is capped well under the column limit.
+                    safe_error = _friendly_error(exc, status)
 
                     errors[provider.name] = safe_error
                     if self.on_provider_failure:
@@ -691,7 +724,7 @@ class PriceCollector:
                             provider=provider.name,
                             status=status,
                             offers_found=0,
-                            error_message=safe_error[:500],
+                            error_message=safe_error[:300],
                             duration_ms=elapsed_ms,
                         )
                     )

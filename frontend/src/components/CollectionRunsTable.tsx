@@ -20,15 +20,38 @@ function formatDuration(startedAt: string, finishedAt: string | null): string {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
-function formatRunError(error: unknown): string {
-  if (typeof error === "string") return error;
+// Short, plain-English label per known run-error code. Keeps the run table clean
+// instead of dumping the long backend `detail`. The FULL detail is preserved and
+// shown on hover (title=) so nothing is lost. {n} is filled from the detail's count.
+const RUN_ERROR_LABELS: Record<string, string> = {
+  missing_fares: "{n} dates had no fare after filtering — will retry.",
+  restarted_mid_collection: "Server restarted mid-run — recovery started.",
+  superseded_by_recovery: "Superseded by an automatic recovery run.",
+  provider_unavailable: "No flight data provider available.",
+  group_not_found: "Route group not found or inactive.",
+  collection_error: "Collection error — will retry.",
+};
+
+// Returns {label, detail}: label = short text shown inline; detail = full original
+// text shown on hover. label preserves key specifics (e.g. the date count).
+function formatRunError(error: unknown): { label: string; detail: string } {
+  if (typeof error === "string") return { label: error, detail: error };
   if (error && typeof error === "object") {
     const record = error as Record<string, unknown>;
     const code = typeof record.code === "string" ? record.code : "collection_error";
     const detail = typeof record.detail === "string" ? record.detail : JSON.stringify(record);
-    return `${code}: ${detail}`;
+    let label = RUN_ERROR_LABELS[code];
+    if (label) {
+      if (label.includes("{n}")) {
+        const m = detail.match(/\d[\d,]*/);
+        label = label.replace("{n}", m ? m[0] : "Some");
+      }
+      return { label, detail: `${code}: ${detail}` };
+    }
+    return { label: detail.length > 120 ? `${detail.slice(0, 120)}…` : detail, detail };
   }
-  return String(error ?? "Unknown error");
+  const s = String(error ?? "Unknown error");
+  return { label: s, detail: s };
 }
 
 interface CollectionRunsTableProps {
@@ -137,16 +160,20 @@ export function CollectionRunsTable({
                       </button>
                       {expandedId === run.id ? (
                         <ul className="mt-1 space-y-0.5">
-                          {run.errors.map((error, errorIndex) => (
-                            <li
-                              key={errorIndex}
-                              className={`font-mono text-xs ${
-                                run.status === "partial" ? "text-amber-700" : "text-red-700"
-                              }`}
-                            >
-                              {formatRunError(error)}
-                            </li>
-                          ))}
+                          {run.errors.map((error, errorIndex) => {
+                            const { label, detail } = formatRunError(error);
+                            return (
+                              <li
+                                key={errorIndex}
+                                title={detail}
+                                className={`text-xs ${
+                                  run.status === "partial" ? "text-amber-700" : "text-red-700"
+                                }`}
+                              >
+                                {label}
+                              </li>
+                            );
+                          })}
                         </ul>
                       ) : null}
                     </div>

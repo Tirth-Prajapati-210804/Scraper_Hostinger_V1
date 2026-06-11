@@ -302,7 +302,10 @@ async def test_collect_single_date_records_parse_error_status() -> None:
     result = await collector.collect_single_date("YYZ", "NRT", DEPART, ROUTE_ID)
 
     assert result.cheapest is None
-    assert result.errors == {"searchapi": "invalid json from provider"}
+    # The stored/surfaced error is now the SHORT friendly message, not the raw
+    # provider text (which can be a long ScrapingBee blob). Status still classifies
+    # it as parse_error.
+    assert result.errors == {"searchapi": "Could not read the rendered page - will retry."}
     scrape_logs = [call.args[0] for call in session.add.call_args_list if call.args]
     assert any(getattr(log, "status", None) == "parse_error" for log in scrape_logs)
 
