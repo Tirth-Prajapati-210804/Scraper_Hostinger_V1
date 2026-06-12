@@ -169,6 +169,33 @@
 .choice:hover { border-color: var(--faint); }
 .choice.is-active { border-color: var(--accent-500); background: var(--accent-50); color: var(--accent-700); }
 
+/* Trip type — large split cards */
+.triptype { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 560px) { .triptype { grid-template-columns: 1fr; } }
+.triptype__card {
+  position: relative; display: flex; align-items: center; gap: 12px; text-align: left;
+  padding: 14px 16px; border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  background: var(--surface); cursor: pointer;
+  transition: border-color .12s, background .12s, box-shadow .12s;
+}
+.triptype__card:hover { border-color: var(--faint); }
+.triptype__card.is-active { border-color: var(--accent-500); background: var(--accent-50); box-shadow: 0 0 0 3px var(--accent-100); }
+.triptype__icon {
+  flex-shrink: 0; width: 38px; height: 38px; border-radius: var(--r-sm); display: flex; align-items: center; justify-content: center;
+  background: var(--surface-sink); color: var(--text-soft); transition: background .12s, color .12s;
+}
+.triptype__card.is-active .triptype__icon { background: var(--accent-600); color: var(--accent-contrast); }
+.triptype__txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.triptype__title { font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
+.triptype__card.is-active .triptype__title { color: var(--accent-700); }
+.triptype__desc { font-size: var(--fs-xs); color: var(--muted); line-height: 1.4; }
+.triptype__check {
+  position: absolute; top: 12px; right: 12px; width: 18px; height: 18px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center; background: var(--accent-600); color: #fff;
+  opacity: 0; transform: scale(.6); transition: opacity .12s, transform .12s;
+}
+.triptype__card.is-active .triptype__check { opacity: 1; transform: scale(1); }
+
 /* Table */
 .tbl { width: 100%; border-collapse: collapse; }
 .tbl thead th { text-align: left; font-size: var(--fs-eyebrow); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); padding: 11px 16px; background: var(--surface-soft); border-bottom: 1px solid var(--border); white-space: nowrap; }

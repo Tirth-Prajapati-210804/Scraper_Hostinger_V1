@@ -63,8 +63,18 @@ function cellTitle(iso: string, kind: CellKind, statuses: Record<string, DateSta
 
 interface MonthGroup {
   label: string;
-  days: { iso: string; kind: CellKind; isToday: boolean }[];
+  days: { iso: string; kind: CellKind; isToday: boolean; day: number }[];
 }
+
+// Cells with these statuses use a dark fill, so the day number must be white to
+// stay readable; the lighter fills keep a dark number.
+const DARK_FILL: Record<CellKind, boolean> = {
+  collected: true,
+  no_fare: false,
+  empty: true,
+  error: true,
+  pending: false,
+};
 
 export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
   const scrapedSet = useMemo(() => new Set(progress.scraped_dates), [progress.scraped_dates]);
@@ -110,7 +120,7 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
         group = { label: monthKey, days: [] };
         groups.push(group);
       }
-      group.days.push({ iso, kind: cellKindFor(iso, scrapedSet, dateStatuses), isToday });
+      group.days.push({ iso, kind: cellKindFor(iso, scrapedSet, dateStatuses), isToday, day: current.getDate() });
       current = addDays(current, 1);
     }
 
@@ -180,18 +190,21 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
           <div key={month.label}>
             <p className="mb-1.5 text-xs font-medium text-slate-500">{month.label}</p>
             <div className="flex flex-wrap gap-1">
-              {month.days.map(({ iso, kind, isToday }) => (
+              {month.days.map(({ iso, kind, isToday, day }) => (
                 <div
                   key={iso}
                   title={cellTitle(iso, kind, dateStatuses)}
                   className={[
-                    "h-4 w-4 rounded-[4px] transition-colors",
+                    "flex h-6 w-6 items-center justify-center rounded-[5px] text-[10px] font-semibold tabular-nums transition-colors",
                     CELL_STYLE[kind],
+                    DARK_FILL[kind] ? "text-white" : "text-slate-700",
                     isToday ? "ring-2 ring-amber-400 ring-offset-1" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
-                />
+                >
+                  {day}
+                </div>
               ))}
             </div>
           </div>

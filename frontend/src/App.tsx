@@ -4,6 +4,7 @@ import { BrowserRouter, Outlet, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./context/AuthContext";
+import { SidebarProvider } from "./context/SidebarContext";
 import { ToastProvider } from "./context/ToastContext";
 
 const LoginPage = lazy(() =>
@@ -60,6 +61,7 @@ export default function App() {
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
+          <SidebarProvider>
           <ToastProvider>
             <Suspense fallback={<PageFallback />}>
               <Routes>
@@ -84,6 +86,7 @@ export default function App() {
               </Routes>
             </Suspense>
           </ToastProvider>
+          </SidebarProvider>
         </AuthProvider>
       </QueryClientProvider>
     </BrowserRouter>

@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 import { useLocation, useMatch } from "react-router-dom";
+import { useSidebar } from "../../context/SidebarContext";
 import { Sidebar } from "./Sidebar";
 
 function usePageTitle(): string {
@@ -21,11 +22,16 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   usePageTitle();
+  const { collapsed } = useSidebar();
 
   return (
     <div className="flex min-h-screen overflow-x-hidden bg-transparent">
       <Sidebar />
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:pl-[220px]">
+      <div
+        className={`flex min-h-screen min-w-0 flex-1 flex-col transition-[padding] duration-200 ${
+          collapsed ? "lg:pl-[68px]" : "lg:pl-[220px]"
+        }`}
+      >
         <main className="min-w-0 flex-1 overflow-x-hidden px-4 pb-6 pt-6 sm:px-6 lg:overflow-y-auto lg:px-9 lg:pb-8 lg:pt-8">
           {children}
         </main>
