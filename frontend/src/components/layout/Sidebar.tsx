@@ -37,7 +37,7 @@ export function Sidebar() {
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[220px] shrink-0 border-r border-[#E8ECF4] bg-white lg:flex lg:flex-col">
       <div className="border-b border-[#E8ECF4] px-5 pb-4 pt-5">
         <div className="flex items-center gap-[10px]">
-          <div className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-gradient-to-br from-brand-600 to-violet-600">
+          <div className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-brand-600">
             <Plane className="h-[15px] w-[15px] text-white" />
           </div>
 

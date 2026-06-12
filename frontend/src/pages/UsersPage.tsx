@@ -329,7 +329,7 @@ export function UsersPage() {
                     <tr key={user.id} className="border-b border-slate-100 transition hover:bg-slate-50">
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-50 text-xs font-bold text-brand-700">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand-700">
                             {initials(user.full_name)}
                           </div>
                           <div className="font-medium text-slate-900">
@@ -347,7 +347,7 @@ export function UsersPage() {
                         <span
                           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${
                             isAdmin
-                              ? "border border-violet-200 bg-violet-50 text-violet-700"
+                              ? "border border-brand-200 bg-brand-50 text-brand-700"
                               : "border border-slate-200 bg-slate-50 text-slate-600"
                           }`}
                         >

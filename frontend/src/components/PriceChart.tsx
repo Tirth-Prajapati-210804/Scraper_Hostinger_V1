@@ -59,8 +59,8 @@ export function PriceChart({ data }: PriceChartProps) {
         <AreaChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
           <defs>
             <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.22} />
-              <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
+              <stop offset="5%" stopColor="#3C5681" stopOpacity={0.22} />
+              <stop offset="95%" stopColor="#3C5681" stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -79,7 +79,7 @@ export function PriceChart({ data }: PriceChartProps) {
           <Area
             type="monotone"
             dataKey="price"
-            stroke="#4f46e5"
+            stroke="#3C5681"
             strokeWidth={2}
             fill="url(#priceGradient)"
             dot={false}

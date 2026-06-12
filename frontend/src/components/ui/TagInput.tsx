@@ -154,7 +154,7 @@ export function TagInput({
           {value.map((tag) => (
             <span
               key={tag}
-              className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-brand-700"
+              className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700"
             >
               {tag}
               <button
@@ -196,7 +196,7 @@ export function TagInput({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => addSuggestion(suggestion)}
               className={`flex w-full items-start justify-between gap-3 rounded-[10px] px-3 py-2 text-left transition ${
-                index === highlightedIndex ? "bg-indigo-50" : "hover:bg-slate-50"
+                index === highlightedIndex ? "bg-brand-50" : "hover:bg-slate-50"
               }`}
             >
                 <div>

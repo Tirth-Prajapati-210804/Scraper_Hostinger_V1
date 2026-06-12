@@ -241,7 +241,7 @@ export function PriceTable({
                 >
                   <td className="whitespace-nowrap px-6 py-3 text-slate-700">{formatDisplayDate(price.depart_date)}</td>
                   <td className="whitespace-nowrap px-6 py-3 font-medium text-slate-800">
-                    <span className="rounded-md bg-indigo-50 px-2 py-1 font-mono text-xs font-semibold text-brand-700">
+                    <span className="rounded-md bg-brand-50 px-2 py-1 font-mono text-xs font-semibold text-brand-700">
                       {price.origin}
                     </span>
                   </td>

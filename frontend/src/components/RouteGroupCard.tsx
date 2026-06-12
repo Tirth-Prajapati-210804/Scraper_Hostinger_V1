@@ -141,13 +141,13 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
                 {progress.coverage_percent.toFixed(1)}%
               </span>
             </div>
-            <div className="h-1 overflow-hidden rounded-full bg-[#EEF2FF]">
+            <div className="h-1 overflow-hidden rounded-full bg-[#DBE3F0]">
               <div
                 className="h-full rounded-full transition-[width] duration-300"
                 style={{
                   width: `${coveragePct}%`,
                   background:
-                    coveragePct > 90 ? "linear-gradient(90deg,#4B5EDE,#7C3AED)" : "#F59E0B",
+                    coveragePct > 90 ? "linear-gradient(90deg,#4A689B,#3C5681)" : "#F59E0B",
                 }}
               />
             </div>

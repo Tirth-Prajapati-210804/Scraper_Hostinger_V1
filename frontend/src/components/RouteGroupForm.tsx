@@ -3,9 +3,7 @@ import {
   ArrowLeftRight,
   CircleHelp,
   Minus,
-  Plane,
   Plus,
-  Search,
 } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
@@ -18,6 +16,7 @@ import { Button } from "./ui/Button";
 import { Modal } from "./ui/Modal";
 import { Select } from "./ui/Select";
 import { TagInput } from "./ui/TagInput";
+import { Icon } from "./ds";
 
 interface RouteGroupFormProps {
   open: boolean;
@@ -90,9 +89,10 @@ const TRIP_TYPES: Array<{
   id: UiTripType;
   label: string;
   description: string;
+  icon: string;
 }> = [
-  { id: "roundtrip", label: "Round Trip", description: "Outbound + auto-return" },
-  { id: "multicity", label: "Multi-city", description: "Open-jaw itinerary" },
+  { id: "roundtrip", label: "Round trip", description: "Out and back from the same origin airports.", icon: "swap" },
+  { id: "multicity", label: "Multi-city · open-jaw", description: "Return from a different airport than you landed at.", icon: "layers" },
 ];
 const MAX_LEG_DURATION_OPTIONS = [
   { label: "Any", value: "" },
@@ -284,10 +284,10 @@ function buildInitialManualState(initial?: RouteGroup | null): ManualState {
 
 function FieldLabel({ children, hint }: { children: ReactNode; hint?: string }) {
   return (
-    <div className="mb-2 flex items-center gap-1.5 text-[13px] font-medium text-[#3f4e6e]">
+    <div className="field__label">
       <span>{children}</span>
       {hint ? (
-        <span title={hint} className="text-[#97a4bb]">
+        <span title={hint} style={{ color: "var(--muted)", display: "flex" }}>
           <CircleHelp className="h-3.5 w-3.5" />
         </span>
       ) : null}
@@ -299,7 +299,7 @@ function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className={`h-[50px] w-full rounded-2xl border border-[#dfe6f0] bg-white px-4 text-[15px] text-[#0f172a] outline-none transition placeholder:text-[#9ba8bf] focus:border-brand-500 ${props.className ?? ""}`}
+      className={`ds-input ${props.className ?? ""}`}
     />
   );
 }
@@ -310,7 +310,7 @@ function SelectInput(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
       value={props.value as string}
       disabled={props.disabled}
       onChange={(event) => props.onChange?.(event as unknown as React.ChangeEvent<HTMLSelectElement>)}
-      className={`h-[50px] border-[#dfe6f0] px-4 text-[15px] text-[#0f172a] focus:border-brand-500 ${props.className ?? ""}`}
+      className={`h-[38px] rounded-[8px] border-[#DCE3EC] px-3 text-[13px] text-[#0F172A] focus:border-brand-500 ${props.className ?? ""}`}
     >
       {props.children}
     </Select>
@@ -336,33 +336,33 @@ function StepperField({
   const bounded = max ? Math.min(numeric, max) : numeric;
 
   return (
-    <div>
+    <div className="field">
       <FieldLabel>{label}</FieldLabel>
-      <div className="flex h-[50px] items-center overflow-hidden rounded-2xl border border-[#dfe6f0] bg-white">
+      <div className="flex h-[38px] items-center overflow-hidden rounded-[8px] border border-[#DCE3EC] bg-white">
         <button
           type="button"
           onClick={() => onChange(String(Math.max(min, numeric - 1)))}
-          className="flex h-full w-12 items-center justify-center text-[#6b7a93] transition hover:bg-slate-50"
+          className="flex h-full w-[38px] items-center justify-center text-[#64748B] transition hover:bg-slate-50"
         >
-          <Minus className="h-4 w-4" />
+          <Minus className="h-[15px] w-[15px]" />
         </button>
-        <div className="flex flex-1 items-center justify-center gap-1 text-[16px] font-semibold text-[#0f172a]">
+        <div className="flex flex-1 items-center justify-center gap-1 border-x border-[#E7ECF3]">
           <input
             type="text"
             inputMode="numeric"
             value={value}
             onChange={(event) => onChange(event.target.value.replace(/\D/g, ""))}
             onBlur={() => onChange(String(bounded))}
-            className="w-20 border-0 bg-transparent text-center text-[16px] font-semibold text-[#0f172a] outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0"
+            className="w-[50px] border-0 bg-transparent text-center text-[14px] font-semibold text-[#0F172A] outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0"
           />
-          {suffix ? <span className="text-[13px] font-medium text-[#7b89a3]">{suffix}</span> : null}
+          {suffix ? <span className="text-[12px] font-medium text-[#94A3B8]">{suffix}</span> : null}
         </div>
         <button
           type="button"
           onClick={() => onChange(String(max ? Math.min(max, numeric + 1) : numeric + 1))}
-          className="flex h-full w-12 items-center justify-center text-[#6b7a93] transition hover:bg-slate-50"
+          className="flex h-full w-[38px] items-center justify-center text-[#64748B] transition hover:bg-slate-50"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-[15px] w-[15px]" />
         </button>
       </div>
     </div>
@@ -377,9 +377,9 @@ function TripTypeSelector({
   onChange: (value: UiTripType) => void;
 }) {
   return (
-    <div className="space-y-3">
-      <FieldLabel>Trip Type</FieldLabel>
-      <div className="grid gap-3 sm:grid-cols-3">
+    <div className="field">
+      <span className="field__label">Trip type</span>
+      <div className="triptype">
         {TRIP_TYPES.map((type) => {
           const active = value === type.id;
           return (
@@ -387,14 +387,18 @@ function TripTypeSelector({
               key={type.id}
               type="button"
               onClick={() => onChange(type.id)}
-              className={`rounded-2xl border px-4 py-4 text-left transition ${
-                active
-                  ? "border-brand-500 bg-[#edf2ff] text-brand-700 shadow-[0_18px_38px_-32px_rgba(59,130,246,0.55)]"
-                  : "border-[#e1e8f1] bg-white text-[#12203f] hover:border-[#ccd8ea]"
-              }`}
+              className={`triptype__card${active ? " is-active" : ""}`}
             >
-              <div className="text-[16px] font-semibold">{type.label}</div>
-              <div className="mt-1 text-[13px] text-[#7c8aa5]">{type.description}</div>
+              <span className="triptype__icon">
+                <Icon name={type.icon} size={18} />
+              </span>
+              <span className="triptype__txt">
+                <span className="triptype__title">{type.label}</span>
+                <span className="triptype__desc">{type.description}</span>
+              </span>
+              <span className="triptype__check">
+                <Icon name="check" size={13} />
+              </span>
             </button>
           );
         })}
@@ -417,43 +421,33 @@ function AirportField({
   hint: string;
 }) {
   return (
-    <div>
-      <div className="mb-2 flex items-center justify-between">
-        <FieldLabel>{label}</FieldLabel>
-        <span className="text-[12px] font-medium text-brand-600">Add multiple</span>
-      </div>
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-4 top-4 h-4 w-4 text-[#a0aec4]" />
-        <TagInput
-          value={value}
-          onChange={onChange}
-          placeholder={placeholder}
-          hint={hint}
-          className="pl-9"
-        />
-      </div>
+    <div className="field">
+      <FieldLabel hint={hint}>{label}</FieldLabel>
+      <TagInput
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        hint={hint}
+      />
     </div>
   );
 }
 
-function RoutePanel({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+/** Redesigned section: an uppercase eyebrow label over a top border, content
+ * stacked beneath (matches the .redesign create-group form). */
+function FormSection({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <section className="rounded-[24px] border border-[#e4ebf4] bg-white p-5 shadow-[0_24px_60px_-48px_rgba(15,23,42,0.28)]">
-      <div className="mb-5 flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#edf2ff] text-brand-600">
-          <Plane className="h-4 w-4" />
-        </div>
-        <h3 className="text-[18px] font-semibold text-[#111b37]">{title}</h3>
-      </div>
-      <div className="space-y-5">{children}</div>
+    <section className="stack-4" style={{ paddingTop: 20, borderTop: "1px solid var(--border)" }}>
+      <div className="eyebrow">{label}</div>
+      {children}
     </section>
   );
+}
+
+// RoutePanel is the legacy name still used by the leg layout; keep it as a thin
+// alias of FormSection so existing call sites render in the new design.
+function RoutePanel({ title, children }: { title: string; children: ReactNode }) {
+  return <FormSection label={title}>{children}</FormSection>;
 }
 
 function ConnectionSelector({
@@ -464,28 +458,21 @@ function ConnectionSelector({
   onChange: (value: StopModeId) => void;
 }) {
   return (
-    <div>
-      <FieldLabel hint="Use an exact stop count to control which itineraries are collected.">
-        Connections
+    <div className="field">
+      <FieldLabel hint="Max stops per leg. Use an exact count to control which itineraries are collected.">
+        Stops
       </FieldLabel>
-      <div className="flex flex-wrap gap-2">
-        {STOP_MODE_OPTIONS.map((option) => {
-          const active = value === option.id;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => onChange(option.id)}
-              className={`rounded-2xl border px-4 py-2.5 text-[14px] font-medium transition ${
-                active
-                  ? "border-brand-500 bg-[#edf2ff] text-brand-700"
-                  : "border-[#dfe6f0] bg-white text-[#52637f] hover:border-[#cad5e7]"
-              }`}
-            >
-              {option.label}
-            </button>
-          );
-        })}
+      <div className="ds-row ds-wrap ds-gap-2">
+        {STOP_MODE_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onChange(option.id)}
+            className={`choice${value === option.id ? " is-active" : ""}`}
+          >
+            {option.label}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -499,21 +486,21 @@ function SameAirlineToggle({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-[24px] border border-[#dfe6f0] bg-[#f8fbff] px-5 py-4 text-[14px] text-[#47556f]">
+    <label
+      className="ds-row ds-gap-3 ds-start"
+      style={{ background: "var(--surface-soft)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "12px 14px", cursor: "pointer" }}
+    >
       <input
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         className="mt-0.5 h-4 w-4 rounded border-[#c7d2e4] text-brand-600"
       />
-      <span>
-        <span className="block font-medium text-[#12203f]">Same airline only</span>
-        <span className="mt-1 block text-[13px] leading-6 text-[#7b8aa4]">
-          ON: only itineraries flown by ONE airline on every leg qualify, and the
-          cheapest of those is saved. OFF: the cheapest itinerary is saved
-          regardless of airline mix. Changing this on an existing group clears its
-          collected data (the qualifying fares change completely).
-        </span>
+      <span style={{ fontSize: 13, color: "var(--text-soft)" }}>
+        <b style={{ color: "var(--ink)", fontWeight: 600 }}>Same airline only</b> — only
+        itineraries flown by ONE airline on every leg qualify, and the cheapest of those is
+        saved. Off saves the cheapest itinerary regardless of airline mix. Changing this on an
+        existing group clears its collected data.
       </span>
     </label>
   );
@@ -527,35 +514,29 @@ function MaxLayoverSelector({
   onChange: (value: string) => void;
 }) {
   return (
-    <div>
+    <div className="field">
       <FieldLabel hint="Caps the halt/layover time at each stop. A halt longer than this is excluded as impractical. Applied by Kayak before results load.">
-        Max Layover
+        Max layover
       </FieldLabel>
-      <div className="flex flex-wrap items-center gap-2">
-        {MAX_LAYOVER_OPTIONS.map((option) => {
-          const active = value === option.value;
-          return (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => onChange(option.value)}
-              className={`h-10 rounded-2xl border px-4 text-[14px] font-medium transition ${
-                active
-                  ? "border-brand-500 bg-[#edf2ff] text-brand-700"
-                  : "border-[#dfe6f0] bg-white text-[#52637f] hover:border-[#cad5e7]"
-              }`}
-            >
-              {option.label}
-            </button>
-          );
-        })}
+      <div className="ds-row ds-wrap ds-gap-2">
+        {MAX_LAYOVER_OPTIONS.map((option) => (
+          <button
+            key={option.label}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`choice${value === option.value ? " is-active" : ""}`}
+          >
+            {option.label}
+          </button>
+        ))}
         <input
           type="text"
           inputMode="numeric"
           value={value}
           onChange={(event) => onChange(event.target.value.replace(/\D/g, ""))}
           placeholder="Custom hours"
-          className="h-10 w-36 rounded-2xl border border-[#dfe6f0] bg-white px-4 text-[14px] text-[#0f172a] outline-none placeholder:text-[#9ba8bf] focus:border-brand-500"
+          className="ds-input"
+          style={{ width: 130 }}
         />
       </div>
     </div>
@@ -570,35 +551,29 @@ function MaxLegDurationSelector({
   onChange: (value: string) => void;
 }) {
   return (
-    <div>
+    <div className="field">
       <FieldLabel hint="Filters each flight leg independently. Round trips are not added together.">
-        Max Leg Duration
+        Max leg duration
       </FieldLabel>
-      <div className="flex flex-wrap items-center gap-2">
-        {MAX_LEG_DURATION_OPTIONS.map((option) => {
-          const active = value === option.value;
-          return (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => onChange(option.value)}
-              className={`h-10 rounded-2xl border px-4 text-[14px] font-medium transition ${
-                active
-                  ? "border-brand-500 bg-[#edf2ff] text-brand-700"
-                  : "border-[#dfe6f0] bg-white text-[#52637f] hover:border-[#cad5e7]"
-              }`}
-            >
-              {option.label}
-            </button>
-          );
-        })}
+      <div className="ds-row ds-wrap ds-gap-2">
+        {MAX_LEG_DURATION_OPTIONS.map((option) => (
+          <button
+            key={option.label}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`choice${value === option.value ? " is-active" : ""}`}
+          >
+            {option.label}
+          </button>
+        ))}
         <input
           type="text"
           inputMode="numeric"
           value={value}
           onChange={(event) => onChange(event.target.value.replace(/\D/g, ""))}
           placeholder="Custom hours"
-          className="h-10 w-36 rounded-2xl border border-[#dfe6f0] bg-white px-4 text-[14px] text-[#0f172a] outline-none placeholder:text-[#9ba8bf] focus:border-brand-500"
+          className="ds-input"
+          style={{ width: 130 }}
         />
       </div>
     </div>
@@ -786,47 +761,31 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
       title={isEditing ? "Edit Route Group" : "Create Route Group"}
       eyebrow="Route Groups"
       size="xl"
-      className="max-w-[1120px] rounded-[30px] border-[#e5ebf3] shadow-[0_40px_120px_-70px_rgba(15,23,42,0.45)]"
-      headerClassName="px-7 pb-4 pt-6"
-      bodyClassName="px-7 pb-7 pt-6"
-      titleClassName="text-[22px] font-bold text-[#111b37]"
-      closeButtonClassName="h-11 w-11 rounded-2xl border-[#dfe6f0] text-[#60708d]"
+      className="max-w-[720px] rounded-[16px] border-[#E7ECF3] shadow-[0_40px_120px_-70px_rgba(15,23,42,0.45)]"
+      headerClassName="px-6 pb-4 pt-5"
+      bodyClassName="px-6 pb-6 pt-5"
+      titleClassName="text-[18px] font-bold text-[#0F172A]"
+      closeButtonClassName="h-10 w-10 rounded-[8px] border-[#DCE3EC] text-[#64748B]"
     >
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <p className="-mt-2 text-[15px] text-[#6f809f]">
-          Configure a new route group for price collection.
-        </p>
-
-        <div className="grid gap-5 md:grid-cols-2">
-          <div>
-            <FieldLabel>Route Group Name</FieldLabel>
+      <form onSubmit={handleSubmit} className="stack-5">
+        {/* Basics */}
+        <div className="stack-4">
+          <div className="field">
+            <FieldLabel hint="Auto-generated from the route if left blank.">Group name</FieldLabel>
             <TextInput
               value={state.groupName}
               onChange={(e) => setState((current) => ({ ...current, groupName: e.target.value }))}
-              placeholder="e.g. Europe Routes"
+              placeholder="e.g. UK -> Europe Sun"
             />
-            <p className="mt-2 text-[12px] text-[#92a0b7]">
-              A descriptive name for this route group.
-            </p>
           </div>
 
-          <div>
-            <FieldLabel>Data Provider</FieldLabel>
-            <SelectInput value="scrapingbee" disabled>
-              <option value="scrapingbee">Scrapingbee</option>
-            </SelectInput>
-            <p className="mt-2 text-[12px] text-[#92a0b7]">
-              The provider that will fetch the data.
-            </p>
-          </div>
+          <TripTypeSelector
+            value={state.tripType}
+            onChange={(tripType) => setState((current) => ({ ...current, tripType }))}
+          />
         </div>
 
-        <TripTypeSelector
-          value={state.tripType}
-          onChange={(tripType) => setState((current) => ({ ...current, tripType }))}
-        />
-
-        <div className="grid gap-5 xl:grid-cols-2">
+        <div className="grid gap-5">
           <RoutePanel title="Outbound Leg">
             <AirportField
               label="From (Origin Airport)"
@@ -1012,26 +971,8 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
           )}
         </div>
 
-        <div className="grid gap-5 xl:grid-cols-[0.9fr_1.2fr_1fr_1fr]">
-          <StepperField
-            label="Booking Window (Days)"
-            value={state.days}
-            max={730}
-            onChange={(days) =>
-              setState((current) => {
-                const parsedDays = parsePositiveInt(days, 1);
-                const startDate = current.startDate || todayIso();
-                return {
-                  ...current,
-                  days,
-                  startDate,
-                  endDate: addDaysIso(startDate, Math.min(parsedDays, 730) - 1),
-                };
-              })
-            }
-          />
-
-          <div className="grid gap-4 md:grid-cols-2">
+        <FormSection label="Schedule & market">
+          <div className="grid gap-4 md:grid-cols-3">
             <div>
               <FieldLabel>Travel Window From</FieldLabel>
               <TextInput
@@ -1081,37 +1022,57 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                 }
               />
             </div>
+            <StepperField
+              label="Booking Window (Days)"
+              value={state.days}
+              max={730}
+              onChange={(days) =>
+                setState((current) => {
+                  const parsedDays = parsePositiveInt(days, 1);
+                  const startDate = current.startDate || todayIso();
+                  return {
+                    ...current,
+                    days,
+                    startDate,
+                    endDate: addDaysIso(startDate, Math.min(parsedDays, 730) - 1),
+                  };
+                })
+              }
+            />
           </div>
 
-          <div>
-            <FieldLabel>Market</FieldLabel>
-            <SelectInput
-              value={state.market}
-              onChange={(e) => setState((current) => ({ ...current, market: e.target.value as RouteMarket }))}
-            >
-              {MARKETS.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </SelectInput>
-          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <FieldLabel>Market</FieldLabel>
+              <SelectInput
+                value={state.market}
+                onChange={(e) => setState((current) => ({ ...current, market: e.target.value as RouteMarket }))}
+              >
+                {MARKETS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </SelectInput>
+            </div>
 
-          <div>
-            <FieldLabel>Currency</FieldLabel>
-            <SelectInput
-              value={state.currency}
-              onChange={(e) => setState((current) => ({ ...current, currency: e.target.value }))}
-            >
-              {CURRENCIES.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </SelectInput>
+            <div>
+              <FieldLabel>Currency</FieldLabel>
+              <SelectInput
+                value={state.currency}
+                onChange={(e) => setState((current) => ({ ...current, currency: e.target.value }))}
+              >
+                {CURRENCIES.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </SelectInput>
+            </div>
           </div>
-        </div>
+        </FormSection>
 
+        <FormSection label="Fare filters">
         <ConnectionSelector
           value={state.stops}
           onChange={(stops) => setState((current) => ({ ...current, stops }))}
@@ -1131,9 +1092,10 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
           value={state.maxLegDurationHours}
           onChange={(maxLegDurationHours) => setState((current) => ({ ...current, maxLegDurationHours }))}
         />
+        </FormSection>
 
         {isEditing ? (
-          <label className="flex items-center gap-3 rounded-2xl border border-[#dfe6f0] bg-[#f8fbff] px-4 py-3 text-[14px] text-[#47556f]">
+          <label className="flex items-center gap-3 rounded-[8px] border border-[#E7ECF3] bg-[#F8FAFC] px-4 py-3 text-[13px] text-[#64748B]">
             <input
               type="checkbox"
               checked={state.isActive}
@@ -1145,33 +1107,33 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         ) : null}
 
         {error ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="rounded-[8px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
             {error}
           </div>
         ) : null}
 
-        <div className="flex flex-col gap-3 border-t border-[#e8edf5] pt-5 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[13px] text-[#92a0b7]">
+        <div className="flex flex-col gap-3 border-t border-[#E7ECF3] pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[12px] text-[#94A3B8]">
             {state.tripType === "multicity"
               ? "One matching multi-city itinerary is saved per date using the cheapest valid fare."
-              : "Airport codes can be added manually or chosen from the location suggestions."}
+              : "Cheapest valid same-airline fare is saved per date."}
           </p>
-          <div className="flex gap-3 self-end">
+          <div className="flex gap-2 self-end">
             <Button
               type="button"
               variant="secondary"
               onClick={onClose}
-              className="h-12 rounded-2xl px-6 text-[15px]"
+              className="h-9 rounded-[8px] px-4 text-[13px]"
             >
               Cancel
             </Button>
             <Button
               type="submit"
               loading={saving}
-              className="h-12 rounded-2xl px-6 text-[15px] font-semibold shadow-[0_18px_44px_-30px_rgba(37,99,235,0.8)]"
+              className="h-9 rounded-[8px] px-4 text-[13px] font-semibold"
             >
-              <Plus className="h-4 w-4" />
-              {isEditing ? "Save Route Group" : "Create Route Group"}
+              <Plus className="h-[15px] w-[15px]" />
+              {isEditing ? "Save changes" : "Create group"}
             </Button>
           </div>
         </div>

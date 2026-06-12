@@ -39,12 +39,12 @@ export function LoginPage() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#f6f8fc]">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.10),_transparent_36%),radial-gradient(circle_at_bottom,_rgba(99,102,241,0.06),_transparent_34%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(74,104,155,0.10),_transparent_36%),radial-gradient(circle_at_bottom,_rgba(60,86,129,0.06),_transparent_34%)]" />
 
       <header className="relative z-10 border-b border-[#e8ecf4] bg-white/85 backdrop-blur-sm">
         <div className="flex h-[102px] items-center px-8">
           <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#edf2ff] text-brand-600 shadow-[0_20px_40px_-32px_rgba(59,130,246,0.55)]">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#EEF2F8] text-brand-600 shadow-[0_20px_40px_-32px_rgba(60,86,129,0.55)]">
               <Plane className="h-7 w-7" />
             </div>
             <div className="text-[19px] font-bold tracking-[-0.02em] text-[#0f172a]">
@@ -57,7 +57,7 @@ export function LoginPage() {
       <main className="relative z-10 flex min-h-[calc(100vh-102px)] flex-col items-center justify-center px-6 py-14">
         <div className="w-full max-w-[510px] rounded-[28px] border border-[#e7ebf3] bg-white px-9 py-10 shadow-[0_28px_90px_-54px_rgba(15,23,42,0.35)]">
           <div className="mb-8 flex flex-col items-center text-center">
-            <div className="mb-8 flex h-[68px] w-[68px] items-center justify-center rounded-3xl bg-[#edf2ff] text-brand-600 shadow-[0_20px_40px_-32px_rgba(59,130,246,0.45)]">
+            <div className="mb-8 flex h-[68px] w-[68px] items-center justify-center rounded-3xl bg-[#EEF2F8] text-brand-600 shadow-[0_20px_40px_-32px_rgba(60,86,129,0.45)]">
               <Plane className="h-8 w-8" />
             </div>
             <h1 className="text-[31px] font-bold tracking-[-0.03em] text-[#0f172a]">

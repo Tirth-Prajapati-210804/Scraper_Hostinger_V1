@@ -179,7 +179,10 @@ export function ScrapeHealthPanel({ groupId, health }: ScrapeHealthPanelProps) {
       )}
 
       {health?.last_error_message ? (
-        <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">
+        <p
+          title={health.last_error_message}
+          className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600"
+        >
           Last error: {shortenError(health.last_error_message)}
         </p>
       ) : null}

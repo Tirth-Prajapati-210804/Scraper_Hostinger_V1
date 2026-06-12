@@ -27,3 +27,11 @@ _babel.js
 certs/
 *.pem
 *.key
+
+# Scratch / working files (not part of the app)
+design-preview.html
+TASK_HANDOFF.md
+FRONTEND_REVAMP_PLAN.md
+CODEX_TASK_scraper_accuracy.md
+backend/scripts/probe_*.py
+backend/kayak_*.png

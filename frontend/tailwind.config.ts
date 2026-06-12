@@ -5,17 +5,21 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Slate accent ramp (matches the .redesign design system). Remapping
+        // `brand` re-skins every brand-* usage app-wide to the redesign accent.
+        // 50/100/200/500/600/700 are the prototype's exact tokens; 300/400/800/900
+        // are interpolated to keep all Tailwind shades valid.
         brand: {
-          50: "#eff6ff",
-          100: "#dbeafe",
-          200: "#bfdbfe",
-          300: "#93c5fd",
-          400: "#60a5fa",
-          500: "#3b82f6",
-          600: "#2563eb",
-          700: "#1d4ed8",
-          800: "#1e40af",
-          900: "#1e3a8a",
+          50: "#EEF2F8",
+          100: "#DBE3F0",
+          200: "#C0CDE2",
+          300: "#9DB0CE",
+          400: "#7389AE",
+          500: "#4A689B",
+          600: "#3C5681",
+          700: "#314869",
+          800: "#283A55",
+          900: "#1F2D42",
         },
       },
       fontFamily: {

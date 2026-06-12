@@ -33,6 +33,10 @@ const UsersPage = lazy(() =>
 const NotFoundPage = lazy(() =>
   import("./pages/NotFoundPage").then((m) => ({ default: m.NotFoundPage })),
 );
+// Scratch: design preview of the redesigned route-group form (not wired).
+const DesignPreviewPage = lazy(() =>
+  import("./pages/DesignPreviewPage").then((m) => ({ default: m.DesignPreviewPage })),
+);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -74,6 +78,7 @@ export default function App() {
                   <Route path="/explorer" element={<DataExplorerPage />} />
                   <Route path="/logs" element={<CollectionLogsPage />} />
                   <Route path="/users" element={<UsersPage />} />
+                  <Route path="/design-preview" element={<DesignPreviewPage />} />
                 </Route>
                 <Route path="*" element={<NotFoundPage />} />
               </Routes>
