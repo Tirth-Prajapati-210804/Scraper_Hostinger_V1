@@ -37,10 +37,10 @@ _GENERIC_MULTI_AIRLINE_LABELS = {
 
 def _derive_return_date(depart_date: date, nights: int) -> date:
     """
-    Return on the day after the final night at destination.
-    Depart Apr 1 + 12 nights = Apr 14 (sleep Apr 1-12 nights, fly home on Apr 14).
+    Return after the configured number of nights at destination.
+    Depart Apr 1 + 12 nights = Apr 13.
     """
-    return depart_date + timedelta(days=max(1, nights + 1))
+    return depart_date + timedelta(days=max(1, nights))
 
 
 def _build_multi_city_legs(
@@ -58,8 +58,8 @@ def _build_multi_city_legs(
     nights_before days after the previous flight (client-validated example:
     LON-KEF 01 Jul + 2 nights -> KEF-YYZ 03 Jul; +2 nights Toronto +3 nights
     New York = 5 -> NYC-LON 08 Jul). An empty extra-leg destination means
-    "back to the group origin". Without extra_legs this reproduces the legacy
-    2-leg open-jaw exactly (which keeps its historical +nights+1 rule).
+    "back to the group origin". Without extra_legs this uses the same nights
+    offset as round trips.
     """
     legs: list[dict[str, object]] = [
         {"departure_id": origin, "arrival_id": destination, "outbound_date": depart_date},

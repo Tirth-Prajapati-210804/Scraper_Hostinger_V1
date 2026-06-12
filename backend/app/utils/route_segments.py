@@ -52,9 +52,8 @@ def _group_extra_legs(group) -> list[ExtraLeg]:
         return legs
 
     # Legacy 2-leg open-jaw: special_sheets[0].origin -> back to the group
-    # origin. Legacy groups use the historical return rule (depart + nights + 1),
-    # so under the new "exact day offset" semantics that is nights_before =
-    # nights + 1 -- keeps every existing group's dates byte-identical.
+    # origin. nights_before uses the configured nights value directly, matching
+    # the round-trip return-date calculation.
     return_origin = None
     if group.special_sheets:
         return_origin = _clean_code(group.special_sheets[0].get("origin")) or None
@@ -64,7 +63,7 @@ def _group_extra_legs(group) -> list[ExtraLeg]:
         ExtraLeg(
             origin=return_origin,
             destination="",
-            nights_before=max(1, int(group.nights or 1)) + 1,
+            nights_before=max(1, int(group.nights or 1)),
         )
     ]
 

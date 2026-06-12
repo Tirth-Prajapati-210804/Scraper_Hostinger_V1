@@ -239,10 +239,8 @@ function buildInitialExtraLegs(initial?: RouteGroup | null): UiExtraLeg[] {
   }
   const returnSheet = initial?.special_sheets?.[0];
   if (returnSheet) {
-    // Legacy 2-leg group: its return rule is depart + nights + 1, while leg
-    // nights are EXACT day offsets -- synthesize nights+1 so converting the
-    // group keeps identical dates.
-    return [{ origin: returnSheet.origin, destination: "", nights: String((initial?.nights ?? 10) + 1) }];
+    // Legacy 2-leg group: leg nights use the configured stay length directly.
+    return [{ origin: returnSheet.origin, destination: "", nights: String(initial?.nights ?? 10) }];
   }
   return [{ origin: "", destination: "", nights: "10" }];
 }
@@ -693,7 +691,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
           cleanedLegs.length === 1 &&
           !cleanedLegs[0].destination &&
           cleanedLegs[0].origin === (initial.special_sheets?.[0]?.origin ?? "").toUpperCase() &&
-          cleanedLegs[0].nights_before === initial.nights + 1;
+          cleanedLegs[0].nights_before === initial.nights;
 
         if (isLegacyShape) {
           // Unchanged legacy 2-leg group: keep the legacy shape so a no-op edit

@@ -78,9 +78,9 @@ export function RouteGroupDetailPage() {
       : null;
   // Days from depart to the FINAL homebound flight: leg nights are EXACT day
   // offsets (nights between legs), so the total shift is their sum. PriceTable
-  // renders return date as depart + nights + 1, so pass shift - 1.
+  // renders return date as depart + nights.
   const effectiveNights = chainLegs?.length
-    ? chainLegs.reduce((days, leg) => days + leg.nights_before, 0) - 1
+    ? chainLegs.reduce((days, leg) => days + leg.nights_before, 0)
     : (group?.nights ?? 0);
 
   const trendQuery = useQuery({

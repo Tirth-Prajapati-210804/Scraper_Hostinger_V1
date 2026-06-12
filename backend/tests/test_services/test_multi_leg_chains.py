@@ -67,7 +67,7 @@ def test_legacy_two_leg_chain_unchanged() -> None:
     )
     assert legs == [
         {"departure_id": "YEG", "arrival_id": "HAN", "outbound_date": date(2026, 7, 2)},
-        {"departure_id": "SAI", "arrival_id": "YEG", "outbound_date": date(2026, 7, 17)},
+        {"departure_id": "SAI", "arrival_id": "YEG", "outbound_date": date(2026, 7, 16)},
     ]
 
 
@@ -138,10 +138,9 @@ def test_segments_legacy_fallback_from_special_sheets() -> None:
         nights=14,
     )
     segments = iter_group_segments(group)
-    # Legacy rule is depart + nights + 1, so under exact-day-offset semantics
-    # the synthesized leg is nights+1 -- existing groups keep identical dates.
+    # Legacy fallback uses the configured nights value directly.
     assert segments[0].extra_legs == [
-        ExtraLeg(origin="SAI", destination="", nights_before=15)
+        ExtraLeg(origin="SAI", destination="", nights_before=14)
     ]
     assert segments[0].return_origin == "SAI"
 
