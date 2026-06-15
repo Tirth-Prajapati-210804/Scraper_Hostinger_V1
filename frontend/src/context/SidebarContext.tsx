@@ -1,8 +1,13 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 
 interface SidebarState {
+  /** Desktop: narrow (icon-only) vs full-width sidebar. */
   collapsed: boolean;
   toggle: () => void;
+  /** Mobile: whether the slide-in nav drawer is open. */
+  mobileOpen: boolean;
+  openMobile: () => void;
+  closeMobile: () => void;
 }
 
 const SidebarContext = createContext<SidebarState | null>(null);
@@ -17,6 +22,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       return false;
     }
   });
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const toggle = () =>
     setCollapsed((c) => {
@@ -29,8 +35,11 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       return next;
     });
 
+  const openMobile = () => setMobileOpen(true);
+  const closeMobile = () => setMobileOpen(false);
+
   return (
-    <SidebarContext.Provider value={{ collapsed, toggle }}>
+    <SidebarContext.Provider value={{ collapsed, toggle, mobileOpen, openMobile, closeMobile }}>
       {children}
     </SidebarContext.Provider>
   );
@@ -38,6 +47,14 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
 
 export function useSidebar(): SidebarState {
   const ctx = useContext(SidebarContext);
-  if (!ctx) return { collapsed: false, toggle: () => {} };
+  if (!ctx) {
+    return {
+      collapsed: false,
+      toggle: () => {},
+      mobileOpen: false,
+      openMobile: () => {},
+      closeMobile: () => {},
+    };
+  }
   return ctx;
 }

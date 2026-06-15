@@ -410,13 +410,13 @@ export function DashboardPage() {
               </div>
             </div>
 
-            <div className="relative">
+            <div className="relative w-full sm:w-auto">
               <Search className="pointer-events-none absolute left-[10px] top-1/2 h-[13px] w-[13px] -translate-y-1/2 text-[#9CA3AF]" />
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search groups..."
-                className="w-[200px] rounded-[8px] border-[1.5px] border-[#E2E8F0] bg-white px-3 py-[7px] pl-8 text-[13px] text-[#1a1d23] outline-none transition focus:border-brand-600"
+                className="w-full rounded-[8px] border-[1.5px] border-[#E2E8F0] bg-white px-3 py-[7px] pl-8 text-[13px] text-[#1a1d23] outline-none transition focus:border-brand-600 sm:w-[200px]"
               />
             </div>
 
