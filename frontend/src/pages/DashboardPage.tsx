@@ -193,11 +193,15 @@ export function DashboardPage() {
     statusQuery.data?.progress?.current_origin,
   ]);
 
+  // Poll progress fast only while a collection is actually running; idle dashboards
+  // poll slowly so we don't hammer the API with N requests every 10s for nothing.
+  const progressRefetchInterval = isCollecting ? 10_000 : 60_000;
   const progressQueries = useQueries({
     queries: groups.map((group) => ({
       queryKey: ["route-group-progress", group.id],
       queryFn: () => getRouteGroupProgress(group.id),
-      refetchInterval: 10_000,
+      refetchInterval: progressRefetchInterval,
+      staleTime: 8_000,
     })),
   });
 

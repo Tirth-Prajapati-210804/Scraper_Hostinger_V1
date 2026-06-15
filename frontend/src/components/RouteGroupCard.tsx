@@ -29,10 +29,13 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
   const [downloading, setDownloading] = useState(false);
   const [triggering, setTriggering] = useState(false);
 
+  // Shares the "route-group-progress" cache with the dashboard's central
+  // poller (same queryKey), so the card just reads that data instead of running
+  // its own 10s interval. This avoids N duplicate polls per cycle.
   const progressQuery = useQuery({
     queryKey: ["route-group-progress", group.id],
     queryFn: () => getRouteGroupProgress(group.id),
-    refetchInterval: 10_000,
+    staleTime: 30_000,
   });
 
   const progress = progressQuery.data;

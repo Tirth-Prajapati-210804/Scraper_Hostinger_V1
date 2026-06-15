@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Download, Pencil, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { resetGroupCaps, triggerGroupCollection } from "../api/collection";
@@ -16,7 +16,11 @@ import {
 import { DateCoverageGrid } from "../components/DateCoverageGrid";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ScrapeHealthPanel } from "../components/ScrapeHealthPanel";
-import { PriceChart } from "../components/PriceChart";
+// Lazy: PriceChart pulls in Recharts (~250KB). Load it only when the chart
+// section actually renders, so the route-group page paints fast.
+const PriceChart = lazy(() =>
+  import("../components/PriceChart").then((m) => ({ default: m.PriceChart })),
+);
 import { PriceTable } from "../components/PriceTable";
 import { RouteGroupForm } from "../components/RouteGroupForm";
 import { Button } from "../components/ui/Button";
@@ -444,7 +448,9 @@ export function RouteGroupDetailPage() {
               No price data yet for this route. Trigger a collection first.
             </p>
           ) : (
-            <PriceChart data={trendQuery.data ?? []} />
+            <Suspense fallback={<Skeleton className="h-64" />}>
+              <PriceChart data={trendQuery.data ?? []} />
+            </Suspense>
           )}
         </Card>
 
