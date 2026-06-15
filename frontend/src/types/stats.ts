@@ -21,3 +21,10 @@ export interface HealthResponse {
   scheduler_running: boolean;
   provider_status: Record<string, string>;
 }
+
+export interface ProviderCredits {
+  available: boolean;
+  max_credits: number | null;
+  used_credits: number | null;
+  remaining_credits: number | null;
+}

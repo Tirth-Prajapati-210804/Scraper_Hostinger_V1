@@ -1,9 +1,12 @@
+import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2,
   PlugZap,
 } from "lucide-react";
 
+import { fetchProviderCredits } from "../api/stats";
 import { type HealthResponse } from "../types/stats";
+import { formatNumber } from "../utils/format";
 import { Card } from "./ui/Card";
 
 interface ProviderStatusProps {
@@ -18,6 +21,15 @@ export function ProviderStatus({
 
   const providers =
     Object.entries(providerStatus);
+
+  // Live ScrapingBee credit balance, refreshed every 30s.
+  const creditsQuery = useQuery({
+    queryKey: ["provider-credits"],
+    queryFn: fetchProviderCredits,
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+  });
+  const credits = creditsQuery.data;
 
   if (providers.length === 0) {
     return (
@@ -40,6 +52,7 @@ export function ProviderStatus({
     <Card className="rounded-[12px] border-[#E8ECF4] bg-white px-5 py-[14px] shadow-none">
       {providers.map(([name, status], index) => {
         const active = status === "configured" || status === "active";
+        const isScrapingBee = name.toLowerCase().includes("scrapingbee");
 
         return (
           <div
@@ -62,14 +75,32 @@ export function ProviderStatus({
               </div>
             </div>
 
-            <span
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-[2px] text-[12px] font-medium ${
-                active ? "bg-[#ECFDF5] text-[#059669]" : "bg-[#F1F5F9] text-[#64748B]"
-              }`}
-            >
-              {active ? <span className="h-[5px] w-[5px] rounded-full bg-[#10B981]" /> : null}
-              {active ? "Operational" : status}
-            </span>
+            <div className="flex items-center gap-3">
+              {active && isScrapingBee && credits?.available && credits.used_credits != null ? (
+                <span
+                  className="text-[12px] font-medium text-[#475569]"
+                  title="Used / total ScrapingBee credits"
+                >
+                  <span className="font-semibold text-[#1a1d23]">
+                    {formatNumber(credits.used_credits)}
+                  </span>
+                  <span className="text-[#9CA3AF]">
+                    {" / "}
+                    {formatNumber(credits.max_credits ?? 0)}
+                  </span>
+                  <span className="ml-1 text-[#9CA3AF]">credits used</span>
+                </span>
+              ) : null}
+
+              <span
+                className={`inline-flex items-center gap-1 rounded-full px-2 py-[2px] text-[12px] font-medium ${
+                  active ? "bg-[#ECFDF5] text-[#059669]" : "bg-[#F1F5F9] text-[#64748B]"
+                }`}
+              >
+                {active ? <span className="h-[5px] w-[5px] rounded-full bg-[#10B981]" /> : null}
+                {active ? "Operational" : status}
+              </span>
+            </div>
           </div>
         );
       })}
