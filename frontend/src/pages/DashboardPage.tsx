@@ -222,14 +222,14 @@ export function DashboardPage() {
     const paused: RouteGroup[] = [];
 
     for (const group of matchedGroups) {
-      if (!group.is_active) {
-        paused.push(group);
-        continue;
-      }
       const progress = progressByGroupId[group.id];
-      const isCollected = progress != null && progress.total_dates > 0 && progress.coverage_percent >= 100;
+      // A group that's substantially scanned (>= 95%) counts as Collected even
+      // if it's paused -- the data is there, so don't bury it under Paused.
+      const isCollected = progress != null && progress.total_dates > 0 && progress.coverage_percent >= 95;
       if (isCollected) {
         collected.push(group);
+      } else if (!group.is_active) {
+        paused.push(group);
       } else {
         needsCollection.push(group);
       }
