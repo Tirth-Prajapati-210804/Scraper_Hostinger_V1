@@ -36,15 +36,9 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
   });
 
   const progress = progressQuery.data;
-  const tripType =
-    group.trip_type === "multi_city"
-      ? "Multi City"
-      : "Round Trip";
-  const stayLabel =
-    group.trip_type === "multi_city"
-      ? `${group.nights} nights`
-      : `${group.nights} nights`;
-  const routeLabel = `${group.origins[0] ?? "-"}->${group.destinations[0] ?? "-"}`;
+  const tripType = group.trip_type === "multi_city" ? "Multi City" : "Round Trip";
+  const stayLabel = `${group.nights} nights`;
+  const routeLabel = `${group.origins[0] ?? "-"} → ${group.destinations[0] ?? "-"}`;
   const coveragePct = progress ? Math.min(progress.coverage_percent, 100) : 0;
 
   async function handleDownload() {
@@ -79,20 +73,13 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
 
   return (
     <Card
-      className="cursor-pointer rounded-[12px] border-[#E8ECF4] bg-white p-[18px] shadow-none transition-[box-shadow] duration-150 hover:shadow-[0_4px_18px_rgba(75,94,222,0.08)]"
+      className="flex h-full cursor-pointer flex-col rounded-[12px] border-[#E8ECF4] bg-white p-[18px] shadow-none transition-[box-shadow] duration-150 hover:shadow-[0_4px_18px_rgba(75,94,222,0.08)]"
       onClick={() => navigate(`/route-groups/${group.id}`)}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="mb-1 truncate text-[14px] font-semibold text-[#1a1d23]">
-            {group.name}
-          </h3>
-          <div className="flex flex-wrap gap-[5px]">
-            <StatusBadge active={group.is_active} />
-            <Badge tone="blue">{tripType}</Badge>
-            <Badge tone="slate">{group.currency}</Badge>
-          </div>
-        </div>
+        <h3 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-[#1a1d23]">
+          {group.name}
+        </h3>
 
         <div className="flex shrink-0 gap-1" onClick={(event) => event.stopPropagation()}>
           <IconButton
@@ -110,11 +97,18 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
         </div>
       </div>
 
+      <div className="mt-[10px] flex flex-wrap items-center gap-[5px]">
+        <StatusBadge active={group.is_active} />
+        <Badge tone="blue">{tripType}</Badge>
+        <Badge tone="slate">{group.currency}</Badge>
+      </div>
+
       <div className="mt-[14px] flex items-center gap-[6px]">
         <MapPin className="h-3 w-3 shrink-0 text-[#9CA3AF]" />
-        <span className="truncate text-[12px] text-[#9CA3AF]">{group.destination_label}</span>
-        <span className="ml-1 text-[12px] text-[#C4CAD4]">·</span>
-        <span className="rounded-[4px] bg-[#F4F6FA] px-[6px] py-[1px] font-mono text-[11px] font-semibold text-[#6B7280]">
+        <span className="min-w-0 flex-1 truncate text-[12px] text-[#9CA3AF]">
+          {group.destination_label}
+        </span>
+        <span className="shrink-0 rounded-[4px] bg-[#F4F6FA] px-[6px] py-[1px] font-mono text-[11px] font-semibold text-[#6B7280]">
           {routeLabel}
         </span>
       </div>
@@ -125,7 +119,7 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
         <MiniStat label="Window" value={`${group.days_ahead}d`} />
       </div>
 
-      <div className="mt-[14px]">
+      <div className="mt-auto pt-[14px]">
         {progressQuery.isLoading ? (
           <div className="space-y-2">
             <Skeleton className="h-2 w-full rounded-full" />
@@ -181,7 +175,7 @@ function Badge({
       : "bg-[#F1F5F9] text-[#64748B]";
 
   return (
-    <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-[2px] text-[12px] font-medium ${styles}`}>
+    <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-medium ${styles}`}>
       {children}
     </span>
   );
@@ -190,7 +184,7 @@ function Badge({
 function StatusBadge({ active }: { active: boolean }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${
+      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-medium ${
         active ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
       }`}
     >
