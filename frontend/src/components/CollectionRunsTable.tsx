@@ -1,10 +1,7 @@
 import {
   AlertTriangle,
-  CheckCircle,
   History,
-  Loader2,
   Square,
-  XCircle,
 } from "lucide-react";
 import { useState } from "react";
 import type { CollectionRun } from "../types/price";
@@ -93,110 +90,90 @@ export function CollectionRunsTable({
             <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
               <th className="px-5 py-3">Started</th>
               <th className="px-5 py-3">Duration</th>
-              <th className="px-5 py-3">Status</th>
-              <th className="px-5 py-3">Routes</th>
-              <th className="px-5 py-3 text-right">Prices</th>
-              <th className="px-5 py-3">Errors</th>
+              <th className="px-5 py-3 text-right">Collected</th>
+              <th className="px-5 py-3 text-right">Missing / Errors</th>
               {hasRunning && onStop ? <th className="px-5 py-3" /> : null}
             </tr>
           </thead>
           <tbody>
-            {runs.map((run, index) => (
-              <tr
-                key={run.id}
-                className={`border-b border-slate-100 ${index % 2 !== 0 ? "bg-slate-50/50" : ""}`}
-              >
-                <td className="px-5 py-3 text-slate-600">
-                  {formatRelativeTime(run.started_at)}
-                </td>
-                <td className="px-5 py-3 text-slate-600">
-                  {formatDuration(run.started_at, run.finished_at)}
-                </td>
-                <td className="px-5 py-3">
-                  {run.status === "completed" ? (
-                    <span className="flex items-center gap-1 text-green-600">
-                      <CheckCircle className="h-3.5 w-3.5" /> done
-                    </span>
-                  ) : run.status === "failed" ? (
-                    <span className="flex items-center gap-1 text-red-500">
-                      <XCircle className="h-3.5 w-3.5" /> failed
-                    </span>
-                  ) : run.status === "stopped" ? (
-                    <span className="flex items-center gap-1 text-amber-500">
-                      <Square className="h-3.5 w-3.5" /> stopped
-                    </span>
-                  ) : run.status === "partial" ? (
-                    <span className="flex items-center gap-1 text-amber-600">
-                      <AlertTriangle className="h-3.5 w-3.5" /> partial
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-brand-600">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> running
-                    </span>
-                  )}
-                </td>
-                <td className="px-5 py-3 text-slate-700">
-                  {run.routes_success}/{run.routes_total}
-                </td>
-                <td className="px-5 py-3 text-right text-slate-700">
-                  {run.dates_scraped.toLocaleString()}
-                </td>
-                <td className="px-5 py-3">
-                  {run.errors && run.errors.length > 0 ? (
-                    <div>
-                      <button
-                        onClick={() => setExpandedId(expandedId === run.id ? null : run.id)}
-                        aria-expanded={expandedId === run.id}
-                        className={`flex items-center gap-1 text-xs ${
-                          run.status === "partial"
-                            ? "text-amber-600 hover:text-amber-800"
-                            : "text-red-600 hover:text-red-800"
-                        }`}
-                      >
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        {run.status === "partial"
-                          ? "missing fare dates"
-                          : `${run.errors.length} route${run.errors.length > 1 ? "s" : ""}`}
-                      </button>
-                      {expandedId === run.id ? (
-                        <ul className="mt-1 space-y-0.5">
-                          {run.errors.map((error, errorIndex) => {
-                            const { label, detail } = formatRunError(error);
-                            return (
-                              <li
-                                key={errorIndex}
-                                title={detail}
-                                className={`text-xs ${
-                                  run.status === "partial" ? "text-amber-700" : "text-red-700"
-                                }`}
-                              >
-                                {label}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <span className="text-xs text-slate-400">-</span>
-                  )}
-                </td>
-                {hasRunning && onStop ? (
-                  <td className="px-5 py-3 text-right">
-                    {run.status === "running" ? (
-                      <button
-                        onClick={onStop}
-                        disabled={stopping}
-                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                      >
-                        <Square className="h-3 w-3" />
-                        {stopping ? "Stopping..." : "Stop"}
-                      </button>
-                    ) : null}
+            {runs.map((run, index) => {
+              const hasErrorDetail = !!(run.errors && run.errors.length > 0);
+              // Missing/errored searches: prefer the failed-route count, but if a
+              // run reported issues (e.g. missing-fare dates) without a failed
+              // count, surface the number of reported issues so it's not "0".
+              const failed = run.routes_failed || (hasErrorDetail ? run.errors!.length : 0);
+              const expanded = expandedId === run.id;
+              return (
+                <tr
+                  key={run.id}
+                  className={`border-b border-slate-100 align-top ${index % 2 !== 0 ? "bg-slate-50/50" : ""}`}
+                >
+                  <td className="px-5 py-3 text-slate-600">
+                    {formatRelativeTime(run.started_at)}
                   </td>
-                ) : null}
-              </tr>
-            ))}
+                  <td className="px-5 py-3 text-slate-600">
+                    {formatDuration(run.started_at, run.finished_at)}
+                  </td>
+                  {/* Successful searches = data collected for that date. */}
+                  <td className="px-5 py-3 text-right">
+                    <span className="font-semibold text-green-600">
+                      {run.routes_success.toLocaleString()}
+                    </span>
+                    <span className="text-slate-400"> / {run.routes_total.toLocaleString()}</span>
+                  </td>
+                  {/* Errored searches / missing dates. Click to see what failed. */}
+                  <td className="px-5 py-3 text-right">
+                    {failed > 0 || hasErrorDetail ? (
+                      <div className="inline-flex flex-col items-end">
+                        <button
+                          onClick={() => setExpandedId(expanded ? null : run.id)}
+                          aria-expanded={expanded}
+                          disabled={!hasErrorDetail}
+                          className={`inline-flex items-center gap-1 font-semibold text-red-600 ${
+                            hasErrorDetail ? "hover:text-red-800" : "cursor-default"
+                          }`}
+                        >
+                          {hasErrorDetail ? <AlertTriangle className="h-3.5 w-3.5" /> : null}
+                          {failed.toLocaleString()}
+                        </button>
+                        {expanded && hasErrorDetail ? (
+                          <ul className="mt-1 space-y-0.5 text-right">
+                            {run.errors!.map((error, errorIndex) => {
+                              const { label, detail } = formatRunError(error);
+                              return (
+                                <li
+                                  key={errorIndex}
+                                  title={detail}
+                                  className="text-xs font-normal text-red-700"
+                                >
+                                  {label}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-slate-300">0</span>
+                    )}
+                  </td>
+                  {hasRunning && onStop ? (
+                    <td className="px-5 py-3 text-right">
+                      {run.status === "running" ? (
+                        <button
+                          onClick={onStop}
+                          disabled={stopping}
+                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          <Square className="h-3 w-3" />
+                          {stopping ? "Stopping..." : "Stop"}
+                        </button>
+                      ) : null}
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
