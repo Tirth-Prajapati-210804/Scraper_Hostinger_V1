@@ -80,7 +80,6 @@ Dashboard opens at **http://localhost:5173**. Changes to source files are reflec
 |------|-----|-------------|
 | Dashboard | `/` | Overview stats, active route groups, collection status |
 | Route Group Detail | `/route-groups/:id` | Coverage per date, price table, export button |
-| Data Explorer | `/explorer` | Search and filter all collected prices |
 | Collection Logs | `/logs` | Every individual scrape attempt with status, duration, price found |
 
 ---
@@ -99,7 +98,7 @@ frontend/
 │   ├── components/
 │   │   ├── layout/
 │   │   │   ├── AppLayout.tsx    # Sidebar + main content wrapper
-│   │   │   └── Sidebar.tsx      # Nav: Dashboard, Data Explorer, Collection Logs
+│   │   │   └── Sidebar.tsx      # Nav: Dashboard, Collection Logs
 │   │   └── ...                  # Shared UI components
 │   ├── context/
 │   │   ├── AuthContext.tsx      # Login state, JWT storage, logout
@@ -107,7 +106,6 @@ frontend/
 │   ├── pages/
 │   │   ├── DashboardPage.tsx
 │   │   ├── RouteGroupDetailPage.tsx
-│   │   ├── DataExplorerPage.tsx
 │   │   ├── CollectionLogsPage.tsx
 │   │   └── LoginPage.tsx
 │   └── types/                   # TypeScript interfaces

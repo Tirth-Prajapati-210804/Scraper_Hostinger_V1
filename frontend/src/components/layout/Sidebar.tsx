@@ -5,7 +5,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plane,
-  Table,
   Users,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
@@ -16,7 +15,6 @@ import { cn } from "../../utils/cn";
 
 const BASE_NAV = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/explorer", icon: Table, label: "Data Explorer" },
   { to: "/logs", icon: History, label: "Collection Logs" },
 ];
 

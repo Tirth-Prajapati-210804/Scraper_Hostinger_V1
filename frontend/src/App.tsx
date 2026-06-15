@@ -18,11 +18,6 @@ const RouteGroupDetailPage = lazy(() =>
     default: m.RouteGroupDetailPage,
   })),
 );
-const DataExplorerPage = lazy(() =>
-  import("./pages/DataExplorerPage").then((m) => ({
-    default: m.DataExplorerPage,
-  })),
-);
 const CollectionLogsPage = lazy(() =>
   import("./pages/CollectionLogsPage").then((m) => ({
     default: m.CollectionLogsPage,
@@ -77,7 +72,6 @@ export default function App() {
                 >
                   <Route path="/" element={<DashboardPage />} />
                   <Route path="/route-groups/:id" element={<RouteGroupDetailPage />} />
-                  <Route path="/explorer" element={<DataExplorerPage />} />
                   <Route path="/logs" element={<CollectionLogsPage />} />
                   <Route path="/users" element={<UsersPage />} />
                   <Route path="/design-preview" element={<DesignPreviewPage />} />

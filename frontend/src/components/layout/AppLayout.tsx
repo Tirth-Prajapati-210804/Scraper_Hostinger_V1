@@ -9,7 +9,6 @@ function usePageTitle(): string {
   if (isDetail) return "Route Group Detail";
   const titles: Record<string, string> = {
     "/": "Dashboard",
-    "/explorer": "Data Explorer",
     "/logs": "Collection Logs",
     "/users": "User Management",
   };
