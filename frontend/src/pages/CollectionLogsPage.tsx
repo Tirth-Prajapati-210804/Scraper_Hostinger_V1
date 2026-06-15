@@ -110,7 +110,20 @@ export function CollectionLogsPage() {
   const isCollecting = statusQuery.data?.is_collecting ?? false;
   const last = runsQuery.data?.[0];
   const lastIsPartial = last?.status === "partial";
-  const visibleRunRows = (runsQuery.data ?? []).slice(0, visibleRuns);
+  // Hide "did nothing" runs: a scheduler tick with no active groups / nothing to
+  // scrape produces a 0/0 run with no errors -- noise. Keep runs that scraped
+  // something, reported errors, or are still running.
+  const meaningfulRuns = useMemo(
+    () =>
+      (runsQuery.data ?? []).filter(
+        (run) =>
+          run.routes_total > 0 ||
+          (run.errors?.length ?? 0) > 0 ||
+          run.status === "running",
+      ),
+    [runsQuery.data],
+  );
+  const visibleRunRows = meaningfulRuns.slice(0, visibleRuns);
   const visibleLogRows = filteredLogs.slice(0, visibleLogs);
 
   return (
@@ -192,9 +205,9 @@ export function CollectionLogsPage() {
             onStop={() => stopMut.mutate()}
             stopping={stopMut.isPending}
           />
-          {(runsQuery.data?.length ?? 0) > 5 ? (
+          {meaningfulRuns.length > 5 ? (
             <div className="flex justify-end pt-2">
-              {visibleRuns < (runsQuery.data?.length ?? 0) ? (
+              {visibleRuns < meaningfulRuns.length ? (
                 <Button
                   type="button"
                   variant="secondary"
