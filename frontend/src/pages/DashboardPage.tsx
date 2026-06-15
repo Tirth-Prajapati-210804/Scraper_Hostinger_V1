@@ -490,14 +490,14 @@ export function DashboardPage() {
           ) : viewMode === "grid" ? (
             <div className="space-y-6">
               <RouteGroupSection title="Needs Collection" groups={groupedGroups.needsCollection} />
-              <RouteGroupSection title="Collected" groups={groupedGroups.collected} />
               <RouteGroupSection title="Paused" groups={groupedGroups.paused} />
+              <RouteGroupSection title="Collected" groups={groupedGroups.collected} />
             </div>
           ) : (
             <div className="space-y-6">
               <RouteGroupTableSection title="Needs Collection" groups={groupedGroups.needsCollection} />
-              <RouteGroupTableSection title="Collected" groups={groupedGroups.collected} />
               <RouteGroupTableSection title="Paused" groups={groupedGroups.paused} />
+              <RouteGroupTableSection title="Collected" groups={groupedGroups.collected} />
             </div>
           )}
         </section>
