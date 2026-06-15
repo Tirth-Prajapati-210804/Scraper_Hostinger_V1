@@ -16,6 +16,7 @@ import { Button } from "./ui/Button";
 import { Modal } from "./ui/Modal";
 import { Select } from "./ui/Select";
 import { TagInput } from "./ui/TagInput";
+import { AirportInput } from "./ui/AirportInput";
 import { Icon } from "./ds";
 
 interface RouteGroupFormProps {
@@ -867,12 +868,6 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
             </RoutePanel>
           ) : (
             <RoutePanel title={`Trip Legs (${state.extraLegs.length + 1} flights)`}>
-              <p className="-mt-1 text-[13px] text-[#7b8aa4]">
-                Leg 1 is the outbound above. Add up to 3 more flights.
-                &quot;Nights&quot; = nights spent at that leg&apos;s destination
-                before the next flight (01 Jul + 2 nights = next flight 03 Jul,
-                minimum 1). The final leg flies home, so it has no nights.
-              </p>
               {state.extraLegs.map((leg, index) => {
                 const isLast = index === state.extraLegs.length - 1;
                 return (
@@ -902,35 +897,36 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                     <div className={`grid gap-3 ${isLast ? "md:grid-cols-2" : "md:grid-cols-3"}`}>
                       <div>
                         <FieldLabel>From</FieldLabel>
-                        <TextInput
+                        <AirportInput
                           value={leg.origin}
-                          onChange={(e) =>
+                          onChange={(code) =>
                             setState((current) => ({
                               ...current,
                               extraLegs: current.extraLegs.map((l, i) =>
-                                i === index ? { ...l, origin: e.target.value.toUpperCase() } : l,
+                                i === index ? { ...l, origin: code } : l,
                               ),
                             }))
                           }
-                          placeholder="e.g. SAI"
+                          placeholder="e.g. SAI or a city name"
                         />
                       </div>
                       <div>
                         <FieldLabel>{isLast ? "To (blank = home)" : "To"}</FieldLabel>
-                        <TextInput
+                        <AirportInput
                           value={leg.destination}
-                          onChange={(e) =>
+                          allowEmpty={isLast}
+                          onChange={(code) =>
                             setState((current) => ({
                               ...current,
                               extraLegs: current.extraLegs.map((l, i) =>
-                                i === index ? { ...l, destination: e.target.value.toUpperCase() } : l,
+                                i === index ? { ...l, destination: code } : l,
                               ),
                             }))
                           }
                           placeholder={
                             isLast
                               ? normalizedOrigins.join(", ") || "back to origin"
-                              : "e.g. YYC"
+                              : "e.g. YYC or a city name"
                           }
                         />
                       </div>
@@ -1130,11 +1126,13 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         ) : null}
 
         <div className="flex flex-col gap-3 border-t border-[#E7ECF3] pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[12px] text-[#94A3B8]">
-            {state.tripType === "multicity"
-              ? "One matching multi-city itinerary is saved per date using the cheapest valid fare."
-              : "Cheapest valid same-airline fare is saved per date."}
-          </p>
+          {state.tripType === "multicity" ? (
+            <span />
+          ) : (
+            <p className="text-[12px] text-[#94A3B8]">
+              Cheapest valid same-airline fare is saved per date.
+            </p>
+          )}
           <div className="flex gap-2 self-end">
             <Button
               type="button"

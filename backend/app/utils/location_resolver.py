@@ -87,11 +87,15 @@ def _load_catalog() -> list[dict[str, object]]:
     return catalog + list(_SUPPLEMENTAL_METRO_CITIES)
 
 
-def _codes_for_entry(entry: dict[str, object]) -> list[str]:
+def _entry_codes(entry: dict[str, object]) -> list[str]:
     raw_codes = entry.get("codes")
     if not isinstance(raw_codes, list):
         return []
-    codes = list(dict.fromkeys(str(code).strip().upper() for code in raw_codes if str(code).strip()))
+    return list(dict.fromkeys(str(code).strip().upper() for code in raw_codes if str(code).strip()))
+
+
+def _codes_for_entry(entry: dict[str, object]) -> list[str]:
+    codes = _entry_codes(entry)
     # For a city with a known (IATA-verified) metro code, search the metro code
     # (all airports) instead of an individual airport, so we don't fragment into
     # a single low-inventory airport (the CIA-vs-ROM problem). The metro code
@@ -102,6 +106,23 @@ def _codes_for_entry(entry: dict[str, object]) -> list[str]:
         if metro:
             return [metro]
     return codes
+
+
+@lru_cache(maxsize=1)
+def _airport_label_by_code() -> dict[str, str]:
+    """Map each airport code -> its human label, built from the catalog's
+    `airport` entries. Used to give a city's member airports proper names when
+    a city match is expanded into per-airport suggestions."""
+    labels: dict[str, str] = {}
+    for entry in _load_catalog():
+        if str(entry.get("kind") or "").strip() != "airport":
+            continue
+        label = str(entry.get("label") or "").strip()
+        if not label:
+            continue
+        for code in _entry_codes(entry):
+            labels.setdefault(code, label)
+    return labels
 
 
 def _match_score(candidate: str, query: str) -> int | None:
@@ -148,6 +169,23 @@ def search_location_suggestions(query: str, limit: int = 8) -> list[dict[str, ob
         seen.add(dedupe_key)
         kind_rank = {"country": 0, "city": 1, "airport": 2}.get(kind, 3)
         suggestions.append((score, kind_rank, len(label), label, codes, kind))
+
+        # A matched city offers "all airports" (the metro/city row above) PLUS
+        # each member airport as its own pickable row, so the user can choose a
+        # specific airport or the whole metro. Member codes come from the raw
+        # catalog list (not the metro-collapsed codes). Ranked just after the
+        # city row, before unrelated airports.
+        if kind == "city":
+            member_labels = _airport_label_by_code()
+            for member in _entry_codes(entry):
+                airport_label = member_labels.get(member, label)
+                airport_key = (airport_label.casefold(), (member,), "airport")
+                if airport_key in seen:
+                    continue
+                seen.add(airport_key)
+                # Slight score bump (+0 keeps it next to the city) but rank it
+                # right after the city row via a fractional kind_rank.
+                suggestions.append((score, kind_rank, len(airport_label), airport_label, (member,), "airport"))
 
     all_codes = sorted({code for _, _, _, _, codes, _ in suggestions for code in codes})
     for code in all_codes:
