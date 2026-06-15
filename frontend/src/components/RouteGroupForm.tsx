@@ -809,12 +809,25 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                 />
               </div>
               {state.tripType === "multicity" ? (
-                <div className="rounded-2xl border border-[#dfe6f0] bg-[#f8fbff] px-4 py-3 text-[13px] text-[#7b8aa4]">
-                  Nights are set per leg in the Trip Legs panel.
+                <div>
+                  <FieldLabel>Nights</FieldLabel>
+                  <TextInput
+                    inputMode="numeric"
+                    value={state.extraLegs[0]?.nights ?? ""}
+                    onChange={(e) =>
+                      setState((current) => ({
+                        ...current,
+                        extraLegs: current.extraLegs.map((l, i) =>
+                          i === 0 ? { ...l, nights: e.target.value.replace(/\D/g, "") } : l,
+                        ),
+                      }))
+                    }
+                    placeholder="e.g. 9"
+                  />
                 </div>
               ) : (
                 <StepperField
-                  label="Nights at destination"
+                  label="Nights"
                   value={state.nights}
                   onChange={(nights) => setState((current) => ({ ...current, nights }))}
                 />
@@ -855,9 +868,10 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
           ) : (
             <RoutePanel title={`Trip Legs (${state.extraLegs.length + 1} flights)`}>
               <p className="-mt-1 text-[13px] text-[#7b8aa4]">
-                Leg 1 is the outbound above. Add up to 3 more flights. &quot;Nights
-                before&quot; = nights between legs: fly 01 Jul + 2 nights = next
-                flight 03 Jul. Minimum 1 (next-day departure).
+                Leg 1 is the outbound above. Add up to 3 more flights.
+                &quot;Nights&quot; = nights spent at that leg&apos;s destination
+                before the next flight (01 Jul + 2 nights = next flight 03 Jul,
+                minimum 1). The final leg flies home, so it has no nights.
               </p>
               {state.extraLegs.map((leg, index) => {
                 const isLast = index === state.extraLegs.length - 1;
@@ -885,7 +899,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                         </button>
                       ) : null}
                     </div>
-                    <div className="grid gap-3 md:grid-cols-3">
+                    <div className={`grid gap-3 ${isLast ? "md:grid-cols-2" : "md:grid-cols-3"}`}>
                       <div>
                         <FieldLabel>From</FieldLabel>
                         <TextInput
@@ -920,24 +934,29 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                           }
                         />
                       </div>
-                      <div>
-                        <FieldLabel>Nights before</FieldLabel>
-                        <TextInput
-                          inputMode="numeric"
-                          value={leg.nights}
-                          onChange={(e) =>
-                            setState((current) => ({
-                              ...current,
-                              extraLegs: current.extraLegs.map((l, i) =>
-                                i === index
-                                  ? { ...l, nights: e.target.value.replace(/\D/g, "") }
-                                  : l,
-                              ),
-                            }))
-                          }
-                          placeholder="e.g. 9"
-                        />
-                      </div>
+                      {/* Nights at THIS leg's destination = nights before the
+                          NEXT leg departs (stored on the next extra leg). The
+                          final leg flies home, so it shows no nights field. */}
+                      {!isLast ? (
+                        <div>
+                          <FieldLabel>Nights</FieldLabel>
+                          <TextInput
+                            inputMode="numeric"
+                            value={state.extraLegs[index + 1]?.nights ?? ""}
+                            onChange={(e) =>
+                              setState((current) => ({
+                                ...current,
+                                extraLegs: current.extraLegs.map((l, i) =>
+                                  i === index + 1
+                                    ? { ...l, nights: e.target.value.replace(/\D/g, "") }
+                                    : l,
+                                ),
+                              }))
+                            }
+                            placeholder="e.g. 9"
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 );

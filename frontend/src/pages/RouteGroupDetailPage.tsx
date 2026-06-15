@@ -403,7 +403,11 @@ export function RouteGroupDetailPage() {
           ) : progressQuery.isError ? (
             <p className="text-sm text-red-500">Failed to load progress. Try refreshing the page.</p>
           ) : progressQuery.data ? (
-            <DateCoverageGrid progress={progressQuery.data} />
+            <DateCoverageGrid
+              progress={progressQuery.data}
+              windowStart={group.start_date}
+              windowEnd={group.end_date}
+            />
           ) : (
             <p className="text-sm text-slate-400">No data collected yet. Trigger a collection to start.</p>
           )}

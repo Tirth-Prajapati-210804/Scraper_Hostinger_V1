@@ -5,6 +5,12 @@ import { formatDisplayDate, formatFreshnessLabel, formatNumber } from "../utils/
 
 interface DateCoverageGridProps {
   progress: RouteGroupProgress;
+  /** The group's configured travel window (ISO dates). When provided, the grid
+   *  spans the FULL window so leading/trailing uncollected dates still show
+   *  (as "Not attempted" / "Error") instead of the grid silently starting at
+   *  the first date that happens to have data. */
+  windowStart?: string | null;
+  windowEnd?: string | null;
 }
 
 function addDays(date: Date, days: number): Date {
@@ -76,22 +82,9 @@ const DARK_FILL: Record<CellKind, boolean> = {
   pending: false,
 };
 
-export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
+export function DateCoverageGrid({ progress, windowStart, windowEnd }: DateCoverageGridProps) {
   const scrapedSet = useMemo(() => new Set(progress.scraped_dates), [progress.scraped_dates]);
   const dateStatuses = useMemo(() => progress.date_statuses ?? {}, [progress.date_statuses]);
-
-  const originCount = Object.keys(progress.per_origin).length || 1;
-  const daySpan = useMemo(() => {
-    if (progress.scraped_dates.length >= 2) {
-      const sorted = [...progress.scraped_dates].sort();
-      const first = new Date(`${sorted[0]}T00:00:00`);
-      const last = new Date(`${sorted[sorted.length - 1]}T00:00:00`);
-      const diff = Math.round((last.getTime() - first.getTime()) / 86_400_000) + 1;
-      return Math.max(diff, 30);
-    }
-    const approx = originCount > 0 ? Math.round(progress.total_dates / originCount) : 90;
-    return Math.max(approx, 30);
-  }, [originCount, progress.scraped_dates, progress.total_dates]);
 
   const today = useMemo(() => {
     const value = new Date();
@@ -99,13 +92,38 @@ export function DateCoverageGrid({ progress }: DateCoverageGridProps) {
     return value;
   }, []);
 
+  // The earliest date we know about: configured window start if available, else
+  // the first date that has any data/status. Anchoring on the window means
+  // leading uncollected dates still render (instead of the grid starting late).
   const startDate = useMemo(() => {
-    if (progress.scraped_dates.length > 0) {
-      const sorted = [...progress.scraped_dates].sort();
-      return new Date(`${sorted[0]}T00:00:00`);
+    if (windowStart) {
+      return new Date(`${windowStart}T00:00:00`);
+    }
+    const known = [...progress.scraped_dates, ...Object.keys(dateStatuses)].sort();
+    if (known.length > 0) {
+      return new Date(`${known[0]}T00:00:00`);
     }
     return today;
-  }, [progress.scraped_dates, today]);
+  }, [windowStart, progress.scraped_dates, dateStatuses, today]);
+
+  const originCount = Object.keys(progress.per_origin).length || 1;
+  const daySpan = useMemo(() => {
+    // Span from the start date through the configured window end (inclusive)
+    // when known, so the whole travel window is drawn.
+    if (windowEnd) {
+      const end = new Date(`${windowEnd}T00:00:00`);
+      const diff = Math.round((end.getTime() - startDate.getTime()) / 86_400_000) + 1;
+      return Math.max(diff, 30);
+    }
+    const known = [...progress.scraped_dates, ...Object.keys(dateStatuses)].sort();
+    if (known.length >= 2) {
+      const last = new Date(`${known[known.length - 1]}T00:00:00`);
+      const diff = Math.round((last.getTime() - startDate.getTime()) / 86_400_000) + 1;
+      return Math.max(diff, 30);
+    }
+    const approx = originCount > 0 ? Math.round(progress.total_dates / originCount) : 90;
+    return Math.max(approx, 30);
+  }, [windowEnd, startDate, originCount, progress.scraped_dates, dateStatuses, progress.total_dates]);
 
   const months = useMemo<MonthGroup[]>(() => {
     const groups: MonthGroup[] = [];
