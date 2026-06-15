@@ -59,7 +59,17 @@ interface ManualState {
   isActive: boolean;
 }
 
-const CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "SGD", "AED", "INR"];
+const CURRENCIES: { code: string; name: string }[] = [
+  { code: "USD", name: "United States Dollar" },
+  { code: "EUR", name: "Euro" },
+  { code: "GBP", name: "British Pound Sterling" },
+  { code: "CAD", name: "Canadian Dollar" },
+  { code: "AUD", name: "Australian Dollar" },
+  { code: "JPY", name: "Japanese Yen" },
+  { code: "SGD", name: "Singapore Dollar" },
+  { code: "AED", name: "UAE Dirham" },
+  { code: "INR", name: "Indian Rupee" },
+];
 const MARKETS: Array<{ value: RouteMarket; label: string }> = [
   { value: "us", label: "US - United States" },
   { value: "ca", label: "CA - Canada" },
@@ -1076,8 +1086,8 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                 onChange={(e) => setState((current) => ({ ...current, currency: e.target.value }))}
               >
                 {CURRENCIES.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
+                  <option key={item.code} value={item.code}>
+                    {item.code} — {item.name}
                   </option>
                 ))}
               </SelectInput>
