@@ -4,6 +4,25 @@ import {
   Square,
 } from "lucide-react";
 import { useState } from "react";
+
+// Pill-style status badge per run status.
+const STATUS_STYLES: Record<string, { label: string; cls: string }> = {
+  completed: { label: "Completed", cls: "bg-emerald-50 text-emerald-700" },
+  partial: { label: "Partial", cls: "bg-amber-50 text-amber-700" },
+  stopped: { label: "Stopped", cls: "bg-slate-100 text-slate-600" },
+  failed: { label: "Failed", cls: "bg-red-50 text-red-600" },
+  running: { label: "Running", cls: "bg-brand-50 text-brand-700" },
+};
+
+function StatusPill({ status }: { status: string }) {
+  const s = STATUS_STYLES[status] ?? { label: status, cls: "bg-slate-100 text-slate-600" };
+  return (
+    <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-[3px] text-xs font-medium ${s.cls}`}>
+      {status === "running" ? <span className="h-[5px] w-[5px] animate-pulse rounded-full bg-brand-500" /> : null}
+      {s.label}
+    </span>
+  );
+}
 import type { CollectionRun } from "../types/price";
 import { formatRelativeTime } from "../utils/format";
 import { Skeleton } from "./ui/Skeleton";
@@ -90,7 +109,8 @@ export function CollectionRunsTable({
             <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
               <th className="px-5 py-3">Started</th>
               <th className="px-5 py-3">Duration</th>
-              <th className="px-5 py-3 text-right">Collected</th>
+              <th className="px-5 py-3">Status</th>
+              <th className="px-5 py-3 text-right">Successful</th>
               <th className="px-5 py-3 text-right">Missing / Errors</th>
               {hasRunning && onStop ? <th className="px-5 py-3" /> : null}
             </tr>
@@ -113,6 +133,9 @@ export function CollectionRunsTable({
                   </td>
                   <td className="px-5 py-3 text-slate-600">
                     {formatDuration(run.started_at, run.finished_at)}
+                  </td>
+                  <td className="px-5 py-3">
+                    <StatusPill status={run.status} />
                   </td>
                   {/* Successful searches = data collected for that date. */}
                   <td className="px-5 py-3 text-right">
