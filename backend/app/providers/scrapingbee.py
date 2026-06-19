@@ -768,13 +768,7 @@ class ScrapingBeeProvider:
             # 'from $181/mo' financing element) -- a real airline floor is never well
             # below the cheapest visible fare.
             "f.x=()=>{const r=f.o();if(!r)return[];const cp=f.cp();const s=new Map();for(const e of Array.from(r.querySelectorAll(q+',div,span'))){if(!f.v(e))continue;const a=f.n(e.innerText);if(!a.length||a.length>3)continue;const t=a.join('|'),pr=f.p(t);if(pr===null)continue;if(cp!=null&&pr<cp*0.6)continue;let n=a.find(v=>f.p(v)===null)||'';n=f.t(n.replace(/\\b\\d+\\b/g,''));if(!n||/^(select all|clear all|show \\d+ more|book now)/i.test(n)||/(multiple airlines|mixed airlines|various airlines)/i.test(n)||/(\\/mo|month|per\\b)/i.test(t))continue;const k=n.toLowerCase(),u=s.get(k),z=e.closest(q)||e;if(!u||pr<u.p)s.set(k,{n,p:pr,e:z})}return Array.from(s.values()).sort((a,b)=>a.p-b.p).slice(0,4)};"
-            # f.rl: a card is a REAL flight result only if at least one leg carries
-            # genuine flight data -- a carrier logo (.tdCx-leg-carrier img alt) or a
-            # stops value (.JWEO .vmXl). Package/sponsored ads (e.g. Jet2CityBreaks
-            # 'View Deal') have a price + leg-shaped markup but no real per-leg
-            # carrier/stops, so this rejects them without touching genuine fares.
-            "f.rl=n=>Array.from(n.querySelectorAll(j)).some(i=>f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt'))||f.t(i.querySelector('.JWEO .vmXl')?.innerText));"
-            "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll(j).length>=g&&f.rl(n)).filter((n,i,a)=>!a.some((o,k)=>k!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll(j).length>=g&&f.rl(o)));"
+            "f.r=()=>Array.from(document.querySelectorAll(c)).filter(n=>n&&n.querySelector(p)&&n.querySelectorAll(j).length>=g).filter((n,i,a)=>!a.some((o,k)=>k!==i&&n.contains(o)&&o.querySelector&&o.querySelector(p)&&o.querySelectorAll(j).length>=g));"
             "f.empty=()=>!f.r().length&&/no result|no flight|no match|couldn.t f|adjust your f/i.test(document.body?.innerText||'');"
             "f.sc=v=>{v=(v||'').toLowerCase();if(!v)return null;if(/nonstop|direct/.test(v))return 0;const mm=v.match(/(\\d+)\\s*stop/);return mm?Number(mm[1]):null};"
             "f.top=()=>{let best=null;for(const nd of f.r()){const pr=f.p(f.t(nd.querySelector(p)?.innerText));if(pr==null)continue;const L=Array.from(nd.querySelectorAll(j));const air=L.map(i=>f.t(i.querySelector('.tdCx-leg-carrier img')?.getAttribute('alt'))).filter(Boolean);const st=L.map(i=>f.sc(i.querySelector('.JWEO .vmXl')?.innerText));const kn=st.filter(x=>x!=null);const same=!__SAMEAIR__||(air.length>=2&&new Set(air.map(a=>a.toLowerCase())).size===1);const ok=kn.length>0&&kn.every(x=>x<=__MAXSTOPS__);if(same&&ok&&(best==null||pr<best))best=pr}return best};"
