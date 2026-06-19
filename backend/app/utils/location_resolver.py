@@ -163,29 +163,50 @@ def search_location_suggestions(query: str, limit: int = 8) -> list[dict[str, ob
         if score is None or not codes:
             continue
 
+        kind_rank = {"country": 0, "city": 1, "airport": 2}.get(kind, 3)
+
+        # A "city" suggestion must resolve to exactly ONE code so picking it never
+        # dumps several airports into a single field. Two cases:
+        #   1. Verified metro (London->LON): emit the single metro-code city row,
+        #      then each member airport as its own pickable row.
+        #   2. No metro code (Venice = VCE,TSF): DON'T emit a multi-code city row
+        #      at all -- only emit each member airport individually so the user
+        #      picks one. This kills the multi-code dump and the name-collision
+        #      (Manchester UK vs US) problem.
+        if kind == "city":
+            metro = _metro_code_for_label(label)
+            members = _entry_codes(entry)
+            # Emit a single-code "city" row when it's unambiguous: a verified
+            # metro code (all airports), OR a city with exactly one airport.
+            # A no-metro city with MULTIPLE airports gets no city row (its
+            # airports are listed individually instead), so picking a city can
+            # never dump several codes at once.
+            city_code = metro if metro else (members[0] if len(members) == 1 else None)
+            if city_code:
+                city_codes = (city_code,)
+                dedupe_key = (label.casefold(), city_codes, kind)
+                if dedupe_key not in seen:
+                    seen.add(dedupe_key)
+                    suggestions.append((score, kind_rank, len(label), label, city_codes, kind))
+            # Member airports as individual rows (one code each). Skip when the
+            # single-airport city row above already covers the only airport.
+            if not (city_code and len(members) == 1 and not metro):
+                member_labels = _airport_label_by_code()
+                for member in members:
+                    airport_label = member_labels.get(member, label)
+                    airport_key = (airport_label.casefold(), (member,), "airport")
+                    if airport_key in seen:
+                        continue
+                    seen.add(airport_key)
+                    suggestions.append((score, kind_rank, len(airport_label), airport_label, (member,), "airport"))
+            continue
+
+        # Non-city entries (airport / country / code) -- emit as-is.
         dedupe_key = (label.casefold(), codes, kind)
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
-        kind_rank = {"country": 0, "city": 1, "airport": 2}.get(kind, 3)
         suggestions.append((score, kind_rank, len(label), label, codes, kind))
-
-        # A matched city offers "all airports" (the metro/city row above) PLUS
-        # each member airport as its own pickable row, so the user can choose a
-        # specific airport or the whole metro. Member codes come from the raw
-        # catalog list (not the metro-collapsed codes). Ranked just after the
-        # city row, before unrelated airports.
-        if kind == "city":
-            member_labels = _airport_label_by_code()
-            for member in _entry_codes(entry):
-                airport_label = member_labels.get(member, label)
-                airport_key = (airport_label.casefold(), (member,), "airport")
-                if airport_key in seen:
-                    continue
-                seen.add(airport_key)
-                # Slight score bump (+0 keeps it next to the city) but rank it
-                # right after the city row via a fractional kind_rank.
-                suggestions.append((score, kind_rank, len(airport_label), airport_label, (member,), "airport"))
 
     all_codes = sorted({code for _, _, _, _, codes, _ in suggestions for code in codes})
     for code in all_codes:
