@@ -12,6 +12,26 @@ import { formatDisplayDate } from "../utils/format";
 
 interface PriceChartProps {
   data: PriceTrend[];
+  /** Group currency (e.g. GBP, CAD); axis + tooltip follow it instead of a
+   *  hardcoded dollar sign. */
+  currency?: string;
+}
+
+// "£1,234" / "CA$1,234" etc. from the group's currency code; falls back to a
+// plain number with the code suffix if Intl rejects the code.
+function fmtMoney(value: unknown, currency?: string): string {
+  const num = Number(value) || 0;
+  const code = (currency ?? "").trim().toUpperCase();
+  if (!code) return `${num.toLocaleString()}`;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: code,
+      maximumFractionDigits: 0,
+    }).format(num);
+  } catch {
+    return `${num.toLocaleString()} ${code}`;
+  }
 }
 
 function fmtDate(d: unknown): string {
@@ -23,9 +43,10 @@ interface CustomTooltipProps {
   active?: boolean;
   label?: string;
   payload?: Array<{ payload: PriceTrend }>;
+  currency?: string;
 }
 
-function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
+function CustomTooltip({ active, payload, label, currency }: CustomTooltipProps) {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload as PriceTrend;
   return (
@@ -35,7 +56,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
     >
       <p className="mb-1 font-medium text-slate-700">{fmtDate(label)}</p>
       <p className="text-brand-600 font-semibold">
-        ${Number(point.price).toLocaleString()}
+        {fmtMoney(point.price, currency)}
       </p>
       {point.airline && (
         <p className="mt-0.5 text-xs text-slate-400">{point.airline}</p>
@@ -44,7 +65,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   );
 }
 
-export function PriceChart({ data }: PriceChartProps) {
+export function PriceChart({ data, currency }: PriceChartProps) {
   if (!data.length) {
     return (
       <p className="py-12 text-center text-sm text-slate-400">
@@ -72,10 +93,10 @@ export function PriceChart({ data }: PriceChartProps) {
           />
           <YAxis
             tick={{ fontSize: 12, fill: "#64748b" }}
-            tickFormatter={(v: unknown) => `$${Number(v).toLocaleString()}`}
+            tickFormatter={(v: unknown) => fmtMoney(v, currency)}
             width={68}
           />
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip content={<CustomTooltip currency={currency} />} />
           <Area
             type="monotone"
             dataKey="price"

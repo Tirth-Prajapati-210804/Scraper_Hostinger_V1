@@ -103,12 +103,13 @@ export function RouteGroupDetailPage() {
   const group = groupQuery.data;
   const activeOrigin = selectedOrigin || group?.origins[0] || "";
   const originForQuery = activeOrigin;
-  // Round-trip groups with multiple destination airports are saved under a single
-  // COMBINED destination key (e.g. "ORY,CDG") from one combined Kayak search, so the
-  // trend query must use that combined key to match the saved rows. Multi-city keeps
-  // per-airport rows, so it uses the first airport as before.
+  // Multi-airport groups query the trend with the comma-joined key. Round trip:
+  // rows are saved under that literal combined key ("ORY,CDG" -- one combined
+  // Kayak search). Multi-city: rows are saved under the WINNING airport per date
+  // (compare-then-save), so the backend splits the comma key and matches any of
+  // the airports. Single-destination groups keep the plain code.
   const destForQuery =
-    group && group.trip_type !== "multi_city" && group.destinations.length > 1
+    group && group.destinations.length > 1
       ? group.destinations.map((d) => d.trim().toUpperCase()).filter(Boolean).join(",")
       : group?.destinations[0] || "";
   const chainLegs = group?.trip_type === "multi_city" ? (group.multi_city_legs ?? null) : null;
@@ -525,7 +526,7 @@ export function RouteGroupDetailPage() {
             </p>
           ) : (
             <Suspense fallback={<Skeleton className="h-64" />}>
-              <PriceChart data={trendQuery.data ?? []} />
+              <PriceChart data={trendQuery.data ?? []} currency={group.currency} />
             </Suspense>
           )}
         </Card>

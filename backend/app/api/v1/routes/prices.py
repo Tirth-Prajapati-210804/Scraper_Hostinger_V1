@@ -125,15 +125,29 @@ async def price_trend(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
 ) -> list[PriceTrendPoint]:
+    group = None
     if route_group_id:
-        await _ensure_accessible_group(session, route_group_id)
+        group = await _ensure_accessible_group(session, route_group_id)
+
+    # A comma key means different things per trip type. Round trip: rows are saved
+    # under the literal combined key ("ORY,CDG" -- one combined Kayak search), so
+    # match it exactly. Multi-city: rows are saved under the WINNING airport per
+    # date (compare-then-save keeps only the cheapest), so split the key and match
+    # any of its airports.
+    dest_key = destination.upper()
+    if group is not None and group.trip_type == "multi_city" and "," in dest_key:
+        destination_filter = DailyCheapestPrice.destination.in_(
+            [part for part in dest_key.split(",") if part]
+        )
+    else:
+        destination_filter = DailyCheapestPrice.destination == dest_key
 
     q = (
         select(DailyCheapestPrice)
         .join(RouteGroup, RouteGroup.id == DailyCheapestPrice.route_group_id)
         .where(
             DailyCheapestPrice.origin == origin.upper(),
-            DailyCheapestPrice.destination == destination.upper(),
+            destination_filter,
         )
         .order_by(DailyCheapestPrice.depart_date)
     )

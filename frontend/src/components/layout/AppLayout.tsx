@@ -51,7 +51,9 @@ export function AppLayout({ children }: AppLayoutProps) {
         </header>
 
         <main className="min-w-0 flex-1 overflow-x-hidden px-4 pb-6 pt-6 sm:px-6 lg:overflow-y-auto lg:px-9 lg:pb-8 lg:pt-8">
-          {children}
+          {/* Cap + center the content: with the sidebar collapsed the page spans
+              the full viewport, which stretched cards/tables uncomfortably wide. */}
+          <div className="mx-auto w-full max-w-[1480px]">{children}</div>
         </main>
       </div>
     </div>
