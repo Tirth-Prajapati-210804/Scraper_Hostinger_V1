@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date, timedelta
 from io import BytesIO
 import re
-from statistics import mean
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
@@ -19,8 +18,8 @@ _INVALID_SHEET_TITLE_RE = re.compile(r"[\[\]:*?/\\]")
 
 _MAIN_HEADERS = [
     "Date",
-    "Dep Airport",
-    "Arrival Airport",
+    "Return Date",
+    "Route",
     "Nights",
     "Airline",
     "Stop Result",
@@ -31,41 +30,13 @@ _MAIN_HEADERS = [
 _MULTI_CITY_HEADERS = [
     "Date",
     "Ending Date",
-    "Dep Airport",
-    "Arrival Airport",
-    "Return From",
+    "Route",
     "Nights",
     "Airline",
     "Stop Result",
     "Duration",
     "Flight Price",
 ]
-
-_DEALS_HEADERS = [
-    "Rank",
-    "Origin",
-    "Destination",
-    "Date",
-    "Airline",
-    "Price",
-    "Savings vs Avg",
-]
-
-_SUMMARY_HEADERS = [
-    "Origin",
-    "Records",
-    "Lowest Price",
-    "Average Price",
-]
-
-_WEEKEND_HEADERS = [
-    "Origin",
-    "Destination",
-    "Date",
-    "Airline",
-    "Price",
-]
-
 
 def _display_airport(actual: object, searched: object) -> str:
     """Show the actual airport flown, annotating the searched metro code when it
@@ -78,6 +49,88 @@ def _display_airport(actual: object, searched: object) -> str:
     if searched_code and searched_code != actual_code:
         return f"{actual_code} ({searched_code})"
     return actual_code
+
+
+def _na_verification_link(
+    template_link: str | None,
+    depart_date: date,
+    return_date: date | None,
+) -> str:
+    """A Kayak search link for an N-A (no-fare) row so the client can manually
+    verify. We reuse a SIBLING result's stored deep_link as a template (it already
+    carries the exact market base + sort/-MULT/flylocal/baditin/stops filters the
+    scraper searched) and swap in this row's dates -- so the link is identical to
+    what the scraper used, with no duplicated URL logic. Returns N-A if no template
+    exists yet (no row on this route has collected a real link)."""
+    if not template_link:
+        return _MISSING_VALUE
+    # The stable URL is .../flights/<ROUTE>/<DEPART>[/<RETURN>]?<filters>. Swap the
+    # date segment(s) only; leave route + query untouched.
+    dates = depart_date.isoformat()
+    if return_date is not None:
+        dates += f"/{return_date.isoformat()}"
+    swapped = re.sub(
+        r"(/flights/[^/]+/)\d{4}-\d{2}-\d{2}(?:/\d{4}-\d{2}-\d{2})?",
+        lambda m: f"{m.group(1)}{dates}",
+        template_link,
+        count=1,
+    )
+    return swapped or template_link
+
+
+def _searched_leg_pairs(route_group: RouteGroup, origin: str, destination: str) -> list[tuple[str, str]]:
+    """The SEARCHED (origin, destination) code for each leg in order: leg 1 =
+    origin->destination, then each configured extra leg (empty destination = home).
+    Same order as the stored actual legs, so actual airports can be annotated with
+    the searched metro code by position."""
+    home = origin.upper()
+    pairs: list[tuple[str, str]] = [(home, destination.upper())]
+    for leg in (getattr(route_group, "multi_city_legs", None) or []):
+        if not isinstance(leg, dict):
+            continue
+        leg_o = str(leg.get("origin") or "").upper()
+        leg_d = str(leg.get("destination") or "").upper() or home
+        if leg_o:
+            pairs.append((leg_o, leg_d))
+    return pairs
+
+
+def _multi_city_route_label(
+    itinerary: dict,
+    dep_airport: str,
+    arr_airport: str,
+    return_from: str,
+    config_route: str,
+    searched_pairs: list[tuple[str, str]],
+) -> str:
+    """Each flight leg as a FROM-TO pair joined by ' / ', as the trip is flown/
+    configured (open-jaw: pairs do NOT chain). Prefers the actual per-leg airports
+    in itinerary['legs'], annotated with the searched metro code at the same
+    position (e.g. NRT (TYO) / ICN (SEL)); else the dep/arrival + return-from
+    endpoints; else the form-configured route (used for N-A rows).
+
+    e.g. YVR-BER / BUD-YVR  (open-jaw, 2 flights)
+         YVR-BER / BER-LON / BUD-YVR  (3 flights)
+    """
+    legs = itinerary.get("legs")
+    pairs: list[str] = []
+    if isinstance(legs, list):
+        for i, leg in enumerate(legs):
+            if not isinstance(leg, dict):
+                continue
+            searched = searched_pairs[i] if i < len(searched_pairs) else ("", "")
+            o = _display_airport(leg.get("actual_origin"), searched[0])
+            d = _display_airport(leg.get("actual_destination"), searched[1])
+            if o and d:
+                pairs.append(f"{o}-{d}")
+    if pairs:
+        return " / ".join(pairs)
+
+    # No per-leg data (e.g. an N-A row): use the form-configured route so the cell
+    # still shows the intended itinerary rather than a degenerate endpoint guess.
+    if return_from:
+        return f"{dep_airport}-{arr_airport} / {return_from}-{dep_airport}"
+    return config_route
 
 
 def _safe_stop_label(value: object, stops: object = None) -> str:
@@ -249,7 +302,6 @@ def export_route_group(
     all_dates = _export_dates(route_group, [r.depart_date for r in all_results])
 
     cheapest_by_origin_date: dict[tuple[str, object], AllFlightResult] = {}
-    prices_by_route: dict[tuple[str, str], list[float]] = {}
 
     for r in all_results:
         key = (r.origin, r.depart_date)
@@ -258,9 +310,6 @@ def export_route_group(
             cheapest_by_origin_date[key] = r
         elif _result_sort_key(r) < _result_sort_key(cheapest_by_origin_date[key]):
             cheapest_by_origin_date[key] = r
-
-        route_key = (r.origin, r.destination)
-        prices_by_route.setdefault(route_key, []).append(float(r.price))
 
     # --------------------------------------------------
     # MAIN ORIGIN SHEETS
@@ -272,20 +321,55 @@ def export_route_group(
 
     main_headers = list(_MAIN_HEADERS) + (["Verification Link"] if include_links else [])
 
+    # Route column shows the full path in one cell: ORIGIN-DEST-ORIGIN for a round
+    # trip (e.g. MAN-VCE-MAN). The destination uses the actual airport flown (e.g.
+    # FCO when ROM metro was searched), falling back to the group's dest codes.
+    group_dest_codes = ", ".join(
+        str(code).strip().upper() for code in (route_group.destinations or []) if str(code).strip()
+    )
+
     for origin, sheet_name in sheet_name_map.items():
         ws = wb.create_sheet(title=_safe_sheet_title(wb, sheet_name, fallback=origin))
         _write_header_row(ws, main_headers)
 
+        # A template search link for N-A rows = any collected result's deep_link for
+        # this origin (the stable Kayak search URL with the exact scraper filters);
+        # we swap this row's dates into it so even no-fare dates get a clickable
+        # verify-link instead of N-A.
+        na_template = next(
+            (
+                r.deep_link
+                for (o, _d), r in cheapest_by_origin_date.items()
+                if o == origin and getattr(r, "deep_link", None)
+            ),
+            None,
+        )
+
         for row_idx, d in enumerate(all_dates, start=2):
             result = cheapest_by_origin_date.get((origin, d))
 
+            arrival_airport = group_dest_codes
+            if result is not None:
+                itinerary = getattr(result, "itinerary_data", None)
+                actual_dest = (itinerary or {}).get("actual_outbound_destination") if isinstance(itinerary, dict) else None
+                resolved = _display_airport(actual_dest, getattr(result, "destination", "") or group_dest_codes)
+                if resolved:
+                    arrival_airport = resolved
+
+            # Round trip route = out + back: MAN-VCE-MAN.
+            route = f"{origin}-{arrival_airport or group_dest_codes}-{origin}"
+
+            # Return Date = return flight date. Prefer the actual return_date the
+            # scraper captured; else depart + nights (the round-trip return rule).
+            ending_date = None
+            if result is not None and isinstance(getattr(result, "itinerary_data", None), dict):
+                ending_date = result.itinerary_data.get("return_date")
+            if not ending_date:
+                ending_date = d + timedelta(days=int(route_group.nights or 0))
+
             _set_date_cell(ws, row=row_idx, column=1, value=d)
-            ws.cell(row=row_idx, column=2, value=origin)
-            ws.cell(
-                row=row_idx,
-                column=3,
-                value=route_group.destination_label,
-            )
+            _set_date_cell(ws, row=row_idx, column=2, value=ending_date)
+            ws.cell(row=row_idx, column=3, value=route)
             ws.cell(row=row_idx, column=4, value=route_group.nights)
 
             if result:
@@ -313,7 +397,12 @@ def export_route_group(
                 ws.cell(row=row_idx, column=7, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
                 if include_links:
-                    ws.cell(row=row_idx, column=9, value=_MISSING_VALUE)
+                    # No fare found, but still give a clickable search link to verify.
+                    ws.cell(
+                        row=row_idx,
+                        column=9,
+                        value=_na_verification_link(na_template, d, ending_date),
+                    )
 
         _autosize_columns(ws)
 
@@ -332,7 +421,12 @@ def export_route_group(
         ws = wb.create_sheet(title=_safe_sheet_title(wb, sheet_name, fallback="Journey"))
 
         if columns >= 6:
-            _write_header_row(ws, _MAIN_HEADERS)
+            # Special sheets keep their own layout (no Return Date column) so the
+            # main-sheet Return Date addition doesn't shift their cells.
+            _write_header_row(
+                ws,
+                ["Date", "Dep Airport", "Arrival Airport", "Nights", "Airline", "Stop Result", "Duration", "Flight Price"],
+            )
         else:
             _write_header_row(
                 ws, ["Date", "Dep Airport", "Arrival Airport", "Flight Price"]
@@ -383,99 +477,6 @@ def export_route_group(
                     ws.cell(row=row_idx, column=4, value=_MISSING_VALUE)
 
         _autosize_columns(ws)
-
-    # --------------------------------------------------
-    # BEST DEALS SHEET
-    # --------------------------------------------------
-
-    deals = []
-
-    for r in all_results:
-        route_key = (r.origin, r.destination)
-        avg_price = mean(prices_by_route[route_key])
-
-        savings = avg_price - float(r.price)
-
-        deals.append(
-            {
-                "origin": r.origin,
-                "destination": r.destination,
-                "date": r.depart_date,
-                "airline": r.airline,
-                "price": float(r.price),
-                "savings": savings,
-            }
-        )
-
-    deals.sort(
-        key=lambda x: (
-            -x["savings"],
-            x["price"],
-        )
-    )
-
-    ws = wb.create_sheet("Best Deals")
-    _write_header_row(ws, _DEALS_HEADERS)
-
-    for i, d in enumerate(deals[:25], start=2):
-        ws.cell(row=i, column=1, value=i - 1)
-        ws.cell(row=i, column=2, value=d["origin"])
-        ws.cell(row=i, column=3, value=d["destination"])
-        _set_date_cell(ws, row=i, column=4, value=d["date"])
-        ws.cell(row=i, column=5, value=d["airline"])
-        ws.cell(row=i, column=6, value=int(round(d["price"])))
-        ws.cell(row=i, column=7, value=int(round(d["savings"])))
-
-    _autosize_columns(ws)
-
-    # --------------------------------------------------
-    # WEEKEND DEALS
-    # --------------------------------------------------
-
-    weekend = [
-        r for r in all_results
-        if r.depart_date.weekday() in (4, 5, 6)
-    ]
-
-    weekend.sort(key=_result_sort_key)
-
-    ws = wb.create_sheet("Weekend Deals")
-    _write_header_row(ws, _WEEKEND_HEADERS)
-
-    for i, r in enumerate(weekend[:25], start=2):
-        ws.cell(row=i, column=1, value=r.origin)
-        ws.cell(row=i, column=2, value=r.destination)
-        _set_date_cell(ws, row=i, column=3, value=r.depart_date)
-        ws.cell(row=i, column=4, value=r.airline)
-        ws.cell(row=i, column=5, value=int(round(float(r.price))))
-
-    _autosize_columns(ws)
-
-    # --------------------------------------------------
-    # ORIGIN SUMMARY
-    # --------------------------------------------------
-
-    ws = wb.create_sheet("Summary")
-    _write_header_row(ws, _SUMMARY_HEADERS)
-
-    row = 2
-
-    for origin in route_group.origins:
-        rows = [r for r in all_results if r.origin == origin]
-
-        if not rows:
-            continue
-
-        prices = [float(r.price) for r in rows]
-
-        ws.cell(row=row, column=1, value=origin)
-        ws.cell(row=row, column=2, value=len(rows))
-        ws.cell(row=row, column=3, value=int(round(min(prices))))
-        ws.cell(row=row, column=4, value=int(round(mean(prices))))
-
-        row += 1
-
-    _autosize_columns(ws)
 
     # --------------------------------------------------
     # FINISH
@@ -541,6 +542,10 @@ def _export_multi_city_route_group(
         _write_header_row(ws, headers)
 
         rows_by_date = {row.depart_date: row for row in rows}
+        # Template link for N-A rows: any collected deep_link on this route.
+        na_template = next(
+            (r.deep_link for r in rows if getattr(r, "deep_link", None)), None
+        )
 
         for row_idx, depart_date in enumerate(all_dates, start=2):
             result = rows_by_date.get(depart_date)
@@ -559,31 +564,53 @@ def _export_multi_city_route_group(
                 itinerary.get("return_origin") or (itinerary.get("inbound") or {}).get("origin"),
             )
 
+            # Route column = each ACTUAL flight leg as a FROM-TO pair joined by " / ",
+            # exactly as the trip is flown/configured (open-jaw: the pairs do NOT
+            # chain -- the gap between e.g. BER and BUD is the open jaw, no flight).
+            # e.g. YVR-BER / BUD-YVR, or YVR-BER / BER-LON / BUD-YVR. Built from the
+            # per-leg airports when available, else the dep/arrival/return-from
+            # endpoints. _route_legs returns the actual-airport pairs (metro-annotated).
+            searched_pairs = _searched_leg_pairs(route_group, origin, destination)
+            config_route = " / ".join(f"{o}-{d}" for o, d in searched_pairs)
+            route = _multi_city_route_label(
+                itinerary,
+                dep_airport or origin,
+                arr_airport or destination,
+                return_from,
+                config_route,
+                searched_pairs,
+            )
+
             _set_date_cell(ws, row=row_idx, column=1, value=depart_date)
             if return_date:
                 _set_date_cell(ws, row=row_idx, column=2, value=return_date)
             else:
                 ws.cell(row=row_idx, column=2, value=_MISSING_VALUE)
-            ws.cell(row=row_idx, column=3, value=dep_airport or origin)
-            ws.cell(row=row_idx, column=4, value=arr_airport or destination)
-            ws.cell(row=row_idx, column=5, value=return_from or _MISSING_VALUE)
-            ws.cell(row=row_idx, column=6, value=route_group.nights)
+            ws.cell(row=row_idx, column=3, value=route)
+            ws.cell(row=row_idx, column=4, value=route_group.nights)
             if result:
-                ws.cell(row=row_idx, column=7, value=result.airline)
-                ws.cell(row=row_idx, column=8, value=_safe_stop_label(result.stop_label, result.stops))
-                ws.cell(row=row_idx, column=9, value=_safe_duration_label(result))
-                ws.cell(row=row_idx, column=10, value=int(round(float(result.price))))
+                ws.cell(row=row_idx, column=5, value=result.airline)
+                ws.cell(row=row_idx, column=6, value=_safe_stop_label(result.stop_label, result.stops))
+                ws.cell(row=row_idx, column=7, value=_safe_duration_label(result))
+                ws.cell(row=row_idx, column=8, value=int(round(float(result.price))))
                 if include_links:
-                    ws.cell(row=row_idx, column=11, value=result.deep_link or _MISSING_VALUE)
+                    ws.cell(row=row_idx, column=9, value=result.deep_link or _MISSING_VALUE)
                 itinerary_prices_by_origin.setdefault(origin, []).append(float(result.price))
                 all_itinerary_prices.append(result)
             else:
+                ws.cell(row=row_idx, column=5, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=6, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=7, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
-                ws.cell(row=row_idx, column=9, value=_MISSING_VALUE)
-                ws.cell(row=row_idx, column=10, value=_MISSING_VALUE)
                 if include_links:
-                    ws.cell(row=row_idx, column=11, value=_MISSING_VALUE)
+                    # No fare, but still give a clickable verify link. Multi-city
+                    # chain URLs have several date segments; swap only the leading
+                    # depart date, leaving the rest of the (route + filters) intact.
+                    ws.cell(
+                        row=row_idx,
+                        column=9,
+                        value=_na_verification_link(na_template, depart_date, None),
+                    )
 
         _autosize_columns(ws)
 
@@ -601,6 +628,9 @@ def _write_header_row(ws, headers: list[str]) -> None:
 
 
 def _autosize_columns(ws) -> None:
+    # Center every cell (data + headers) horizontally and vertically. Called once
+    # per sheet on both export paths, so this aligns the whole workbook uniformly.
+    center = Alignment(horizontal="center", vertical="center")
     for col_cells in ws.columns:
         max_length = max(
             (
@@ -610,6 +640,11 @@ def _autosize_columns(ws) -> None:
             ),
             default=0,
         )
+
+        for c in col_cells:
+            # Preserve the bold header font set in _write_header_row; only the
+            # alignment is (re)applied here.
+            c.alignment = center
 
         col_letter = get_column_letter(col_cells[0].column)
         ws.column_dimensions[col_letter].width = max_length + 3

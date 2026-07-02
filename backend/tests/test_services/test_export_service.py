@@ -18,11 +18,13 @@ def make_route_group(
     special_sheets: list | None = None,
     destination_label: str = "SGN",
     nights: int = 7,
+    destinations: list | None = None,
 ) -> MagicMock:
     rg = MagicMock()
     rg.id = uuid.uuid4()
     rg.name = "Test Group"
     rg.destination_label = destination_label
+    rg.destinations = destinations if destinations is not None else ["SGN"]
     rg.nights = nights
     rg.sheet_name_map = sheet_name_map or {"YVR": "YVR"}
     rg.special_sheets = special_sheets or []
@@ -73,22 +75,37 @@ def test_export_has_correct_headers() -> None:
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [make_result()])))
     ws = wb["YVR"]
     assert ws.cell(1, 1).value == "Date"
-    assert ws.cell(1, 2).value == "Dep Airport"
-    assert ws.cell(1, 3).value == "Arrival Airport"
+    assert ws.cell(1, 2).value == "Return Date"
+    assert ws.cell(1, 3).value == "Route"
     assert ws.cell(1, 4).value == "Nights"
     assert ws.cell(1, 5).value == "Airline"
     assert ws.cell(1, 6).value == "Stop Result"
     assert ws.cell(1, 7).value == "Duration"
     assert ws.cell(1, 8).value == "Flight Price"
     assert ws.cell(2, 1).number_format == "DD-MM-YYYY"
+    # Return Date = depart + nights, also a real date cell.
+    assert ws.cell(2, 2).number_format == "DD-MM-YYYY"
 
 
-def test_export_destination_label_in_arrivel_column() -> None:
-    rg = make_route_group(destination_label="TYO/SHA")
-    result = make_result()
+def test_export_route_column_shows_round_trip_path() -> None:
+    # Round-trip Route is one cell: ORIGIN-DEST-ORIGIN (e.g. YVR-SGN-YVR). The
+    # destination uses the actual flown code; the journey label is the filename.
+    rg = make_route_group(destination_label="Saigon", destinations=["SGN"])
+    result = make_result(origin="YVR", destination="SGN")
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
     ws = wb["YVR"]
-    assert ws.cell(2, 3).value == "TYO/SHA"
+    assert ws.cell(2, 3).value == "YVR-SGN-YVR"
+
+
+def test_export_route_column_annotates_searched_metro_code() -> None:
+    # When a metro code is searched but a specific airport is flown, the Route
+    # shows "ACTUAL (SEARCHED)" for that hop -- e.g. searched ROM, flew FCO.
+    rg = make_route_group(destination_label="London - Rome", destinations=["ROM"])
+    result = make_result(origin="YVR", destination="ROM")
+    result.itinerary_data = {"actual_outbound_destination": "FCO"}
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
+    ws = wb["YVR"]
+    assert ws.cell(2, 3).value == "YVR-FCO (ROM)-YVR"
 
 
 def test_export_nights_in_night_column() -> None:
@@ -96,7 +113,17 @@ def test_export_nights_in_night_column() -> None:
     result = make_result()
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
     ws = wb["YVR"]
+    # Nights shifted to column 4 (Return Date @2, Route @3).
     assert ws.cell(2, 4).value == 12
+
+
+def test_export_return_date_is_depart_plus_nights() -> None:
+    rg = make_route_group(nights=3)
+    d = date.today() + timedelta(days=1)
+    result = make_result(depart_date=d)
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
+    ws = wb["YVR"]
+    assert ws.cell(2, 2).value.date() == d + timedelta(days=3)
 
 
 def test_export_prices_are_integers() -> None:
@@ -127,6 +154,7 @@ def test_export_missing_date_shows_none_price() -> None:
     results = [make_result(origin="YVR", depart_date=today + timedelta(days=1), price=100.0)]
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, results)))
     ws = wb["Toronto"]
+    # Airline/Stop/Duration/Price are columns 5-8 (Return Date @2, Route @3).
     assert ws.cell(2, 5).value == "N-A"
     assert ws.cell(2, 6).value == "N-A"
     assert ws.cell(2, 7).value == "N-A"
@@ -183,6 +211,7 @@ def test_export_uses_per_leg_duration_label_when_available() -> None:
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
     ws = wb["YVR"]
 
+    # Duration is column 7 (Return Date @2, Route @3 collapse airport columns).
     assert ws.cell(2, 7).value == "24h 10m / 12h 5m"
 
 
@@ -206,15 +235,90 @@ def test_multi_city_export_creates_one_sheet_per_route() -> None:
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [first, second])))
 
     assert wb.sheetnames == ["YOW-LGW", "YOW-LHR"]
-    assert wb["YOW-LHR"].cell(1, 5).value == "Return From"
-    assert wb["YOW-LHR"].cell(1, 8).value == "Stop Result"
-    assert wb["YOW-LHR"].cell(1, 9).value == "Duration"
-    assert wb["YOW-LHR"].cell(1, 10).value == "Flight Price"
-    assert wb["YOW-LHR"].cell(2, 4).value == "LHR"
-    assert wb["YOW-LHR"].cell(2, 5).value == "MXP"  # Return From
-    assert wb["YOW-LGW"].cell(2, 4).value == "LGW"
+    # Multi-city now has one Route column (col 3) instead of Dep/Arrival/Return From.
+    assert wb["YOW-LHR"].cell(1, 3).value == "Route"
+    assert wb["YOW-LHR"].cell(1, 6).value == "Stop Result"
+    assert wb["YOW-LHR"].cell(1, 7).value == "Duration"
+    assert wb["YOW-LHR"].cell(1, 8).value == "Flight Price"
+    # No per-leg data here -> fallback: outbound pair / return-from-home pair,
+    # joined by ' / ' (the open-jaw gap, not a continuous chain).
+    assert wb["YOW-LHR"].cell(2, 3).value == "YOW-LHR / MXP-YOW"
+    assert wb["YOW-LGW"].cell(2, 3).value == "YOW-LGW / MXP-YOW"
     assert wb["YOW-LHR"].cell(2, 1).number_format == "DD-MM-YYYY"
     assert wb["YOW-LHR"].cell(2, 2).number_format == "DD-MM-YYYY"
+
+
+def test_multi_city_route_uses_per_leg_pairs() -> None:
+    # When per-leg airports are present, the Route is each flight leg as a FROM-TO
+    # pair joined by ' / ' (open-jaw: pairs do NOT chain). 3 flights here.
+    rg = make_route_group(sheet_name_map={"YVR": "YVR"})
+    rg.trip_type = "multi_city"
+    rg.origins = ["YVR"]
+    result = make_result(origin="YVR", destination="BER", price=1500.0)
+    result.itinerary_data = {
+        "return_date": "2026-07-12",
+        "legs": [
+            {"actual_origin": "YVR", "actual_destination": "BER"},
+            {"actual_origin": "BER", "actual_destination": "LON"},
+            {"actual_origin": "BUD", "actual_destination": "YVR"},
+        ],
+    }
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
+    ws = wb["YVR"]
+    assert ws.cell(2, 3).value == "YVR-BER / BER-LON / BUD-YVR"
+
+
+def test_na_row_gets_search_link_with_swapped_dates() -> None:
+    # With include_links, an N-A (no-fare) row still gets a clickable verify link:
+    # a sibling result's stable search URL with THIS row's dates swapped in (same
+    # scraper filters). The collected date keeps its own link.
+    rg = make_route_group(sheet_name_map={"YVR": "YVR"}, nights=3)
+    rg.days_ahead = 3
+    rg.start_date = date(2026, 7, 1)
+    rg.end_date = date(2026, 7, 3)
+    result = make_result(origin="YVR", destination="SGN", depart_date=date(2026, 7, 1))
+    result.deep_link = "https://www.kayak.com/flights/YVR-SGN/2026-07-01/2026-07-04?sort=price_a&fs=stops=0"
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result], include_links=True)))
+    ws = wb["YVR"]
+    # Row 2 (collected) keeps its real link; rows 3-4 (N-A) get date-swapped links.
+    assert ws.cell(2, 9).value == result.deep_link
+    assert ws.cell(3, 9).value == "https://www.kayak.com/flights/YVR-SGN/2026-07-02/2026-07-05?sort=price_a&fs=stops=0"
+    assert ws.cell(4, 9).value == "https://www.kayak.com/flights/YVR-SGN/2026-07-03/2026-07-06?sort=price_a&fs=stops=0"
+
+
+def test_na_row_link_is_na_when_no_template_exists() -> None:
+    # If NO date on the route ever collected a link, N-A rows stay N-A (nothing to
+    # build a template from).
+    rg = make_route_group(sheet_name_map={"YVR": "YVR", "YYZ": "Toronto"}, nights=3)
+    rg.days_ahead = 2
+    rg.start_date = date(2026, 7, 1)
+    rg.end_date = date(2026, 7, 2)
+    result = make_result(origin="YVR", depart_date=date(2026, 7, 1))
+    result.deep_link = "https://www.kayak.com/flights/YVR-SGN/2026-07-01/2026-07-04"
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result], include_links=True)))
+    # Toronto sheet has no collected results at all -> N-A link.
+    ws = wb["Toronto"]
+    assert ws.cell(2, 9).value == "N-A"
+
+
+def test_multi_city_route_annotates_searched_metro_per_leg() -> None:
+    # Actual airports flown are annotated with the SEARCHED metro code at the same
+    # leg position, e.g. searched TYO/SEL but flew NRT/ICN -> NRT (TYO) / ICN (SEL).
+    rg = make_route_group(sheet_name_map={"YEG": "YEG"})
+    rg.trip_type = "multi_city"
+    rg.origins = ["YEG"]
+    rg.multi_city_legs = [{"origin": "SEL", "destination": "", "nights_before": 9}]
+    result = make_result(origin="YEG", destination="TYO", price=2139.0)
+    result.itinerary_data = {
+        "return_date": "2026-07-10",
+        "legs": [
+            {"actual_origin": "YEG", "actual_destination": "NRT"},
+            {"actual_origin": "ICN", "actual_destination": "YEG"},
+        ],
+    }
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
+    ws = wb["YEG"]
+    assert ws.cell(2, 3).value == "YEG-NRT (TYO) / ICN (SEL)-YEG"
 
 
 def test_multi_city_export_sanitizes_invalid_sheet_names() -> None:

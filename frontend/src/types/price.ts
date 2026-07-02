@@ -17,9 +17,16 @@ export interface DailyPrice {
     legs?: Array<{
       duration_text?: string | null;
       duration_minutes?: number | null;
+      /** Actual airport flown on this leg (e.g. NRT when TYO metro was searched). */
+      actual_origin?: string | null;
+      actual_destination?: string | null;
     }> | null;
   } | null;
   scraped_at: string;
+  /** UI-only: true for a synthesized row representing a date in the travel window
+   *  that has no collected fare. Such rows show "-" for fare columns and (when
+   *  available) a date-swapped search link to verify manually. */
+  _missing?: boolean;
 }
 
 export interface PriceTrend {

@@ -1,21 +1,23 @@
 import { useMemo, useState } from "react";
 
 import type { DailyPrice } from "../types/price";
-import type { TripType } from "../types/route-group";
+import type { MultiCityLegConfig, TripType } from "../types/route-group";
 import { formatDisplayDate, formatFreshnessLabel } from "../utils/format";
 import { Button } from "./ui/Button";
 import { Skeleton } from "./ui/Skeleton";
 
+// "route" is a synthetic column (origin-dest[-returnFrom]-origin in one cell); it
+// has no DailyPrice field of its own, so sorting falls back to the origin field.
+type SortableKey = keyof DailyPrice;
 interface Column {
-  key: keyof DailyPrice;
+  key: SortableKey | "route";
   label: string;
   align?: "left" | "right";
 }
 
 const BASE_COLUMNS: Column[] = [
   { key: "depart_date", label: "Date" },
-  { key: "origin", label: "Origin" },
-  { key: "destination", label: "Destination" },
+  { key: "route", label: "Route" },
   { key: "airline", label: "Airline" },
   { key: "stops", label: "Stops" },
   { key: "duration_minutes", label: "Duration" },
@@ -23,6 +25,69 @@ const BASE_COLUMNS: Column[] = [
   { key: "deep_link", label: "Link" },
   { key: "scraped_at", label: "Freshness" },
 ];
+
+// Show the actual airport flown, annotating the searched code when they differ:
+// actual=NRT searched=TYO -> "NRT (TYO)"; equal/missing -> as-is. Mirrors the
+// export's _display_airport so the table and Excel read the same.
+function displayAirport(actual?: string | null, searched?: string | null): string {
+  const a = (actual ?? "").trim().toUpperCase();
+  const s = (searched ?? "").trim().toUpperCase();
+  if (!a) return s;
+  if (s && s !== a) return `${a} (${s})`;
+  return a;
+}
+
+// Round trip = compact chain MAN-VCE-MAN (with metro annotation, e.g.
+// YVR-FCO (ROM)-YVR).
+// Multi-city (open-jaw) = each flight leg as a FROM-TO pair joined by " / ", e.g.
+// YVR-BER / BUD-YVR or YVR-BER / BER-LON / BUD-YVR. The pairs deliberately do NOT
+// chain (the gap = the open jaw). Prefers the ACTUAL airports flown (from
+// itinerary_data.legs, so NRT (TYO) shows like the export); falls back to the
+// group's form leg config when no per-leg data is present (e.g. N-A rows).
+function buildRoute(
+  price: DailyPrice,
+  isMultiCity: boolean,
+  homeOrigin: string,
+  legs?: MultiCityLegConfig[] | null,
+): string {
+  const actualLegs = price.itinerary_data?.legs;
+
+  if (!isMultiCity) {
+    const dest = actualLegs?.[0]
+      ? displayAirport(actualLegs[0].actual_destination, price.destination)
+      : price.destination;
+    return `${price.origin}-${dest}-${price.origin}`;
+  }
+
+  // The SEARCHED leg codes in order: leg 1 = origin->destination, then each
+  // configured extra leg (empty destination = back to home). Same order as the
+  // stored actual legs, so we can annotate each actual airport with its searched
+  // metro code by position -> e.g. NRT (TYO) / ICN (SEL).
+  const searchedPairs: Array<[string, string]> = [
+    [price.origin.toUpperCase(), price.destination.toUpperCase()],
+    ...(legs ?? []).map(
+      (leg) =>
+        [leg.origin.toUpperCase(), (leg.destination || homeOrigin).toUpperCase()] as [string, string],
+    ),
+  ];
+
+  // Prefer the real per-leg airports (matches the export), annotated with the
+  // searched code at the same position when they differ.
+  if (actualLegs && actualLegs.length > 0) {
+    const pairs = actualLegs
+      .map((leg, i) => {
+        const searched = searchedPairs[i];
+        const o = displayAirport(leg.actual_origin, searched?.[0]);
+        const d = displayAirport(leg.actual_destination, searched?.[1]);
+        return o && d ? `${o}-${d}` : "";
+      })
+      .filter(Boolean);
+    if (pairs.length > 0) return pairs.join(" / ");
+  }
+
+  // Fallback (no per-leg data, e.g. N-A rows): the searched codes from the form.
+  return searchedPairs.map(([o, d]) => `${o}-${d}`).join(" / ");
+}
 
 interface PriceTableProps {
   prices: DailyPrice[];
@@ -34,6 +99,10 @@ interface PriceTableProps {
   tripType?: TripType;
   nights?: number;
   returnOrigin?: string | null;
+  /** Home origin + configured extra legs, used to build the multi-city Route
+   *  column exactly as entered in the form. */
+  homeOrigin?: string;
+  multiCityLegs?: MultiCityLegConfig[] | null;
 }
 
 function addDays(rawDate: string, days: number): string {
@@ -103,7 +172,7 @@ function HeaderCell({
   column: Column;
   sortDir: "asc" | "desc";
   sortKey: keyof DailyPrice;
-  onToggleSort: (key: keyof DailyPrice) => void;
+  onToggleSort: (key: Column["key"]) => void;
 }) {
   const isSorted = sortKey === column.key;
   return (
@@ -129,7 +198,7 @@ function FragmentWithMultiCityHeaders({
   isMultiCity: boolean;
   sortDir: "asc" | "desc";
   sortKey: keyof DailyPrice;
-  onToggleSort: (key: keyof DailyPrice) => void;
+  onToggleSort: (key: Column["key"]) => void;
 }) {
   return (
     <>
@@ -139,8 +208,8 @@ function FragmentWithMultiCityHeaders({
         sortKey={sortKey}
         onToggleSort={onToggleSort}
       />
-      {isMultiCity && column.key === "destination" ? <th className="px-6 py-3">Return From</th> : null}
-      {isMultiCity && column.key === "destination" ? <th className="px-6 py-3">Return Date</th> : null}
+      {/* Multi-city: a Return Date column follows the single Route column. */}
+      {isMultiCity && column.key === "route" ? <th className="px-6 py-3">Return Date</th> : null}
     </>
   );
 }
@@ -154,7 +223,8 @@ export function PriceTable({
   groupCurrency,
   tripType,
   nights = 0,
-  returnOrigin,
+  homeOrigin,
+  multiCityLegs,
 }: PriceTableProps) {
   const [sortKey, setSortKey] = useState<keyof DailyPrice>("depart_date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -165,10 +235,9 @@ export function PriceTable({
       return BASE_COLUMNS;
     }
 
+    // Multi-city: the destination column is rendered as Return From + Return Date
+    // (see FragmentWithMultiCityHeaders), so only the price relabel applies here.
     return BASE_COLUMNS.map((column) => {
-      if (column.key === "destination") {
-        return { ...column, label: "Outbound To" };
-      }
       if (column.key === "price") {
         return { ...column, label: "Total Fare" };
       }
@@ -176,12 +245,14 @@ export function PriceTable({
     });
   }, [isMultiCity]);
 
-  function toggleSort(key: keyof DailyPrice) {
-    if (sortKey === key) {
+  // The synthetic "route" column has no DailyPrice field; sort it by origin.
+  function toggleSort(key: Column["key"]) {
+    const sortable: keyof DailyPrice = key === "route" ? "origin" : key;
+    if (sortKey === sortable) {
       setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
       return;
     }
-    setSortKey(key);
+    setSortKey(sortable);
     setSortDir("asc");
   }
 
@@ -240,38 +311,40 @@ export function PriceTable({
                   }`}
                 >
                   <td className="whitespace-nowrap px-6 py-3 text-slate-700">{formatDisplayDate(price.depart_date)}</td>
+                  {/* Single Route column: MAN-VCE-MAN (round trip) or the full
+                      multi-city loop YEG-NRT-ICN-YEG. */}
                   <td className="whitespace-nowrap px-6 py-3 font-medium text-slate-800">
                     <span className="rounded-md bg-brand-50 px-2 py-1 font-mono text-xs font-semibold text-brand-700">
-                      {price.origin}
+                      {buildRoute(price, isMultiCity, homeOrigin ?? price.origin, multiCityLegs)}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-6 py-3 text-slate-700">
-                    <span className="rounded-md bg-emerald-50 px-2 py-1 font-mono text-xs font-semibold text-emerald-700">
-                      {price.destination}
-                    </span>
-                  </td>
-                  {isMultiCity ? (
-                    <td className="whitespace-nowrap px-6 py-3 text-slate-700">
-                      <span className="rounded-md bg-amber-50 px-2 py-1 font-mono text-xs font-semibold text-amber-700">
-                        {returnOrigin || "-"}
-                      </span>
-                    </td>
-                  ) : null}
                   {isMultiCity ? (
                     <td className="whitespace-nowrap px-6 py-3 text-slate-700">
                       {formatDisplayDate(addDays(price.depart_date, nights))}
                     </td>
                   ) : null}
-                  <td className="min-w-[16rem] px-6 py-3 text-slate-700">{price.airline}</td>
-                  <td className="whitespace-nowrap px-6 py-3 text-slate-700">
-                    <span className={`font-medium ${stopResult.tone}`}>{stopResult.label}</span>
+                  <td className="min-w-[16rem] px-6 py-3 text-slate-700">
+                    {price._missing ? <span className="text-slate-300">-</span> : price.airline}
                   </td>
                   <td className="whitespace-nowrap px-6 py-3 text-slate-700">
-                    {formatDuration(price)}
+                    {price._missing ? (
+                      <span className="text-slate-300">-</span>
+                    ) : (
+                      <span className={`font-medium ${stopResult.tone}`}>{stopResult.label}</span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-6 py-3 text-slate-700">
+                    {price._missing ? <span className="text-slate-300">-</span> : formatDuration(price)}
                   </td>
                   <td className="whitespace-nowrap px-6 py-3 text-right font-medium text-slate-900">
-                    {Math.round(price.price).toLocaleString()}{" "}
-                    <span className="text-xs text-slate-400">{groupCurrency ?? price.currency}</span>
+                    {price._missing ? (
+                      <span className="text-slate-300">-</span>
+                    ) : (
+                      <>
+                        {Math.round(price.price).toLocaleString()}{" "}
+                        <span className="text-xs text-slate-400">{groupCurrency ?? price.currency}</span>
+                      </>
+                    )}
                   </td>
                   <td className="whitespace-nowrap px-6 py-3 text-slate-500">
                     {price.deep_link ? (
@@ -288,7 +361,11 @@ export function PriceTable({
                     )}
                   </td>
                   <td className="whitespace-nowrap px-6 py-3 text-slate-400">
-                    <div className="font-medium text-slate-600">{formatFreshnessLabel(price.scraped_at)}</div>
+                    {price._missing ? (
+                      <span className="text-slate-300">-</span>
+                    ) : (
+                      <div className="font-medium text-slate-600">{formatFreshnessLabel(price.scraped_at)}</div>
+                    )}
                   </td>
                 </tr>
               );
