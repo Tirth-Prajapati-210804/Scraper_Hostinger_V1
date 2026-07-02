@@ -228,10 +228,22 @@ async def get_progress(session: AsyncSession, group_id: uuid.UUID) -> RouteGroup
     segments = iter_group_segments(group)
     total_dates = sum(len(segment.destinations) * len(dates) for segment in segments)
 
-    # Total collected
-    count_result = await session.execute(
-        select(func.count()).where(DailyCheapestPrice.route_group_id == group_id)
+    # Only rows whose destination the group would collect TODAY count toward
+    # progress. Multi-destination round-trip groups now collect ONE combined key
+    # ("ORY,CDG") -- their kept legacy per-airport rows ("ORY", "CDG") must not
+    # inflate coverage (668 legacy rows vs a 334 total would read as 200%).
+    expected_destinations = sorted(
+        {destination for segment in segments for destination in segment.destinations}
     )
+
+    def _scoped(*extra_filters):
+        conditions = [DailyCheapestPrice.route_group_id == group_id]
+        if expected_destinations:
+            conditions.append(DailyCheapestPrice.destination.in_(expected_destinations))
+        return (*conditions, *extra_filters)
+
+    # Total collected
+    count_result = await session.execute(select(func.count()).where(*_scoped()))
     dates_with_data = count_result.scalar_one() or 0
 
     # Last scraped
@@ -252,10 +264,7 @@ async def get_progress(session: AsyncSession, group_id: uuid.UUID) -> RouteGroup
 
     for origin, expected in expected_by_origin.items():
         collected_result = await session.execute(
-            select(func.count()).where(
-                DailyCheapestPrice.route_group_id == group_id,
-                DailyCheapestPrice.origin == origin,
-            )
+            select(func.count()).where(*_scoped(DailyCheapestPrice.origin == origin))
         )
         collected = collected_result.scalar_one() or 0
         per_origin[origin] = PerOriginProgress(total=expected, collected=collected)
@@ -264,7 +273,7 @@ async def get_progress(session: AsyncSession, group_id: uuid.UUID) -> RouteGroup
 
     dates_result = await session.execute(
         select(DailyCheapestPrice.depart_date)
-        .where(DailyCheapestPrice.route_group_id == group_id)
+        .where(*_scoped())
         .distinct()
         .order_by(DailyCheapestPrice.depart_date)
     )

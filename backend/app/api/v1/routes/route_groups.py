@@ -24,6 +24,7 @@ from app.schemas.route_group import (
 )
 from app.services import export_service, route_group_service
 from app.utils.location_resolver import search_location_suggestions
+from app.utils.route_segments import combined_destination_for_group
 
 router = APIRouter(prefix="/route-groups", tags=["route-groups"])
 
@@ -90,9 +91,43 @@ async def export_group(
     if not group:
         raise HTTPException(status_code=404, detail="Route group not found")
 
-    all_results_result = await session.execute(
-        select(AllFlightResult).where(AllFlightResult.route_group_id == group_id)
+    # Load only the CHEAPEST offer per (origin, destination, depart_date) instead of
+    # every raw offer. A group can accumulate tens of thousands of all_flight_results
+    # rows (~24.5k on a 334-day x 2-airport group), and loading them all as ORM objects
+    # made the route take ~75s -> the download timed out at the nginx/axios layer.
+    # The export already keeps only the cheapest per date (and the cheapest per date
+    # per destination for special sheets), so pre-deduping to one cheapest row per
+    # (origin, destination, date) here yields a BYTE-IDENTICAL workbook while cutting
+    # the row load ~18x (~1.3k rows) and the route to well under a second.
+    # DISTINCT ON keeps the first row per partition; ordering price ASC within the
+    # partition makes that first row the cheapest (duration/stops break ties, matching
+    # the export's _result_sort_key). Postgres requires the leading ORDER BY columns to
+    # match the DISTINCT ON expression list.
+    results_q = (
+        select(AllFlightResult)
+        .where(AllFlightResult.route_group_id == group_id)
+        .distinct(
+            AllFlightResult.origin,
+            AllFlightResult.destination,
+            AllFlightResult.depart_date,
+        )
+        .order_by(
+            AllFlightResult.origin,
+            AllFlightResult.destination,
+            AllFlightResult.depart_date,
+            AllFlightResult.price.asc(),
+            AllFlightResult.duration_minutes.asc().nulls_last(),
+            AllFlightResult.stops.asc().nulls_last(),
+        )
     )
+    # Multi-destination round-trip groups collect ONE combined search per date
+    # (destination key "ORY,CDG"). Their legacy per-airport rows are kept in the
+    # DB (client deletes them later) but must not surface as duplicate/stale
+    # dates in the workbook, so read only the combined rows here.
+    combined_key = combined_destination_for_group(group)
+    if combined_key:
+        results_q = results_q.where(AllFlightResult.destination == combined_key)
+    all_results_result = await session.execute(results_q)
     all_results = list(all_results_result.scalars().all())
 
     # Building the workbook (openpyxl) is CPU-bound; run it off the event loop so
@@ -100,8 +135,12 @@ async def export_group(
     excel_bytes = await asyncio.to_thread(
         export_service.export_route_group, group, all_results, include_links=include_links
     )
+    # Filename = the journey LABEL (e.g. "Manchester - Venice - Manchester"), which
+    # used to be repeated in every Arrival Airport cell; the cells now show the
+    # destination CODE instead, so the label lives here. Fall back to the group name.
+    label_source = (group.destination_label or "").strip() or group.name
     # Sanitize filename: strip dangerous chars, quotes, newlines, and limit length
-    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", group.name).strip("._") or "route-group"
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", label_source).strip("._") or "route-group"
     safe_name = safe_name.replace('"', "").replace("'", "")[:100]
     filename = f"{safe_name}.xlsx"
 

@@ -38,7 +38,9 @@ class DailyCheapestPrice(Base):
         UUID(as_uuid=True), ForeignKey("route_groups.id", ondelete="CASCADE"), nullable=False
     )
     origin: Mapped[str] = mapped_column(String(8), nullable=False)
-    destination: Mapped[str] = mapped_column(String(8), nullable=False)
+    # 64 chars: holds a comma-combined multi-airport destination key for round-trip
+    # groups (e.g. "ORY,CDG" or "ORY,LHR,CDG"), not just a single 3-letter code.
+    destination: Mapped[str] = mapped_column(String(64), nullable=False)
     depart_date: Mapped[date] = mapped_column(Date, nullable=False)
     airline: Mapped[str] = mapped_column(String(100), nullable=False)
     price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)

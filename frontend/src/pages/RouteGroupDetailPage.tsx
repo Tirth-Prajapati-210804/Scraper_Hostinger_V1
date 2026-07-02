@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Download, Pencil, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { resetGroupCaps, triggerGroupCollection } from "../api/collection";
@@ -32,6 +32,37 @@ import type { DailyPrice } from "../types/price";
 import { formatStopModeLabel } from "../utils/stopModes";
 import { formatFreshnessLabel } from "../utils/format";
 import { usePageTitle } from "../utils/usePageTitle";
+
+/** Every ISO date from start..end inclusive (capped at 730 to bound the table). */
+function enumerateDates(start: string | null, end: string | null): string[] {
+  if (!start || !end) return [];
+  const out: string[] = [];
+  let cur = start;
+  for (let i = 0; i < 730 && cur <= end; i++) {
+    out.push(cur);
+    cur = addDaysIso(cur, 1);
+  }
+  return out;
+}
+
+function addDaysIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Reuse a collected fare's stable search URL for a missing date by swapping the
+ *  date segment(s). Same approach as the Excel export so links stay consistent. */
+function swapSearchLinkDate(template: string | null, depart: string, ret: string): string | null {
+  if (!template) return null;
+  const dates = `${depart}/${ret}`;
+  const swapped = template.replace(
+    /(\/flights\/[^/]+\/)\d{4}-\d{2}-\d{2}(?:\/\d{4}-\d{2}-\d{2})?/,
+    `$1${dates}`,
+  );
+  return swapped || template;
+}
 
 export function RouteGroupDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -72,7 +103,14 @@ export function RouteGroupDetailPage() {
   const group = groupQuery.data;
   const activeOrigin = selectedOrigin || group?.origins[0] || "";
   const originForQuery = activeOrigin;
-  const destForQuery = group?.destinations[0] || "";
+  // Round-trip groups with multiple destination airports are saved under a single
+  // COMBINED destination key (e.g. "ORY,CDG") from one combined Kayak search, so the
+  // trend query must use that combined key to match the saved rows. Multi-city keeps
+  // per-airport rows, so it uses the first airport as before.
+  const destForQuery =
+    group && group.trip_type !== "multi_city" && group.destinations.length > 1
+      ? group.destinations.map((d) => d.trim().toUpperCase()).filter(Boolean).join(",")
+      : group?.destinations[0] || "";
   const chainLegs = group?.trip_type === "multi_city" ? (group.multi_city_legs ?? null) : null;
   const returnOrigin =
     group?.trip_type === "multi_city"
@@ -86,6 +124,44 @@ export function RouteGroupDetailPage() {
   const effectiveNights = chainLegs?.length
     ? chainLegs.reduce((days, leg) => days + leg.nights_before, 0)
     : (group?.nights ?? 0);
+
+  // Show EVERY date in the travel window as a table row: collected fares as-is,
+  // and missing dates as placeholder rows (Date/Route/Link populated, fare columns
+  // "-"). The verify link reuses a collected row's deep_link with this date swapped
+  // in -- same as the Excel export. Only fully fills once all pages are loaded so a
+  // gap isn't shown for a date that lives on a later page.
+  const filledPrices = useMemo<DailyPrice[]>(() => {
+    // Only fill the per-date calendar when a single origin is selected; "All
+    // origins" (selectedOrigin === "") mixes routes, so gap-filling is ambiguous.
+    if (!group || !selectedOrigin || !activeOrigin) return allPrices;
+    const windowDates = enumerateDates(group.start_date, group.end_date);
+    if (!windowDates.length || priceHasMore) return allPrices;
+
+    const byDate = new Map(allPrices.map((p) => [p.depart_date, p]));
+    const template = allPrices.find((p) => p.deep_link)?.deep_link ?? null;
+    const dest = group.destinations[0] ?? "";
+
+    return windowDates.map((d) => {
+      const existing = byDate.get(d);
+      if (existing) return existing;
+      return {
+        id: `missing-${activeOrigin}-${d}`,
+        origin: activeOrigin,
+        destination: dest,
+        depart_date: d,
+        airline: "",
+        price: NaN,
+        currency: group.currency,
+        provider: "",
+        deep_link: swapSearchLinkDate(template, d, addDaysIso(d, effectiveNights)),
+        stops: null,
+        stop_label: null,
+        duration_minutes: null,
+        scraped_at: "",
+        _missing: true,
+      } satisfies DailyPrice;
+    });
+  }, [group, selectedOrigin, activeOrigin, allPrices, priceHasMore, effectiveNights]);
 
   const trendQuery = useQuery({
     queryKey: ["price-trend", id, originForQuery, destForQuery],
@@ -479,15 +555,15 @@ export function RouteGroupDetailPage() {
                   </option>
                 ))}
               </Select>
-              {allPrices.length > 0 ? (
+              {filledPrices.length > 0 ? (
                 <span className="text-xs text-slate-400">
-                  {allPrices.length} rows{priceHasMore ? "+" : ""}
+                  {filledPrices.length} rows{priceHasMore ? "+" : ""}
                 </span>
               ) : null}
             </div>
           </div>
           <PriceTable
-            prices={allPrices}
+            prices={filledPrices}
             isLoading={pricesLoading && allPrices.length === 0}
             hasMore={priceHasMore}
             onLoadMore={handlePriceLoadMore}
@@ -496,6 +572,8 @@ export function RouteGroupDetailPage() {
             tripType={group.trip_type}
             nights={effectiveNights}
             returnOrigin={returnOrigin}
+            homeOrigin={group.origins[0]}
+            multiCityLegs={chainLegs}
           />
         </Card>
 

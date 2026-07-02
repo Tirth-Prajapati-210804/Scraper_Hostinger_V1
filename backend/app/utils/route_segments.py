@@ -93,14 +93,51 @@ def iter_group_segments(group) -> list[RouteSegment]:
 
         return segments
 
+    # ROUND TRIP: collapse a group's multiple destination airports into ONE
+    # comma-combined destination so the collector does a SINGLE Kayak search per
+    # origin (e.g. YOW-ORY,CDG) and Kayak returns the cheapest across all of them
+    # -- instead of one search per airport. Kayak natively supports the
+    # comma-separated form in the URL path (proven live). The combined string is
+    # the segment's single destination entry, so the existing collector loop runs
+    # once per (origin, date). Empty/degenerate airports are dropped; a single
+    # airport stays a plain single-airport search (no comma), so nothing changes
+    # for single-destination groups.
+    combined_destination = _combined_destination(group.destinations)
     for origin in group.origins or []:
         segments.append(
             RouteSegment(
                 origin=_clean_code(origin),
-                destinations=[_clean_code(destination) for destination in (group.destinations or [])],
+                destinations=[combined_destination] if combined_destination else [],
                 trip_type="round_trip",
                 nights=group.nights,
             )
         )
 
     return segments
+
+
+def _combined_destination(destinations) -> str:
+    """Comma-join a group's destination airports into ONE combined Kayak
+    destination token (e.g. ["ORY", "CDG"] -> "ORY,CDG"). De-dupes while
+    preserving order and drops blanks. Returns "" if there are no valid
+    airports. A single airport returns just that code (no comma), so single-
+    destination groups behave exactly as before."""
+    seen: list[str] = []
+    for destination in destinations or []:
+        code = _clean_code(destination)
+        if code and code not in seen:
+            seen.append(code)
+    return ",".join(seen)
+
+
+def combined_destination_for_group(group) -> str | None:
+    """The combined destination key ("ORY,CDG") for a ROUND-TRIP group with more
+    than one destination airport, else None. Read paths (prices API, export) use
+    this to show ONLY the fresh combined rows for such groups: their legacy
+    per-airport rows are kept in the DB (client deletes them when ready) but must
+    not surface as duplicate/stale dates next to combined rows. None means "no
+    filtering" -- single-destination and multi-city groups read exactly as before."""
+    if str(getattr(group, "trip_type", "") or "round_trip") == "multi_city":
+        return None
+    combined = _combined_destination(getattr(group, "destinations", None))
+    return combined if "," in combined else None
