@@ -38,6 +38,14 @@ _MINUTES_ONLY_RE = re.compile(r"(?i)(\d+)\s*(?:minutes|minute|mins|min|m)")
 _STOPS_RE = re.compile(r"(?i)\b(\d+)\s+stop(?:s)?\b")
 # Actual airport pair Kayak renders on a leg, e.g. "FCO-IAD" -> ("FCO", "IAD").
 _AIRPORT_PAIR_RE = re.compile(r"\b([A-Z]{3})\s*[-–—]\s*([A-Z]{3})\b")
+# Current Kayak leg format glues the code to the airport NAME and separates the
+# sides with a SPACED dash: "YYZPearson Intl – CDGCharles de Gaulle" (confirmed
+# from production itinerary_data 2026-07-02). Airport names can contain unspaced
+# hyphens ("YULMontréal-Trudeau"), so split only on a dash with spaces around it,
+# then read the leading 3-letter code off each side. The case boundary (YYZ|Pearson)
+# separates code from name, so the text must NOT be uppercased before matching.
+_SPACED_DASH_RE = re.compile(r"\s+[-–—]\s+")
+_LEADING_AIRPORT_CODE_RE = re.compile(r"^\s*([A-Z]{3})(?=$|\s|[A-Z][a-z])")
 # Carrier code embedded in a Kayak poll-JSON segment id: 13-digit epoch ms, then
 # the 2-char airline code, then the flight number (e.g. "1783072800000EK5823...").
 _POLL_SEGMENT_CARRIER_RE = re.compile(r"^\d{13}([A-Z0-9]{2})")
@@ -1662,11 +1670,19 @@ class ScrapingBeeProvider:
         renders that on the card as an airport pair like "FCO-IAD"; we surface it
         so logs/export show the airport actually flown, not the searched code.
         """
-        text = _clean_text(route_text).upper()
-        match = _AIRPORT_PAIR_RE.search(text)
-        if not match:
-            return None
-        return match.group(1), match.group(2)
+        text = _clean_text(route_text)
+        match = _AIRPORT_PAIR_RE.search(text.upper())
+        if match:
+            return match.group(1), match.group(2)
+        # Current format: "YYZPearson Intl – CDGCharles de Gaulle" (code glued to
+        # the name, spaced dash between the sides). Case-sensitive on purpose.
+        parts = _SPACED_DASH_RE.split(text)
+        if len(parts) >= 2:
+            origin = _LEADING_AIRPORT_CODE_RE.match(parts[0])
+            destination = _LEADING_AIRPORT_CODE_RE.match(parts[-1])
+            if origin and destination:
+                return origin.group(1), destination.group(1)
+        return None
 
     def _parse_duration_minutes(
         self,

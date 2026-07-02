@@ -903,3 +903,29 @@ def test_tag_for_url_stays_within_scrapingbee_36_char_limit() -> None:
     )
     assert provider._tag_for_url(rt) == "MIA-MLA_260605_260618"
     assert provider._tag_for_url("https://example.com/nothing") == "kayak"
+
+
+def test_route_airport_pair_parses_current_glued_name_format() -> None:
+    """Kayak now renders a leg's route as CODE+Name with a spaced dash between the
+    sides ("YYZPearson Intl - CDGCharles de Gaulle" -- string taken verbatim from
+    production itinerary_data 2026-07-02, where the old FCO-IAD parser returned
+    None and left actual_origin/actual_destination empty -> Airport column '-')."""
+    provider = make_provider()
+
+    # The exact production string (en dash).
+    assert provider._route_airport_pair(
+        "YYZPearson Intl – CDGCharles de Gaulle"
+    ) == ("YYZ", "CDG")
+    # Codes separated from names by spaces.
+    assert provider._route_airport_pair(
+        "YYZ Pearson Intl – CDG Charles de Gaulle"
+    ) == ("YYZ", "CDG")
+    # Airport names containing UNSPACED hyphens must not confuse the side split.
+    assert provider._route_airport_pair(
+        "YULMontréal-Trudeau – CDGCharles de Gaulle"
+    ) == ("YUL", "CDG")
+    # Legacy plain-pair format still parses.
+    assert provider._route_airport_pair("FCO-IAD") == ("FCO", "IAD")
+    # No airport codes -> None (never guess).
+    assert provider._route_airport_pair("New York – Paris") is None
+    assert provider._route_airport_pair("") is None
