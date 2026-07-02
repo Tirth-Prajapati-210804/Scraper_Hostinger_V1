@@ -736,16 +736,21 @@ class PriceCollector:
                 if all_results else None
             )
 
-            if cheapest:
-                if persist_cheapest:
-                    await self._upsert_cheapest(
-                        session,
-                        route_group_id,
-                        origin,
-                        destination,
-                        depart_date,
-                        cheapest,
-                    )
+            # In compare mode (persist_cheapest=False) NOTHING is persisted here:
+            # variants share the leg-1 destination key, so letting every variant
+            # archive its offers made the LAST writer own all_flight_results --
+            # the table/export then displayed the losing variant's airports next
+            # to the winner's price/link. The winner step archives the winning
+            # variant's offers instead.
+            if cheapest and persist_cheapest:
+                await self._upsert_cheapest(
+                    session,
+                    route_group_id,
+                    origin,
+                    destination,
+                    depart_date,
+                    cheapest,
+                )
 
                 await self._save_all_results(
                     session,
@@ -853,8 +858,23 @@ class PriceCollector:
             if not candidates:
                 return
             winner, cheapest = min(candidates, key=lambda item: self._result_sort_key(item[1]))
+            winner_offers = [
+                offer
+                for offers in winner.provider_results.values()
+                for offer in offers
+            ]
             async with self.session_factory() as session:
                 await self._delete_daily_cheapest_for_destinations(
+                    session=session,
+                    route_group_id=route_group_id,
+                    origin=origin,
+                    destinations=destinations,
+                    depart_date=depart_date,
+                )
+                # Also clear stale archived offers under every candidate
+                # destination: a variant that won a PREVIOUS cycle must not keep
+                # shadowing today's winner in the export/table reads.
+                await self._delete_all_flight_results_for_destinations(
                     session=session,
                     route_group_id=route_group_id,
                     origin=origin,
@@ -869,6 +889,15 @@ class PriceCollector:
                     depart_date=depart_date,
                     result=cheapest,
                 )
+                if winner_offers:
+                    await self._save_all_results(
+                        session,
+                        route_group_id,
+                        origin,
+                        winner.destination,
+                        depart_date,
+                        winner_offers,
+                    )
                 await session.commit()
 
         async def run_one(dest: str, leg_variant, depart_date: date):
@@ -1115,6 +1144,30 @@ class PriceCollector:
         await session.execute(
             text("""
                 DELETE FROM daily_cheapest_prices
+                WHERE route_group_id = :route_group_id
+                  AND origin = :origin
+                  AND destination = ANY(:destinations)
+                  AND depart_date = :depart_date
+            """),
+            {
+                "route_group_id": str(route_group_id),
+                "origin": origin,
+                "destinations": list(destinations),
+                "depart_date": depart_date,
+            },
+        )
+
+    async def _delete_all_flight_results_for_destinations(
+        self,
+        session: AsyncSession,
+        route_group_id: UUID,
+        origin: str,
+        destinations: list[str],
+        depart_date: date,
+    ) -> None:
+        await session.execute(
+            text("""
+                DELETE FROM all_flight_results
                 WHERE route_group_id = :route_group_id
                   AND origin = :origin
                   AND destination = ANY(:destinations)

@@ -441,7 +441,11 @@ async def test_multi_city_batch_compares_destination_alternatives_before_saving(
 
     assert stats == {"success": 2, "errors": 0, "skipped": 0}
     assert provider.search_multi_city.await_count == 2
-    collector._save_all_results.assert_awaited()
+    # ONLY the winning variant's offers are archived (a losing variant writing
+    # all_flight_results made the table/export show the loser's airports next to
+    # the winner's price/link).
+    assert collector._save_all_results.await_count == 1
+    assert collector._save_all_results.await_args.args[3] == "BUD"
     collector._delete_daily_cheapest_for_destinations.assert_awaited_once()
     collector._upsert_cheapest.assert_awaited_once()
     assert collector._upsert_cheapest.await_args.kwargs["destination"] == "BUD"
@@ -846,6 +850,12 @@ async def test_multi_city_batch_compares_leg_airport_alternatives() -> None:
 
     assert stats == {"success": 2, "errors": 0, "skipped": 0}
     assert provider.search_multi_city.await_count == 2
+    # Winner-only archive: one save, under the leg-1 destination, and only the
+    # winning chain's offers (the SES variant's 640 fare).
+    assert collector._save_all_results.await_count == 1
+    assert collector._save_all_results.await_args.args[3] == "ICN"
+    saved_offers = collector._save_all_results.await_args.args[5]
+    assert [offer.price for offer in saved_offers] == [640]
     collector._upsert_cheapest.assert_awaited_once()
     assert collector._upsert_cheapest.await_args.kwargs["destination"] == "ICN"
     assert collector._upsert_cheapest.await_args.kwargs["result"].price == 640
