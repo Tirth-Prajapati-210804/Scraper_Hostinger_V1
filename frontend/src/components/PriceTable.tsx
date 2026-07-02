@@ -6,11 +6,11 @@ import { formatDisplayDate, formatFreshnessLabel } from "../utils/format";
 import { Button } from "./ui/Button";
 import { Skeleton } from "./ui/Skeleton";
 
-// "route" is a synthetic column (origin-dest[-returnFrom]-origin in one cell); it
-// has no DailyPrice field of its own, so sorting falls back to the origin field.
+// "route" and "airport" are synthetic columns with no DailyPrice field of their
+// own, so sorting falls back to origin / destination respectively.
 type SortableKey = keyof DailyPrice;
 interface Column {
-  key: SortableKey | "route";
+  key: SortableKey | "route" | "airport";
   label: string;
   align?: "left" | "right";
 }
@@ -18,6 +18,7 @@ interface Column {
 const BASE_COLUMNS: Column[] = [
   { key: "depart_date", label: "Date" },
   { key: "route", label: "Route" },
+  { key: "airport", label: "Airport" },
   { key: "airline", label: "Airline" },
   { key: "stops", label: "Stops" },
   { key: "duration_minutes", label: "Duration" },
@@ -25,6 +26,19 @@ const BASE_COLUMNS: Column[] = [
   { key: "deep_link", label: "Link" },
   { key: "scraped_at", label: "Freshness" },
 ];
+
+// The single airport this fare's data belongs to (e.g. "CDG" vs "ORY").
+// Combined multi-airport groups store destination "ORY,CDG", so the client
+// can't tell from the Route alone which airport the price is for. Prefers the
+// actual arrival airport the scraper extracted; falls back to the stored
+// destination when it is one plain airport code.
+function fareAirport(price: DailyPrice): string {
+  const actual = (price.itinerary_data?.legs?.[0]?.actual_destination ?? "").trim().toUpperCase();
+  if (actual) return actual;
+  const stored = (price.destination ?? "").trim().toUpperCase();
+  if (stored && !stored.includes(",")) return stored;
+  return "-";
+}
 
 // Show the actual airport flown, annotating the searched code when they differ:
 // actual=NRT searched=TYO -> "NRT (TYO)"; equal/missing -> as-is. Mirrors the
@@ -245,9 +259,11 @@ export function PriceTable({
     });
   }, [isMultiCity]);
 
-  // The synthetic "route" column has no DailyPrice field; sort it by origin.
+  // Synthetic columns have no DailyPrice field; sort route by origin and
+  // airport by the stored destination.
   function toggleSort(key: Column["key"]) {
-    const sortable: keyof DailyPrice = key === "route" ? "origin" : key;
+    const sortable: keyof DailyPrice =
+      key === "route" ? "origin" : key === "airport" ? "destination" : key;
     if (sortKey === sortable) {
       setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
       return;
@@ -323,6 +339,15 @@ export function PriceTable({
                       {formatDisplayDate(addDays(price.depart_date, nights))}
                     </td>
                   ) : null}
+                  <td className="whitespace-nowrap px-6 py-3 text-slate-700">
+                    {price._missing ? (
+                      <span className="text-slate-300">-</span>
+                    ) : (
+                      <span className="rounded-md bg-emerald-50 px-2 py-1 font-mono text-xs font-semibold text-emerald-700">
+                        {fareAirport(price)}
+                      </span>
+                    )}
+                  </td>
                   <td className="min-w-[16rem] px-6 py-3 text-slate-700">
                     {price._missing ? <span className="text-slate-300">-</span> : price.airline}
                   </td>

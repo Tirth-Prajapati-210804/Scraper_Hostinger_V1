@@ -20,6 +20,7 @@ _MAIN_HEADERS = [
     "Date",
     "Return Date",
     "Route",
+    "Airport",
     "Nights",
     "Airline",
     "Stop Result",
@@ -31,6 +32,7 @@ _MULTI_CITY_HEADERS = [
     "Date",
     "Ending Date",
     "Route",
+    "Airport",
     "Nights",
     "Airline",
     "Stop Result",
@@ -49,6 +51,23 @@ def _display_airport(actual: object, searched: object) -> str:
     if searched_code and searched_code != actual_code:
         return f"{actual_code} ({searched_code})"
     return actual_code
+
+
+def _fare_airport_code(result, itinerary: dict) -> str:
+    """The single airport this fare's data actually belongs to, shown plainly
+    (e.g. "CDG" or "ORY") in the Airport column. Combined multi-airport groups
+    save rows under "ORY,CDG", so without this column the client can't tell which
+    airport the price is for. Prefers the actual outbound arrival airport the
+    scraper extracted; falls back to the row's stored destination when that is a
+    single airport (legacy/single-destination rows). N-A when unknowable (e.g. a
+    combined row whose render didn't expose the airport)."""
+    actual = str(itinerary.get("actual_outbound_destination") or "").strip().upper()
+    if actual:
+        return actual
+    stored = str(getattr(result, "destination", "") or "").strip().upper()
+    if stored and "," not in stored:
+        return stored
+    return _MISSING_VALUE
 
 
 def _na_verification_link(
@@ -370,37 +389,40 @@ def export_route_group(
             _set_date_cell(ws, row=row_idx, column=1, value=d)
             _set_date_cell(ws, row=row_idx, column=2, value=ending_date)
             ws.cell(row=row_idx, column=3, value=route)
-            ws.cell(row=row_idx, column=4, value=route_group.nights)
+            ws.cell(row=row_idx, column=5, value=route_group.nights)
 
             if result:
-                ws.cell(row=row_idx, column=5, value=result.airline)
+                itinerary_data = itinerary if isinstance(itinerary, dict) else {}
+                ws.cell(row=row_idx, column=4, value=_fare_airport_code(result, itinerary_data))
+                ws.cell(row=row_idx, column=6, value=result.airline)
                 ws.cell(
                     row=row_idx,
-                    column=6,
+                    column=7,
                     value=_safe_stop_label(result.stop_label, result.stops),
                 )
                 ws.cell(
                     row=row_idx,
-                    column=7,
+                    column=8,
                     value=_safe_duration_label(result),
                 )
                 ws.cell(
                     row=row_idx,
-                    column=8,
+                    column=9,
                     value=int(round(float(result.price))),
                 )
                 if include_links:
-                    ws.cell(row=row_idx, column=9, value=result.deep_link or _MISSING_VALUE)
+                    ws.cell(row=row_idx, column=10, value=result.deep_link or _MISSING_VALUE)
             else:
-                ws.cell(row=row_idx, column=5, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=4, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=6, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=7, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=9, value=_MISSING_VALUE)
                 if include_links:
                     # No fare found, but still give a clickable search link to verify.
                     ws.cell(
                         row=row_idx,
-                        column=9,
+                        column=10,
                         value=_na_verification_link(na_template, d, ending_date),
                     )
 
@@ -587,28 +609,30 @@ def _export_multi_city_route_group(
             else:
                 ws.cell(row=row_idx, column=2, value=_MISSING_VALUE)
             ws.cell(row=row_idx, column=3, value=route)
-            ws.cell(row=row_idx, column=4, value=route_group.nights)
+            ws.cell(row=row_idx, column=5, value=route_group.nights)
             if result:
-                ws.cell(row=row_idx, column=5, value=result.airline)
-                ws.cell(row=row_idx, column=6, value=_safe_stop_label(result.stop_label, result.stops))
-                ws.cell(row=row_idx, column=7, value=_safe_duration_label(result))
-                ws.cell(row=row_idx, column=8, value=int(round(float(result.price))))
+                ws.cell(row=row_idx, column=4, value=_fare_airport_code(result, itinerary))
+                ws.cell(row=row_idx, column=6, value=result.airline)
+                ws.cell(row=row_idx, column=7, value=_safe_stop_label(result.stop_label, result.stops))
+                ws.cell(row=row_idx, column=8, value=_safe_duration_label(result))
+                ws.cell(row=row_idx, column=9, value=int(round(float(result.price))))
                 if include_links:
-                    ws.cell(row=row_idx, column=9, value=result.deep_link or _MISSING_VALUE)
+                    ws.cell(row=row_idx, column=10, value=result.deep_link or _MISSING_VALUE)
                 itinerary_prices_by_origin.setdefault(origin, []).append(float(result.price))
                 all_itinerary_prices.append(result)
             else:
-                ws.cell(row=row_idx, column=5, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=4, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=6, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=7, value=_MISSING_VALUE)
                 ws.cell(row=row_idx, column=8, value=_MISSING_VALUE)
+                ws.cell(row=row_idx, column=9, value=_MISSING_VALUE)
                 if include_links:
                     # No fare, but still give a clickable verify link. Multi-city
                     # chain URLs have several date segments; swap only the leading
                     # depart date, leaving the rest of the (route + filters) intact.
                     ws.cell(
                         row=row_idx,
-                        column=9,
+                        column=10,
                         value=_na_verification_link(na_template, depart_date, None),
                     )
 
