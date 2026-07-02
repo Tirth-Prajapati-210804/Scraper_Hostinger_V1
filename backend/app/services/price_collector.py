@@ -547,6 +547,7 @@ class PriceCollector:
         extra_legs: list | None = None,
         max_leg_duration_minutes: int | None = None,
         max_layover_minutes: int | None = None,
+        persist_cheapest: bool = True,
     ) -> CollectionResult:
 
         all_results: list[ProviderResult] = []
@@ -735,14 +736,15 @@ class PriceCollector:
             )
 
             if cheapest:
-                await self._upsert_cheapest(
-                    session,
-                    route_group_id,
-                    origin,
-                    destination,
-                    depart_date,
-                    cheapest,
-                )
+                if persist_cheapest:
+                    await self._upsert_cheapest(
+                        session,
+                        route_group_id,
+                        origin,
+                        destination,
+                        depart_date,
+                        cheapest,
+                    )
 
                 await self._save_all_results(
                     session,
@@ -794,6 +796,7 @@ class PriceCollector:
         max_leg_duration_minutes: int | None = None,
         max_layover_minutes: int | None = None,
         is_retry: bool = False,
+        compare_destinations: bool = False,
     ) -> dict[str, int]:
 
         stats = {
@@ -822,20 +825,56 @@ class PriceCollector:
                 if not task.done():
                     task.cancel()
 
+        should_compare_destinations = (
+            compare_destinations
+            and trip_type == "multi_city"
+            and len(destinations) > 1
+        )
+
+        async def persist_compared_winner(
+            depart_date: date,
+            results: list[CollectionResult],
+        ) -> None:
+            candidates = [
+                (result, result.cheapest)
+                for result in results
+                if result.cheapest is not None
+            ]
+            if not candidates:
+                return
+            winner, cheapest = min(candidates, key=lambda item: self._result_sort_key(item[1]))
+            async with self.session_factory() as session:
+                await self._delete_daily_cheapest_for_destinations(
+                    session=session,
+                    route_group_id=route_group_id,
+                    origin=origin,
+                    destinations=destinations,
+                    depart_date=depart_date,
+                )
+                await self._upsert_cheapest(
+                    session=session,
+                    route_group_id=route_group_id,
+                    origin=origin,
+                    destination=winner.destination,
+                    depart_date=depart_date,
+                    result=cheapest,
+                )
+                await session.commit()
+
         async def run_one(dest: str, depart_date: date):
             route_key = self._route_key(origin, dest)
 
             if self._is_route_cooled(route_key):
                 if self.on_item_progress:
                     self.on_item_progress("skipped", origin, dest, depart_date, is_retry)
-                return "skipped"
+                return "skipped", None
 
             if stop_check and stop_check():
-                return "stopped"
+                return "stopped", None
 
             async with semaphore:
                 if stop_check and stop_check():
-                    return "stopped"
+                    return "stopped", None
 
                 if self.on_item_started:
                     self.on_item_started(origin, dest, depart_date, is_retry)
@@ -857,20 +896,21 @@ class PriceCollector:
                             extra_legs=extra_legs,
                             max_leg_duration_minutes=max_leg_duration_minutes,
                             max_layover_minutes=max_layover_minutes,
+                            persist_cheapest=not should_compare_destinations,
                         )
                     )
                     if was_stopped or result is None:
-                        return "stopped"
+                        return "stopped", None
 
                     if result.cheapest:
                         self._mark_route_success(route_key)
                         if self.on_item_progress:
                             self.on_item_progress("success", origin, dest, depart_date, is_retry)
-                        return "success"
+                        return "success", result
 
                     if self.on_item_progress:
                         self.on_item_progress("skipped", origin, dest, depart_date, is_retry)
-                    return "skipped"
+                    return "skipped", result
 
                 except Exception as exc:
                     self._mark_route_failure(route_key)
@@ -885,41 +925,86 @@ class PriceCollector:
 
                     if self.on_item_progress:
                         self.on_item_progress("error", origin, dest, depart_date, is_retry)
-                    return "error"
+                    return "error", None
 
-        tasks = []
-
-        for depart_date in prioritized_dates:
-            for dest in destinations:
-                tasks.append(run_one(dest, depart_date))
-
-        for i in range(0, len(tasks), batch_size):
-            if stop_check and stop_check():
-                break
-
-            chunk = tasks[i:i + batch_size]
-
+        async def gather_chunk(chunk):
             results = await asyncio.gather(
                 *chunk,
                 return_exceptions=True,
             )
 
+            collected: list[CollectionResult] = []
             for r in results:
-                if r == "success":
+                status = "error"
+                result = None
+                if isinstance(r, tuple):
+                    status, result = r
+                elif isinstance(r, str):
+                    status = r
+
+                if status == "success":
                     stats["success"] += 1
-                elif r in {"skipped", "stopped"}:
+                elif status in {"skipped", "stopped"}:
                     stats["skipped"] += 1
                 else:
                     stats["errors"] += 1
 
-            if i + batch_size < len(tasks):
-                slept = 0.0
-                while slept < delay_seconds:
+                if isinstance(result, CollectionResult):
+                    collected.append(result)
+            return collected
+
+        if should_compare_destinations:
+            for date_index, depart_date in enumerate(prioritized_dates):
+                if stop_check and stop_check():
+                    break
+
+                per_date_results: list[CollectionResult] = []
+                date_tasks = [run_one(dest, depart_date) for dest in destinations]
+                for i in range(0, len(date_tasks), batch_size):
                     if stop_check and stop_check():
                         break
-                    interval = min(0.25, delay_seconds - slept)
-                    await asyncio.sleep(interval)
-                    slept += interval
+                    per_date_results.extend(await gather_chunk(date_tasks[i:i + batch_size]))
+                    if i + batch_size < len(date_tasks):
+                        slept = 0.0
+                        while slept < delay_seconds:
+                            if stop_check and stop_check():
+                                break
+                            interval = min(0.25, delay_seconds - slept)
+                            await asyncio.sleep(interval)
+                            slept += interval
+
+                if not (stop_check and stop_check()):
+                    await persist_compared_winner(depart_date, per_date_results)
+
+                if date_index + 1 < len(prioritized_dates):
+                    slept = 0.0
+                    while slept < delay_seconds:
+                        if stop_check and stop_check():
+                            break
+                        interval = min(0.25, delay_seconds - slept)
+                        await asyncio.sleep(interval)
+                        slept += interval
+        else:
+            tasks = []
+
+            for depart_date in prioritized_dates:
+                for dest in destinations:
+                    tasks.append(run_one(dest, depart_date))
+
+            for i in range(0, len(tasks), batch_size):
+                if stop_check and stop_check():
+                    break
+
+                await gather_chunk(tasks[i:i + batch_size])
+
+                if i + batch_size < len(tasks):
+                    slept = 0.0
+                    while slept < delay_seconds:
+                        if stop_check and stop_check():
+                            break
+                        interval = min(0.25, delay_seconds - slept)
+                        await asyncio.sleep(interval)
+                        slept += interval
 
         return stats
 
@@ -1003,6 +1088,30 @@ class PriceCollector:
                     else "round_trip",
                 ),
                 "duration_minutes": result.duration_minutes,
+            },
+        )
+
+    async def _delete_daily_cheapest_for_destinations(
+        self,
+        session: AsyncSession,
+        route_group_id: UUID,
+        origin: str,
+        destinations: list[str],
+        depart_date: date,
+    ) -> None:
+        await session.execute(
+            text("""
+                DELETE FROM daily_cheapest_prices
+                WHERE route_group_id = :route_group_id
+                  AND origin = :origin
+                  AND destination = ANY(:destinations)
+                  AND depart_date = :depart_date
+            """),
+            {
+                "route_group_id": str(route_group_id),
+                "origin": origin,
+                "destinations": list(destinations),
+                "depart_date": depart_date,
             },
         )
 

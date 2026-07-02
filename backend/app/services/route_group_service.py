@@ -78,6 +78,13 @@ def _normalize_identity_value(field: str, value):
     return value
 
 
+def _segment_saves_single_winner(segment: object) -> bool:
+    return (
+        str(getattr(segment, "trip_type", "") or "").strip().lower() == "multi_city"
+        and len(getattr(segment, "destinations", []) or []) > 1
+    )
+
+
 async def _clear_group_collection_data(session: AsyncSession, group_id: uuid.UUID) -> None:
     from sqlalchemy import delete as sa_delete
 
@@ -226,7 +233,10 @@ async def get_progress(session: AsyncSession, group_id: uuid.UUID) -> RouteGroup
 
     dates = _group_dates(group)
     segments = iter_group_segments(group)
-    total_dates = sum(len(segment.destinations) * len(dates) for segment in segments)
+    total_dates = sum(
+        (1 if _segment_saves_single_winner(segment) else len(segment.destinations)) * len(dates)
+        for segment in segments
+    )
 
     # Only rows whose destination the group would collect TODAY count toward
     # progress. Multi-destination round-trip groups now collect ONE combined key
@@ -242,10 +252,6 @@ async def get_progress(session: AsyncSession, group_id: uuid.UUID) -> RouteGroup
             conditions.append(DailyCheapestPrice.destination.in_(expected_destinations))
         return (*conditions, *extra_filters)
 
-    # Total collected
-    count_result = await session.execute(select(func.count()).where(*_scoped()))
-    dates_with_data = count_result.scalar_one() or 0
-
     # Last scraped
     last_result = await session.execute(
         select(func.max(DailyCheapestPrice.scraped_at)).where(
@@ -259,25 +265,63 @@ async def get_progress(session: AsyncSession, group_id: uuid.UUID) -> RouteGroup
     expected_by_origin: dict[str, int] = {}
     for segment in segments:
         expected_by_origin[segment.origin] = expected_by_origin.get(segment.origin, 0) + (
-            len(segment.destinations) * len(dates)
+            (1 if _segment_saves_single_winner(segment) else len(segment.destinations)) * len(dates)
         )
 
-    for origin, expected in expected_by_origin.items():
-        collected_result = await session.execute(
-            select(func.count()).where(*_scoped(DailyCheapestPrice.origin == origin))
+    if any(_segment_saves_single_winner(segment) for segment in segments):
+        row_result = await session.execute(
+            select(
+                DailyCheapestPrice.origin,
+                DailyCheapestPrice.destination,
+                DailyCheapestPrice.depart_date,
+            ).where(*_scoped())
         )
-        collected = collected_result.scalar_one() or 0
-        per_origin[origin] = PerOriginProgress(total=expected, collected=collected)
+        rows = row_result.fetchall()
+        segment_by_origin = {segment.origin: segment for segment in segments}
+        collected_keys: set[tuple] = set()
+        per_origin_keys: dict[str, set[tuple]] = {}
+        scraped_date_values: set[date] = set()
+
+        for origin, destination, depart_date in rows:
+            segment = segment_by_origin.get(origin)
+            if segment is None or destination not in segment.destinations:
+                continue
+            if _segment_saves_single_winner(segment):
+                key = (origin, depart_date)
+            else:
+                key = (origin, destination, depart_date)
+            collected_keys.add(key)
+            per_origin_keys.setdefault(origin, set()).add(key)
+            scraped_date_values.add(depart_date)
+
+        dates_with_data = len(collected_keys)
+        for origin, expected in expected_by_origin.items():
+            per_origin[origin] = PerOriginProgress(
+                total=expected,
+                collected=len(per_origin_keys.get(origin, set())),
+            )
+        scraped_dates = [d.isoformat() for d in sorted(scraped_date_values)]
+    else:
+        # Total collected
+        count_result = await session.execute(select(func.count()).where(*_scoped()))
+        dates_with_data = count_result.scalar_one() or 0
+
+        for origin, expected in expected_by_origin.items():
+            collected_result = await session.execute(
+                select(func.count()).where(*_scoped(DailyCheapestPrice.origin == origin))
+            )
+            collected = collected_result.scalar_one() or 0
+            per_origin[origin] = PerOriginProgress(total=expected, collected=collected)
+
+        dates_result = await session.execute(
+            select(DailyCheapestPrice.depart_date)
+            .where(*_scoped())
+            .distinct()
+            .order_by(DailyCheapestPrice.depart_date)
+        )
+        scraped_dates = [d.isoformat() for (d,) in dates_result.fetchall()]
 
     coverage = (dates_with_data / total_dates * 100.0) if total_dates > 0 else 0.0
-
-    dates_result = await session.execute(
-        select(DailyCheapestPrice.depart_date)
-        .where(*_scoped())
-        .distinct()
-        .order_by(DailyCheapestPrice.depart_date)
-    )
-    scraped_dates = [d.isoformat() for (d,) in dates_result.fetchall()]
 
     date_statuses = await _compute_date_statuses(session, group_id, set(scraped_dates))
 

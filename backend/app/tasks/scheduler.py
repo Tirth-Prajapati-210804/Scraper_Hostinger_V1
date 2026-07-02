@@ -27,6 +27,13 @@ from app.utils.route_segments import iter_group_segments
 log = get_logger(__name__)
 
 
+def _segment_compares_destinations(segment: object) -> bool:
+    return (
+        str(getattr(segment, "trip_type", "") or "").strip().lower() == "multi_city"
+        and len(getattr(segment, "destinations", []) or []) > 1
+    )
+
+
 class FlightScheduler:
     """
     Goal B Final:
@@ -437,6 +444,7 @@ class FlightScheduler:
                     origin=segment.origin,
                     destinations=segment.destinations,
                     dates=dates,
+                    any_destination_completes=_segment_compares_destinations(segment),
                 )
                 final_missing = len(remaining) * len(segment.destinations)
                 summary["final_missing"] += final_missing
@@ -472,6 +480,7 @@ class FlightScheduler:
                     origin=segment.origin,
                     destinations=segment.destinations,
                     dates=dates,
+                    any_destination_completes=_segment_compares_destinations(segment),
                 )
                 if remaining:
                     return False  # still has dates left to attempt
@@ -525,6 +534,7 @@ class FlightScheduler:
             nights=segment.nights,
             return_origin=segment.return_origin,
             extra_legs=segment.extra_legs,
+            compare_destinations=_segment_compares_destinations(segment),
         )
 
         stats["success"] += part["success"]
@@ -541,6 +551,7 @@ class FlightScheduler:
                 origin=segment.origin,
                 destinations=segment.destinations,
                 dates=remaining,
+                any_destination_completes=_segment_compares_destinations(segment),
             )
 
         # Dates still missing after this single pass are intentionally NOT
@@ -644,6 +655,7 @@ class FlightScheduler:
                             origin=segment.origin,
                             destinations=segment.destinations,
                             dates=dates,
+                            any_destination_completes=_segment_compares_destinations(segment),
                         )
 
                         if not remaining:
@@ -881,6 +893,7 @@ class FlightScheduler:
         dates,
         *,
         respect_no_fare_skip: bool = True,
+        any_destination_completes: bool = False,
     ):
         """Return dates that still need work (not all destinations collected).
 
@@ -912,8 +925,10 @@ class FlightScheduler:
             },
         )
 
+        saved_by_date: dict[date, set[str]] = {}
         done_by_date: dict[date, set[str]] = {}
         for depart_date, destination in result.fetchall():
+            saved_by_date.setdefault(depart_date, set()).add(destination)
             done_by_date.setdefault(depart_date, set()).add(destination)
         target = len(destinations)
 
@@ -1016,6 +1031,13 @@ class FlightScheduler:
             )
             for depart_date, destination in error_result.fetchall():
                 done_by_date.setdefault(depart_date, set()).add(destination)
+
+        if any_destination_completes:
+            return [
+                d
+                for d in dates
+                if not saved_by_date.get(d) and len(done_by_date.get(d, set())) < target
+            ]
 
         return [d for d in dates if len(done_by_date.get(d, set())) < target]
 
@@ -1179,6 +1201,7 @@ class FlightScheduler:
                             destinations=segment.destinations,
                             dates=dates,
                             respect_no_fare_skip=True,
+                            any_destination_completes=_segment_compares_destinations(segment),
                         )
 
                         if not remaining:

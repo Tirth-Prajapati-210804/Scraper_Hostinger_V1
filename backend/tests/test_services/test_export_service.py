@@ -217,7 +217,7 @@ def test_export_uses_per_leg_duration_label_when_available() -> None:
     assert ws.cell(2, 8).value == "24h 10m / 12h 5m"
 
 
-def test_multi_city_export_creates_one_sheet_per_route() -> None:
+def test_multi_city_export_compares_destination_alternatives_per_origin_date() -> None:
     rg = make_route_group(sheet_name_map={"YOW": "YOW"})
     rg.trip_type = "multi_city"
     rg.origins = ["YOW"]
@@ -236,19 +236,19 @@ def test_multi_city_export_creates_one_sheet_per_route() -> None:
 
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [first, second])))
 
-    assert wb.sheetnames == ["YOW-LGW", "YOW-LHR"]
+    assert wb.sheetnames == ["YOW"]
     # Multi-city now has one Route column (col 3) instead of Dep/Arrival/Return From.
-    assert wb["YOW-LHR"].cell(1, 3).value == "Route"
-    assert wb["YOW-LHR"].cell(1, 4).value == "Airport"
-    assert wb["YOW-LHR"].cell(1, 7).value == "Stop Result"
-    assert wb["YOW-LHR"].cell(1, 8).value == "Duration"
-    assert wb["YOW-LHR"].cell(1, 9).value == "Flight Price"
+    assert wb["YOW"].cell(1, 3).value == "Route"
+    assert wb["YOW"].cell(1, 4).value == "Airport"
+    assert wb["YOW"].cell(1, 7).value == "Stop Result"
+    assert wb["YOW"].cell(1, 8).value == "Duration"
+    assert wb["YOW"].cell(1, 9).value == "Flight Price"
     # No per-leg data here -> fallback: outbound pair / return-from-home pair,
     # joined by ' / ' (the open-jaw gap, not a continuous chain).
-    assert wb["YOW-LHR"].cell(2, 3).value == "YOW-LHR / MXP-YOW"
-    assert wb["YOW-LGW"].cell(2, 3).value == "YOW-LGW / MXP-YOW"
-    assert wb["YOW-LHR"].cell(2, 1).number_format == "DD-MM-YYYY"
-    assert wb["YOW-LHR"].cell(2, 2).number_format == "DD-MM-YYYY"
+    assert wb["YOW"].cell(2, 3).value == "YOW-LHR / MXP-YOW"
+    assert wb["YOW"].cell(2, 9).value == 671
+    assert wb["YOW"].cell(2, 1).number_format == "DD-MM-YYYY"
+    assert wb["YOW"].cell(2, 2).number_format == "DD-MM-YYYY"
 
 
 def test_multi_city_route_uses_per_leg_pairs() -> None:

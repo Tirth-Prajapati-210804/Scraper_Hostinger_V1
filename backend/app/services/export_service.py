@@ -530,41 +530,41 @@ def _export_multi_city_route_group(
     sheet_name_map = route_group.sheet_name_map or {o: o for o in route_group.origins}
     all_dates = _export_dates(route_group, [row.depart_date for row in itinerary_rows])
 
-    cheapest_by_route_date: dict[tuple[str, str, object], AllFlightResult] = {}
+    cheapest_by_origin_date: dict[tuple[str, object], AllFlightResult] = {}
     for row in itinerary_rows:
-        key = (row.origin, row.destination, row.depart_date)
-        current = cheapest_by_route_date.get(key)
+        key = (row.origin, row.depart_date)
+        current = cheapest_by_origin_date.get(key)
         if current is None or _result_sort_key(row) < _result_sort_key(current):
-            cheapest_by_route_date[key] = row
+            cheapest_by_origin_date[key] = row
 
-    rows_by_route: dict[tuple[str, str], list[AllFlightResult]] = {}
-    for row in cheapest_by_route_date.values():
-        rows_by_route.setdefault((row.origin, row.destination), []).append(row)
+    rows_by_origin: dict[str, list[AllFlightResult]] = {}
+    for row in cheapest_by_origin_date.values():
+        rows_by_origin.setdefault(row.origin, []).append(row)
 
     itinerary_prices_by_origin: dict[str, list[float]] = {}
     all_itinerary_prices: list[AllFlightResult] = []
-
-    origin_destination_counts: dict[str, int] = {}
-    for origin, _destination in rows_by_route:
-        origin_destination_counts[origin] = origin_destination_counts.get(origin, 0) + 1
-
-    def build_sheet_name(origin: str, destination: str) -> str:
-        base_name = sheet_name_map.get(origin, origin)
-        if origin_destination_counts.get(origin, 0) > 1:
-            base_name = f"{base_name}-{destination}"
-
-        return _safe_sheet_title(wb, base_name, fallback=f"{origin}-{destination}")
 
     headers = list(_MULTI_CITY_HEADERS)
     if include_links:
         headers = headers + ["Verification Link"]
 
-    for (origin, destination), rows in sorted(rows_by_route.items()):
-        ws = wb.create_sheet(title=build_sheet_name(origin, destination))
+    raw_group_destinations = getattr(route_group, "destinations", None)
+    if raw_group_destinations is None:
+        raw_group_destinations = [row.destination for row in itinerary_rows]
+    configured_destinations = [
+        str(destination).strip().upper()
+        for destination in (raw_group_destinations or [])
+        if str(destination).strip()
+    ]
+    fallback_destination = ",".join(configured_destinations)
+
+    for origin, rows in sorted(rows_by_origin.items()):
+        sheet_name = sheet_name_map.get(origin, origin)
+        ws = wb.create_sheet(title=_safe_sheet_title(wb, sheet_name, fallback=origin))
         _write_header_row(ws, headers)
 
         rows_by_date = {row.depart_date: row for row in rows}
-        # Template link for N-A rows: any collected deep_link on this route.
+        # Template link for N-A rows: any collected deep_link for this origin.
         na_template = next(
             (r.deep_link for r in rows if getattr(r, "deep_link", None)), None
         )
@@ -574,13 +574,14 @@ def _export_multi_city_route_group(
             itinerary = result.itinerary_data if isinstance(result, object) and result else {}
             if not isinstance(itinerary, dict):
                 itinerary = {}
+            searched_destination = result.destination if result else fallback_destination
             return_date = itinerary.get("return_date")
             # Prefer the ACTUAL airport flown (e.g. FCO when the group searched the
             # ROM metro code), falling back to the searched code. _display_airport
             # appends the searched metro code in brackets when they differ, e.g.
             # "FCO (ROM)", so the sheet shows the real airport without losing context.
             dep_airport = _display_airport(itinerary.get("actual_outbound_origin"), origin)
-            arr_airport = _display_airport(itinerary.get("actual_outbound_destination"), destination)
+            arr_airport = _display_airport(itinerary.get("actual_outbound_destination"), searched_destination)
             return_from = _display_airport(
                 itinerary.get("actual_return_origin"),
                 itinerary.get("return_origin") or (itinerary.get("inbound") or {}).get("origin"),
@@ -592,12 +593,12 @@ def _export_multi_city_route_group(
             # e.g. YVR-BER / BUD-YVR, or YVR-BER / BER-LON / BUD-YVR. Built from the
             # per-leg airports when available, else the dep/arrival/return-from
             # endpoints. _route_legs returns the actual-airport pairs (metro-annotated).
-            searched_pairs = _searched_leg_pairs(route_group, origin, destination)
+            searched_pairs = _searched_leg_pairs(route_group, origin, searched_destination)
             config_route = " / ".join(f"{o}-{d}" for o, d in searched_pairs)
             route = _multi_city_route_label(
                 itinerary,
                 dep_airport or origin,
-                arr_airport or destination,
+                arr_airport or searched_destination,
                 return_from,
                 config_route,
                 searched_pairs,

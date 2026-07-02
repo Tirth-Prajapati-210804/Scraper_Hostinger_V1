@@ -399,6 +399,56 @@ async def test_collect_route_batch_reports_started_before_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_multi_city_batch_compares_destination_alternatives_before_saving() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "searchapi"
+    provider.search_multi_city_diagnostic = None
+
+    async def search_multi_city(**kwargs):
+        first_leg = kwargs["legs"][0]
+        destination = first_leg["arrival_id"]
+        if destination == "BER":
+            return [make_result(900, provider="searchapi", raw_data={"trip_type": "multi_city"})]
+        if destination == "BUD":
+            return [make_result(700, provider="searchapi", raw_data={"trip_type": "multi_city"})]
+        return []
+
+    provider.search_multi_city = AsyncMock(side_effect=search_multi_city)
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._save_all_results = AsyncMock()
+    collector._delete_daily_cheapest_for_destinations = AsyncMock()
+    collector._upsert_cheapest = AsyncMock()
+
+    stats = await collector.collect_route_batch(
+        origin="YYZ",
+        destinations=["BER", "BUD"],
+        dates=[DEPART],
+        route_group_id=ROUTE_ID,
+        batch_size=2,
+        delay_seconds=0,
+        trip_type="multi_city",
+        extra_legs=[],
+        return_origin="YYZ",
+        compare_destinations=True,
+    )
+
+    assert stats == {"success": 2, "errors": 0, "skipped": 0}
+    assert provider.search_multi_city.await_count == 2
+    collector._save_all_results.assert_awaited()
+    collector._delete_daily_cheapest_for_destinations.assert_awaited_once()
+    collector._upsert_cheapest.assert_awaited_once()
+    assert collector._upsert_cheapest.await_args.kwargs["destination"] == "BUD"
+    assert collector._upsert_cheapest.await_args.kwargs["result"].price == 700
+
+
+@pytest.mark.asyncio
 async def test_collect_route_batch_cooled_route_reports_skipped_progress() -> None:
     session = AsyncMock()
     session.add = MagicMock()

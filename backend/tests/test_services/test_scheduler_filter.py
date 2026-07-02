@@ -84,6 +84,28 @@ async def test_partial_destination_not_excluded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_multi_city_destination_winner_excludes_date() -> None:
+    """Multi-city airport alternatives are searched separately but save one
+    winning daily-cheapest row per origin/date, so one saved destination means
+    the date is complete for that alternative set."""
+    scheduler = make_scheduler()
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=make_execute_result([(D1, "BUD")]))
+
+    remaining = await scheduler._filter_already_scraped(
+        session,
+        ROUTE_ID,
+        "YYZ",
+        ["BER", "BUD"],
+        [D1, D2],
+        any_destination_completes=True,
+    )
+
+    assert D1 not in remaining
+    assert D2 in remaining
+
+
+@pytest.mark.asyncio
 async def test_all_destinations_excludes_date() -> None:
     """Date with all destinations collected IS excluded."""
     scheduler = make_scheduler()
