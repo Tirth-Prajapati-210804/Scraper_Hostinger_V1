@@ -29,11 +29,17 @@ export function AppLayout({ children }: AppLayoutProps) {
       <Sidebar />
       <div
         className={`flex min-h-screen min-w-0 flex-1 flex-col transition-[padding] duration-200 ${
-          collapsed ? "lg:pl-[68px]" : "lg:pl-[220px]"
+          collapsed ? "lg:pl-0" : "lg:pl-[220px]"
         }`}
       >
-        {/* Mobile-only top bar with hamburger (lg:hidden -> desktop unchanged). */}
-        <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-[#E8ECF4] bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
+        {/* Top bar with the menu button. Always shown on mobile; on desktop it
+            appears only when the sidebar is collapsed, so the drawer can be
+            reopened. openMobile drives the shared slide-out drawer in Sidebar. */}
+        <header
+          className={`sticky top-0 z-20 flex items-center gap-3 border-b border-[#E8ECF4] bg-white/95 px-4 py-3 backdrop-blur ${
+            collapsed ? "" : "lg:hidden"
+          }`}
+        >
           <button
             onClick={openMobile}
             aria-label="Open menu"

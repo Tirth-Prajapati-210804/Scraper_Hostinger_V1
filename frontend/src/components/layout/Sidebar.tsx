@@ -2,8 +2,7 @@ import {
   History,
   LayoutDashboard,
   LogOut,
-  PanelLeftClose,
-  PanelLeftOpen,
+  Menu,
   Plane,
   Users,
   X,
@@ -38,8 +37,10 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Mobile-only nav drawer (lg:hidden). Desktop never renders this. */}
-      <MobileSidebar
+      {/* Slide-out overlay drawer. Used on mobile (mobileOpen) AND on desktop when
+          the sidebar is collapsed (the menu button reopens it) -- one polished
+          full-width drawer instead of a narrow icon rail. */}
+      <DrawerSidebar
         open={mobileOpen}
         onClose={closeMobile}
         navItems={navItems}
@@ -47,52 +48,37 @@ export function Sidebar() {
         logout={logout}
       />
 
+    {/* Desktop docked sidebar -- shown only when NOT collapsed. Collapsing hides it
+        entirely (lg:hidden) and the header menu button opens the drawer above. */}
     <aside
       className={cn(
-        "fixed inset-y-0 left-0 z-30 hidden shrink-0 border-r border-[#E8ECF4] bg-white transition-[width] duration-200 lg:flex lg:flex-col",
-        collapsed ? "w-[68px]" : "w-[220px]",
+        "fixed inset-y-0 left-0 z-30 hidden w-[220px] shrink-0 flex-col border-r border-[#E8ECF4] bg-white",
+        collapsed ? "lg:hidden" : "lg:flex",
       )}
     >
-      <div className={cn("flex items-center border-b border-[#E8ECF4] pb-4 pt-5", collapsed ? "justify-center px-2" : "justify-between px-5")}>
+      <div className="flex items-center gap-[10px] border-b border-[#E8ECF4] px-4 pb-4 pt-5">
+        <button
+          onClick={toggle}
+          aria-label="Collapse sidebar"
+          title="Collapse sidebar"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] text-[#6B7280] transition hover:bg-[#F8FAFF]"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
         <div className="flex min-w-0 items-center gap-[10px]">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-brand-600">
             <Plane className="h-[15px] w-[15px] text-white" />
           </div>
-          {!collapsed ? (
-            <p className="truncate text-[13px] font-bold leading-[1.2] text-[#1a1d23]">
-              Flight Scraper
-            </p>
-          ) : null}
+          <p className="truncate text-[13px] font-bold leading-[1.2] text-[#1a1d23]">
+            Flight Scraper
+          </p>
         </div>
-        {!collapsed ? (
-          <button
-            onClick={toggle}
-            title="Collapse sidebar"
-            className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#9CA3AF] transition hover:bg-[#F8FAFF] hover:text-[#6B7280]"
-          >
-            <PanelLeftClose className="h-[15px] w-[15px]" />
-          </button>
-        ) : null}
       </div>
 
-      {collapsed ? (
-        <div className="flex justify-center border-b border-[#E8ECF4] py-2">
-          <button
-            onClick={toggle}
-            title="Expand sidebar"
-            className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[#9CA3AF] transition hover:bg-[#F8FAFF] hover:text-[#6B7280]"
-          >
-            <PanelLeftOpen className="h-[15px] w-[15px]" />
-          </button>
-        </div>
-      ) : null}
-
-      <div className={cn("flex-1 overflow-y-auto py-3", collapsed ? "px-2" : "px-3")}>
-        {!collapsed ? (
-          <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#C4CAD4]">
-            Navigation
-          </p>
-        ) : null}
+      <div className="flex-1 overflow-y-auto px-3 py-3">
+        <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#C4CAD4]">
+          Navigation
+        </p>
 
         <nav aria-label="Main navigation" className="mt-1.5 space-y-0.5">
           {navItems.map(({ to, icon: Icon, label }) => (
@@ -100,11 +86,9 @@ export function Sidebar() {
               key={to}
               to={to}
               end={to === "/"}
-              title={collapsed ? label : undefined}
               className={({ isActive }) =>
                 cn(
-                  "group flex items-center rounded-[8px] text-[13px] transition-all",
-                  collapsed ? "justify-center px-0 py-[10px]" : "gap-[10px] px-[10px] py-[9px]",
+                  "group flex items-center gap-[10px] rounded-[8px] px-[10px] py-[9px] text-[13px] transition-all",
                   isActive
                     ? "bg-[#EEF2FF] font-semibold text-brand-700"
                     : "font-normal text-[#6B7280] hover:bg-[#F8FAFF] hover:text-[#6B7280]",
@@ -121,7 +105,7 @@ export function Sidebar() {
                   >
                     <Icon className="h-[15px] w-[15px]" />
                   </div>
-                  {!collapsed ? <span className="truncate">{label}</span> : null}
+                  <span className="truncate">{label}</span>
                 </>
               )}
             </NavLink>
@@ -129,45 +113,25 @@ export function Sidebar() {
         </nav>
       </div>
 
-      <div className={cn("border-t border-[#E8ECF4] py-3", collapsed ? "px-2" : "px-4")}>
-        {collapsed ? (
-          <div className="flex flex-col items-center gap-2">
-            <div
-              title={`${user?.full_name ?? ""} · ${user?.email ?? ""}`}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EEF2FF] text-[12px] font-bold text-brand-700"
-            >
-              {initials(user?.full_name)}
-            </div>
-            <button
-              onClick={logout}
-              title="Sign Out"
-              className="flex h-8 w-8 items-center justify-center rounded-[7px] border border-[#E8ECF4] text-[#6B7280] transition hover:bg-slate-50"
-            >
-              <LogOut className="h-[13px] w-[13px]" />
-            </button>
+      <div className="border-t border-[#E8ECF4] px-4 py-3">
+        <div className="mb-[10px] flex items-center gap-[10px]">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EEF2FF] text-[13px] font-bold text-brand-700">
+            {initials(user?.full_name)}
           </div>
-        ) : (
-          <>
-            <div className="mb-[10px] flex items-center gap-[10px]">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EEF2FF] text-[13px] font-bold text-brand-700">
-                {initials(user?.full_name)}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[12px] font-semibold text-[#1a1d23]">
-                  {user?.full_name}
-                </div>
-                <div className="truncate text-[11px] text-[#9CA3AF]">{user?.email}</div>
-              </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-semibold text-[#1a1d23]">
+              {user?.full_name}
             </div>
-            <button
-              onClick={logout}
-              className="flex w-full items-center gap-[6px] rounded-[7px] border border-[#E8ECF4] bg-white px-[10px] py-[7px] text-[12px] text-[#6B7280] transition hover:bg-slate-50"
-            >
-              <LogOut className="h-[13px] w-[13px]" />
-              Sign Out
-            </button>
-          </>
-        )}
+            <div className="truncate text-[11px] text-[#9CA3AF]">{user?.email}</div>
+          </div>
+        </div>
+        <button
+          onClick={logout}
+          className="flex w-full items-center gap-[6px] rounded-[7px] border border-[#E8ECF4] bg-white px-[10px] py-[7px] text-[12px] text-[#6B7280] transition hover:bg-slate-50"
+        >
+          <LogOut className="h-[13px] w-[13px]" />
+          Sign Out
+        </button>
       </div>
     </aside>
     </>
@@ -176,7 +140,7 @@ export function Sidebar() {
 
 type NavItem = { to: string; icon: typeof LayoutDashboard; label: string };
 
-function MobileSidebar({
+function DrawerSidebar({
   open,
   onClose,
   navItems,
@@ -190,7 +154,7 @@ function MobileSidebar({
   logout: () => void;
 }) {
   return (
-    <div className={cn("lg:hidden", open ? "" : "pointer-events-none")} aria-hidden={!open}>
+    <div className={open ? "" : "pointer-events-none"} aria-hidden={!open}>
       {/* Backdrop */}
       <div
         onClick={onClose}
