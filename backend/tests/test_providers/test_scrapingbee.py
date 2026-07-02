@@ -117,7 +117,10 @@ def test_same_airline_filters_are_carried_in_kayak_url() -> None:
     only when the group caps at <=1 stop. flylocal is REQUIRED (re-verified: -MULT
     alone hides the cheapest carrier). The same-airline path ALSO always carries
     baditin=baditin so Kayak shows longer flights (its default HIDES them, which was
-    dropping the true cheapest fare). Multi-city carries the same filters."""
+    dropping the true cheapest fare). Multi-city carries the same filters.
+
+    EXCEPTION: direct-only (stops=0) drops -MULT (see the dedicated test below) --
+    -MULT over-hides same-airline direct fares, so isolation moves to Python there."""
     provider = make_provider()
 
     url1 = provider._build_search_url(
@@ -126,13 +129,6 @@ def test_same_airline_filters_are_carried_in_kayak_url() -> None:
         max_stops=1,
     )
     assert url1.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;baditin=baditin;stops=0,1")
-
-    url0 = provider._build_search_url(
-        origin="MIA", destination="MLA",
-        depart_date=date(2026, 6, 5), return_date=date(2026, 6, 18),
-        max_stops=0,
-    )
-    assert url0.endswith("?sort=price_a&fs=airlines=-MULT,flylocal;baditin=baditin;stops=0")
 
     url2 = provider._build_search_url(
         origin="MIA", destination="MLA",
@@ -177,6 +173,34 @@ def test_same_airline_filters_are_carried_in_kayak_url() -> None:
     assert "airlines=-MULT,flylocal" in mc and "stops=0,1" in mc
     assert "baditin=baditin" in mc
     assert "layoverdur=-660" in mc and "legdur=-1440" in mc
+
+
+def test_direct_only_drops_mult_so_same_airline_fares_are_not_overhidden() -> None:
+    """DIRECT-ONLY (stops=0) must NOT carry airlines=-MULT. -MULT collapses a direct
+    Kayak page to a single expensive single-carrier card and suppresses cheaper
+    SAME-AIRLINE fares (proven MAN->VCE 2026-06-20: -MULT showed £326 Jet2/Jet2 while
+    the true cheapest was £137 Ryanair/Ryanair; avg ~£222 overcharge over 8 dates).
+    On direct-only we render WITHOUT -MULT and let the Python same-airline filter
+    isolate carriers -- the same path the proven 0-card -MULT fallback uses. Multi-
+    stop searches are unaffected and KEEP -MULT (see the test above)."""
+    provider = make_provider()
+
+    url0 = provider._build_search_url(
+        origin="MAN", destination="VCE",
+        depart_date=date(2026, 7, 3), return_date=date(2026, 7, 6),
+        max_stops=0,
+    )
+    # Direct-only: no -MULT, but flylocal-less filter still carries baditin + stops=0.
+    assert url0.endswith("?sort=price_a&fs=baditin=baditin;stops=0")
+    assert "-MULT" not in url0 and "flylocal" not in url0
+
+    # The toggle still flows: 1-stop and 2-stop KEEP -MULT (only direct is special).
+    url1 = provider._build_search_url(
+        origin="MAN", destination="VCE",
+        depart_date=date(2026, 7, 3), return_date=date(2026, 7, 6),
+        max_stops=1,
+    )
+    assert "airlines=-MULT,flylocal" in url1
 
 
 def test_round_trip_rendered_request_stays_under_request_line_cap() -> None:

@@ -608,7 +608,18 @@ class ScrapingBeeProvider:
           Duration, moved from a Python post-filter to server-side here).
         """
         filters: list[str] = []
-        if same_airline:
+        # -MULT is SAFE on multi-stop searches but CATASTROPHICALLY over-hides on
+        # DIRECT-ONLY (stops=0) ones: on MAN->VCE it collapsed the page to a single
+        # expensive Jet2/Jet2 card and suppressed cheaper SAME-AIRLINE fares
+        # (Ryanair/Ryanair), causing an avg ~£222 overcharge across 8 probed dates
+        # (2026-06-20). On direct-only searches there are very few single-carrier
+        # roundtrip combos, so -MULT's "drop the Multiple-airlines bucket" prunes
+        # valid same-airline fares too. Fix: skip -MULT for direct-only and let the
+        # Python same-airline filter (_eligible_same_airline_results) do isolation --
+        # the SAME path the proven 0-card -MULT fallback already uses. Multi-stop
+        # keeps -MULT (50-card pages, only a minor same-airline leak there).
+        direct_only = max_stops is not None and max_stops <= 0
+        if same_airline and not direct_only:
             filters.append("airlines=-MULT,flylocal")
         # Show longer flights so a cheap longer fare is never hidden; applies
         # regardless of the same-airline toggle (the cheapest mixed-carrier fare
