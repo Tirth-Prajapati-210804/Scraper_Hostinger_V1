@@ -75,3 +75,55 @@ def test_combined_destination_for_group_none_for_single_and_multi_city():
         )
         is None
     )
+
+
+def test_iter_chain_variants_expands_leg_alternatives():
+    # Leg fields may hold comma-joined ALTERNATIVES; every combination becomes
+    # its own searchable chain (dest x leg-origin x leg-destination).
+    from app.utils.route_segments import ExtraLeg, iter_chain_variants
+
+    variants = iter_chain_variants(
+        ["SEL"],
+        [ExtraLeg(origin="ASJ,SES", destination="", nights_before=5)],
+    )
+    assert [(d, [(l.origin, l.destination) for l in legs]) for d, legs in variants] == [
+        ("SEL", [("ASJ", "")]),
+        ("SEL", [("SES", "")]),
+    ]
+
+    # Cross product with multiple leg-1 destinations.
+    variants = iter_chain_variants(
+        ["ICN", "GMP"],
+        [ExtraLeg(origin="ASJ,SES", destination="", nights_before=5)],
+    )
+    assert len(variants) == 4
+
+    # No alternatives -> exactly one variant (old behavior).
+    variants = iter_chain_variants(
+        ["BER"],
+        [ExtraLeg(origin="BUD", destination="", nights_before=9)],
+    )
+    assert len(variants) == 1
+
+
+def test_segment_compares_alternatives_predicate():
+    from app.utils.route_segments import ExtraLeg, segment_compares_alternatives
+
+    def seg(trip_type="multi_city", destinations=("BER",), legs=()):
+        return SimpleNamespace(
+            trip_type=trip_type,
+            destinations=list(destinations),
+            extra_legs=list(legs),
+        )
+
+    # Comma alternatives on an extra leg trigger compare even with ONE leg-1 dest.
+    assert segment_compares_alternatives(
+        seg(legs=[ExtraLeg(origin="ASJ,SES", destination="", nights_before=3)])
+    )
+    # Multiple leg-1 destinations trigger it too.
+    assert segment_compares_alternatives(seg(destinations=["BER", "BUD"]))
+    # Single-variant multi-city and every round trip do not.
+    assert not segment_compares_alternatives(
+        seg(legs=[ExtraLeg(origin="BUD", destination="", nights_before=3)])
+    )
+    assert not segment_compares_alternatives(seg(trip_type="round_trip", destinations=["A", "B"]))

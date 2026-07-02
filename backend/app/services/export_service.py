@@ -43,11 +43,16 @@ _MULTI_CITY_HEADERS = [
 def _display_airport(actual: object, searched: object) -> str:
     """Show the actual airport flown, annotating the searched metro code when it
     differs. e.g. actual=FCO searched=ROM -> "FCO (ROM)"; equal/missing -> as-is.
+    A searched value may be a comma list of ALTERNATIVES ("ASJ,SES"); when the
+    actual airport is one of them it is not an annotation-worthy difference, so
+    show the actual code plainly instead of "ASJ (ASJ,SES)".
     """
     actual_code = str(actual or "").strip().upper()
     searched_code = str(searched or "").strip().upper()
     if not actual_code:
         return searched_code
+    if searched_code and actual_code in [c.strip() for c in searched_code.split(",")]:
+        return actual_code
     if searched_code and searched_code != actual_code:
         return f"{actual_code} ({searched_code})"
     return actual_code

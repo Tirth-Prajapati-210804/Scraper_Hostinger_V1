@@ -25,6 +25,7 @@ from app.providers.base import (
     ProviderResult,
 )
 from app.utils.airline_codes import normalize_airline
+from app.utils.route_segments import iter_chain_variants
 
 log = get_logger(__name__)
 _GENERIC_MULTI_AIRLINE_LABELS = {
@@ -825,10 +826,19 @@ class PriceCollector:
                 if not task.done():
                     task.cancel()
 
+        # Every concrete chain this batch searches: multi-city expands the cross
+        # product of leg-1 destinations x each extra leg's comma alternatives
+        # ("ASJ,SES") into (destination, resolved_single_code_legs) variants.
+        # Round trip keeps one variant per destination with its legs untouched.
+        if trip_type == "multi_city":
+            chain_variants = iter_chain_variants(destinations, extra_legs)
+        else:
+            chain_variants = [(dest, extra_legs) for dest in destinations]
+
         should_compare_destinations = (
             compare_destinations
             and trip_type == "multi_city"
-            and len(destinations) > 1
+            and len(chain_variants) > 1
         )
 
         async def persist_compared_winner(
@@ -861,7 +871,7 @@ class PriceCollector:
                 )
                 await session.commit()
 
-        async def run_one(dest: str, depart_date: date):
+        async def run_one(dest: str, leg_variant, depart_date: date):
             route_key = self._route_key(origin, dest)
 
             if self._is_route_cooled(route_key):
@@ -893,7 +903,7 @@ class PriceCollector:
                             nights=nights,
                             return_origin=return_origin,
                             same_airline_only=same_airline_only,
-                            extra_legs=extra_legs,
+                            extra_legs=leg_variant,
                             max_leg_duration_minutes=max_leg_duration_minutes,
                             max_layover_minutes=max_layover_minutes,
                             persist_cheapest=not should_compare_destinations,
@@ -959,7 +969,10 @@ class PriceCollector:
                     break
 
                 per_date_results: list[CollectionResult] = []
-                date_tasks = [run_one(dest, depart_date) for dest in destinations]
+                date_tasks = [
+                    run_one(dest, leg_variant, depart_date)
+                    for dest, leg_variant in chain_variants
+                ]
                 for i in range(0, len(date_tasks), batch_size):
                     if stop_check and stop_check():
                         break
@@ -988,8 +1001,8 @@ class PriceCollector:
             tasks = []
 
             for depart_date in prioritized_dates:
-                for dest in destinations:
-                    tasks.append(run_one(dest, depart_date))
+                for dest, leg_variant in chain_variants:
+                    tasks.append(run_one(dest, leg_variant, depart_date))
 
             for i in range(0, len(tasks), batch_size):
                 if stop_check and stop_check():

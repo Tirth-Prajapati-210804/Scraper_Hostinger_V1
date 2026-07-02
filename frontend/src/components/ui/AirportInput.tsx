@@ -10,6 +10,10 @@ interface AirportInputProps {
   placeholder?: string;
   /** Allow an empty value (e.g. the last leg's "To = back to origin"). */
   allowEmpty?: boolean;
+  /** Accept a comma-joined list of ALTERNATIVE airports ("ASJ,SES"): each code
+   *  is validated separately and the scraper searches every combination,
+   *  keeping the cheapest. Autocomplete applies to the part being typed. */
+  multi?: boolean;
 }
 
 const IATA_RE = /^[A-Za-z0-9]{2,4}$/;
@@ -34,16 +38,18 @@ function suggestionHint(suggestion: LocationSuggestion): string {
  * city offers the metro "all airports" code AND each member airport, so the
  * user can pick either.
  */
-export function AirportInput({ value, onChange, placeholder, allowEmpty = false }: AirportInputProps) {
+export function AirportInput({ value, onChange, placeholder, allowEmpty = false, multi = false }: AirportInputProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const trimmed = value.trim();
-  const showSuggestions = open && trimmed.length > 0 && suggestions.length > 0;
+  // In multi mode the autocomplete works on the segment AFTER the last comma.
+  const activeSegment = multi ? (value.split(",").pop() ?? "").trim() : trimmed;
+  const showSuggestions = open && activeSegment.length > 0 && suggestions.length > 0;
 
   useEffect(() => {
-    if (!open || trimmed.length === 0) {
+    if (!open || activeSegment.length === 0) {
       setSuggestions([]);
       setHighlightedIndex(0);
       return;
@@ -51,7 +57,7 @@ export function AirportInput({ value, onChange, placeholder, allowEmpty = false 
     const timer = window.setTimeout(async () => {
       setLoading(true);
       try {
-        setSuggestions(await fetchLocationSuggestions(trimmed));
+        setSuggestions(await fetchLocationSuggestions(activeSegment));
         setHighlightedIndex(0);
       } catch {
         setSuggestions([]);
@@ -60,14 +66,24 @@ export function AirportInput({ value, onChange, placeholder, allowEmpty = false 
       }
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [open, trimmed]);
+  }, [open, activeSegment]);
 
   function pick(suggestion: LocationSuggestion) {
     // A leg is one flight from one place, so take the suggestion's primary
     // code (the metro code for a city/country row, or the airport's own code).
     const code = suggestion.codes[0]?.trim().toUpperCase() ?? "";
     if (code) {
-      onChange(code);
+      if (multi) {
+        // Replace only the segment being typed; keep the committed codes.
+        const committed = value
+          .split(",")
+          .slice(0, -1)
+          .map((part) => part.trim().toUpperCase())
+          .filter(Boolean);
+        onChange([...committed, code].join(","));
+      } else {
+        onChange(code);
+      }
     }
     setOpen(false);
   }
@@ -97,7 +113,14 @@ export function AirportInput({ value, onChange, placeholder, allowEmpty = false 
     }
   }
 
-  const isInvalid = trimmed.length > 0 && !IATA_RE.test(trimmed);
+  const isInvalid = multi
+    ? trimmed.length > 0 &&
+      value
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .some((part) => !IATA_RE.test(part))
+    : trimmed.length > 0 && !IATA_RE.test(trimmed);
 
   return (
     <div className="relative">
@@ -146,7 +169,11 @@ export function AirportInput({ value, onChange, placeholder, allowEmpty = false 
       {loading && open ? (
         <p className="mt-1 text-[11px] text-slate-400">Searching locations…</p>
       ) : isInvalid ? (
-        <p className="mt-1 text-[11px] text-red-500">Enter a Kayak code (2–4 letters/digits).</p>
+        <p className="mt-1 text-[11px] text-red-500">
+          {multi
+            ? "Enter Kayak codes (2–4 letters/digits), comma-separated for alternatives (e.g. ASJ,SES)."
+            : "Enter a Kayak code (2–4 letters/digits)."}
+        </p>
       ) : allowEmpty && trimmed.length === 0 ? (
         <p className="mt-1 text-[11px] text-slate-400">Leave blank to fly back to the group origin.</p>
       ) : null}

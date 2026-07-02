@@ -130,6 +130,66 @@ def _combined_destination(destinations) -> str:
     return ",".join(seen)
 
 
+def split_alternative_codes(value: object) -> list[str]:
+    """Split a comma-joined alternatives field ("ASJ,SES") into clean codes."""
+    return [code for code in _clean_code(value).split(",") if code]
+
+
+def iter_chain_variants(destinations, extra_legs) -> list[tuple[str, list[ExtraLeg]]]:
+    """Every concrete multi-city chain a group's alternative airports expand to.
+
+    A leg's origin/destination may hold comma-joined ALTERNATIVES ("ASJ,SES").
+    Each variant picks ONE code per field: the cross product of leg-1
+    destinations x every extra leg's origin/destination alternatives. The
+    collector searches each variant separately per date and saves only the
+    cheapest winner. Returns (leg1_destination, resolved_single_code_extra_legs)
+    tuples; a config with no alternatives yields exactly one variant, identical
+    to the old behavior.
+    """
+    from itertools import product
+
+    dest_options = [code for value in (destinations or []) for code in split_alternative_codes(value)]
+    if not dest_options:
+        return []
+
+    per_leg_choices: list[list[ExtraLeg]] = []
+    for leg in extra_legs or []:
+        origins = split_alternative_codes(leg.origin)
+        if not origins:
+            return []
+        leg_destinations = split_alternative_codes(leg.destination) or [""]
+        per_leg_choices.append(
+            [
+                ExtraLeg(origin=o, destination=d, nights_before=leg.nights_before)
+                for o in origins
+                for d in leg_destinations
+            ]
+        )
+
+    variants: list[tuple[str, list[ExtraLeg]]] = []
+    for destination in dest_options:
+        for combo in product(*per_leg_choices) if per_leg_choices else [()]:
+            variants.append((destination, list(combo)))
+    return variants
+
+
+def segment_compares_alternatives(segment) -> bool:
+    """True when a multi-city segment expands to MORE THAN ONE chain variant --
+    multiple leg-1 destinations and/or comma alternatives on any extra leg -- so
+    the collector compares the variants per date and saves one winner. Used by
+    the scheduler (compare flag + a date is done once ANY variant saved) and by
+    progress (expect 1 row/date). Never True for round trip."""
+    if str(getattr(segment, "trip_type", "") or "").strip().lower() != "multi_city":
+        return False
+    if len(getattr(segment, "destinations", []) or []) > 1:
+        return True
+    return any(
+        "," in str(getattr(leg, "origin", "") or "")
+        or "," in str(getattr(leg, "destination", "") or "")
+        for leg in (getattr(segment, "extra_legs", None) or [])
+    )
+
+
 def combined_destination_for_group(group) -> str | None:
     """The combined destination key ("ORY,CDG") for a ROUND-TRIP group with more
     than one destination airport, else None. Read paths (prices API, export) use

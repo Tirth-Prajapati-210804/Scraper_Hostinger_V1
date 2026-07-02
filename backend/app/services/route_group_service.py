@@ -17,7 +17,7 @@ from app.schemas.route_group import (
     RouteGroupUpdate,
     ScrapeHealth,
 )
-from app.utils.route_segments import iter_group_segments
+from app.utils.route_segments import iter_group_segments, segment_compares_alternatives
 
 _NON_ERROR_STATUSES = {"success", "no_results"}
 _ERROR_PRIORITY = (
@@ -79,10 +79,9 @@ def _normalize_identity_value(field: str, value):
 
 
 def _segment_saves_single_winner(segment: object) -> bool:
-    return (
-        str(getattr(segment, "trip_type", "") or "").strip().lower() == "multi_city"
-        and len(getattr(segment, "destinations", []) or []) > 1
-    )
+    # Shared predicate: any multi-city segment with airport alternatives saves
+    # ONE winner row per date, so progress must expect 1 (not the variant count).
+    return segment_compares_alternatives(segment)
 
 
 async def _clear_group_collection_data(session: AsyncSession, group_id: uuid.UUID) -> None:

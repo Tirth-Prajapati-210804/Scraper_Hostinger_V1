@@ -22,16 +22,15 @@ from app.providers.base import ProviderAuthError, ProviderQuotaExhaustedError
 from app.providers.registry import ProviderRegistry
 from app.services.alert_service import AlertService
 from app.services.price_collector import PriceCollector
-from app.utils.route_segments import iter_group_segments
+from app.utils.route_segments import iter_group_segments, segment_compares_alternatives
 
 log = get_logger(__name__)
 
 
 def _segment_compares_destinations(segment: object) -> bool:
-    return (
-        str(getattr(segment, "trip_type", "") or "").strip().lower() == "multi_city"
-        and len(getattr(segment, "destinations", []) or []) > 1
-    )
+    # Shared predicate: multiple leg-1 destinations OR comma alternatives on any
+    # extra leg ("ASJ,SES") -> the collector compares variants, saves one winner.
+    return segment_compares_alternatives(segment)
 
 
 class FlightScheduler:

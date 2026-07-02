@@ -139,3 +139,58 @@ def test_route_group_accepts_max_leg_duration() -> None:
     )
 
     assert payload.max_leg_duration_minutes == 720
+
+
+def test_multi_city_leg_accepts_comma_joined_alternatives() -> None:
+    # A leg's From/To may list ALTERNATIVE airports ("asj, ses" -> "ASJ,SES");
+    # the collector searches every combination and saves only the cheapest.
+    payload = RouteGroupCreate(
+        name="Korea open jaw",
+        destination_label="Korea",
+        destinations=["ICN"],
+        origins=["YVR"],
+        nights=10,
+        days_ahead=30,
+        trip_type="multi_city",
+        multi_city_legs=[{"origin": "asj, ses", "destination": "", "nights_before": 5}],
+    )
+    assert payload.multi_city_legs is not None
+    assert payload.multi_city_legs[0].origin == "ASJ,SES"
+
+    with pytest.raises(ValidationError):
+        RouteGroupCreate(
+            name="Bad leg code",
+            destination_label="Korea",
+            destinations=["ICN"],
+            origins=["YVR"],
+            nights=10,
+            days_ahead=30,
+            trip_type="multi_city",
+            multi_city_legs=[{"origin": "ASJ SES", "destination": "", "nights_before": 5}],
+        )
+
+
+def test_multi_city_leg_combination_cap_rejects_credit_bombs() -> None:
+    # 5 leg-1 destinations x 8 leg-2 origins = 40 combos passes; adding one more
+    # leg-1 destination (48) must be rejected -- each combo is a paid search.
+    def make(destinations: list[str]):
+        return RouteGroupCreate(
+            name="Combo cap",
+            destination_label="Korea",
+            destinations=destinations,
+            origins=["YVR"],
+            nights=10,
+            days_ahead=30,
+            trip_type="multi_city",
+            multi_city_legs=[
+                {
+                    "origin": "AAA,BBB,CCC,DDD,EEE,FFF,GGG,HHH",
+                    "destination": "",
+                    "nights_before": 5,
+                }
+            ],
+        )
+
+    make(["ICN", "GMP", "PUS", "CJU", "KAZ"])  # 40 -> allowed
+    with pytest.raises(ValidationError):
+        make(["ICN", "GMP", "PUS", "CJU", "KAZ", "TAE"])  # 48 -> rejected

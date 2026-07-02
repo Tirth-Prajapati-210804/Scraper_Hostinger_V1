@@ -677,9 +677,17 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
       let multiCityLegs: MultiCityLegConfig[] | undefined;
       let multiCityNights = parsePositiveInt(state.nights, 10);
       if (state.tripType === "multicity") {
+        // A leg field may hold comma-joined ALTERNATIVE airports ("ASJ,SES");
+        // normalize each code and keep the comma form (backend validates it).
+        const normalizeLegCodes = (raw: string) =>
+          raw
+            .split(",")
+            .map((part) => part.trim().toUpperCase())
+            .filter(Boolean)
+            .join(",");
         const cleanedLegs = state.extraLegs.map((leg, index) => ({
-          origin: leg.origin.trim().toUpperCase(),
-          destination: leg.destination.trim().toUpperCase(),
+          origin: normalizeLegCodes(leg.origin),
+          destination: normalizeLegCodes(leg.destination),
           nights_before: Math.max(1, Number.parseInt(leg.nights, 10) || 1),
           isLast: index === state.extraLegs.length - 1,
         }));
@@ -909,6 +917,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                         <FieldLabel>From</FieldLabel>
                         <AirportInput
                           value={leg.origin}
+                          multi
                           onChange={(code) =>
                             setState((current) => ({
                               ...current,
@@ -924,6 +933,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                         <FieldLabel>{isLast ? "To (blank = home)" : "To"}</FieldLabel>
                         <AirportInput
                           value={leg.destination}
+                          multi
                           allowEmpty={isLast}
                           onChange={(code) =>
                             setState((current) => ({

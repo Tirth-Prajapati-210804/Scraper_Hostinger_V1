@@ -28,6 +28,29 @@ def _normalize_iata_codes(v: object) -> list[str] | object:
     return v
 
 
+def _normalize_leg_codes(value: object) -> str:
+    """Normalize a multi-city leg's origin/destination: ONE code or a comma-joined
+    list of ALTERNATIVE airports ("asj, ses" -> "ASJ,SES"). Every code must be a
+    valid 2-4 char Kayak code; blanks are dropped, order kept, duplicates removed."""
+    raw = str(value or "").strip().upper()
+    if not raw:
+        return ""
+    codes: list[str] = []
+    for part in raw.split(","):
+        code = part.strip()
+        if not code:
+            continue
+        if not re.match(_IATA_PATTERN, code):
+            raise ValueError(
+                f"'{code}' is not a valid Kayak location code. "
+                "Use 2-4 uppercase letters or digits, comma-separated for "
+                "alternatives (e.g. 'ASJ,SES')."
+            )
+        if code not in codes:
+            codes.append(code)
+    return ",".join(codes)
+
+
 def _normalize_text(value: str) -> str:
     normalized = " ".join(value.split())
     if not normalized:
@@ -67,31 +90,43 @@ class MultiCityLeg(BaseModel):
     + New York 3 = 5 -> NYC-LON 08 Jul). Minimum 1 (next-day departure).
     """
 
-    origin: str = Field(min_length=2, max_length=4, pattern=_IATA_PATTERN)
-    destination: str = ""
+    # origin/destination accept ONE code or a comma-joined list of ALTERNATIVE
+    # airports ("ASJ,SES"): the collector searches every chain combination per
+    # date and saves only the cheapest winner (same rule as multiple leg-1
+    # destinations). 39 = 8 codes x 4 chars + 7 commas.
+    origin: str = Field(min_length=2, max_length=39)
+    destination: str = Field(default="", max_length=39)
     nights_before: int = Field(ge=1, le=90)
 
     @field_validator("origin", mode="before")
     @classmethod
     def normalize_leg_origin(cls, value: object) -> str:
-        normalized = _normalize_iata_codes([value])
-        return normalized[0] if isinstance(normalized, list) else str(value)
+        joined = _normalize_leg_codes(value)
+        if not joined:
+            raise ValueError("every multi-city leg needs a departure airport")
+        return joined
 
     @field_validator("destination", mode="before")
     @classmethod
     def normalize_leg_destination(cls, value: object) -> str:
-        cleaned = str(value or "").strip().upper()
-        if not cleaned:
-            return ""
-        normalized = _normalize_iata_codes([cleaned])
-        return normalized[0] if isinstance(normalized, list) else cleaned
+        return _normalize_leg_codes(value)
 
 
-def _validate_multi_city_legs(legs: list[MultiCityLeg] | None) -> None:
+# Hard cap on chain combinations per date: every combination is a separate paid
+# Kayak render (one search per variant, cheapest wins), so an accidental
+# 8x8x8 configuration must be rejected at save time, not discovered on the bill.
+_MAX_CHAIN_VARIANTS = 40
+
+
+def _validate_multi_city_legs(
+    legs: list[MultiCityLeg] | None,
+    destination_count: int = 1,
+) -> None:
     if legs is None:
         return
     if not 1 <= len(legs) <= 3:
         raise ValueError("multi_city_legs supports 1 to 3 extra legs (2-4 total legs)")
+    variants = max(1, destination_count)
     for index, leg in enumerate(legs):
         is_last = index == len(legs) - 1
         if not leg.destination and not is_last:
@@ -99,6 +134,14 @@ def _validate_multi_city_legs(legs: list[MultiCityLeg] | None) -> None:
                 "only the LAST multi-city leg may leave destination empty "
                 "(empty = back to the group origin)"
             )
+        variants *= max(1, len([c for c in leg.origin.split(",") if c]))
+        variants *= max(1, len([c for c in leg.destination.split(",") if c]))
+    if variants > _MAX_CHAIN_VARIANTS:
+        raise ValueError(
+            f"this itinerary expands to {variants} airport combinations per date "
+            f"(each is a separate paid search); the maximum is {_MAX_CHAIN_VARIANTS}. "
+            "Reduce the number of alternative airports."
+        )
 
 
 class SpecialSheetConfig(BaseModel):
@@ -183,7 +226,10 @@ class RouteGroupCreate(BaseModel):
     def validate_dates(self) -> "RouteGroupCreate":
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
-        _validate_multi_city_legs(self.multi_city_legs)
+        _validate_multi_city_legs(
+            self.multi_city_legs,
+            destination_count=len(self.destinations or []),
+        )
         if self.trip_type == "multi_city":
             # New-style groups define the itinerary via multi_city_legs (2-4 total
             # legs); legacy groups via exactly one special_sheets return leg.
@@ -263,7 +309,10 @@ class RouteGroupUpdate(BaseModel):
     def validate_dates(self) -> "RouteGroupUpdate":
         if self.start_date and self.end_date and self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
-        _validate_multi_city_legs(self.multi_city_legs)
+        _validate_multi_city_legs(
+            self.multi_city_legs,
+            destination_count=len(self.destinations or []),
+        )
         if (
             self.trip_type == "multi_city"
             and self.special_sheets is not None

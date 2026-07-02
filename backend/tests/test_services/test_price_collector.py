@@ -798,3 +798,54 @@ async def test_collect_single_date_stop_mode_does_not_hide_cheapest_valid_result
     assert result.cheapest is not None
     assert result.cheapest.price == 900
     assert result.cheapest.stops == 0
+
+
+@pytest.mark.asyncio
+async def test_multi_city_batch_compares_leg_airport_alternatives() -> None:
+    """A leg's comma alternatives ("ASJ,SES") expand into separate searches per
+    date; only the cheapest chain is saved (winner under the leg-1 destination)."""
+    from app.utils.route_segments import ExtraLeg
+
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "searchapi"
+    provider.search_multi_city_diagnostic = None
+
+    async def search_multi_city(**kwargs):
+        leg2_origin = kwargs["legs"][1]["departure_id"]
+        if leg2_origin == "ASJ":
+            return [make_result(880, provider="searchapi", raw_data={"trip_type": "multi_city"})]
+        if leg2_origin == "SES":
+            return [make_result(640, provider="searchapi", raw_data={"trip_type": "multi_city"})]
+        return []
+
+    provider.search_multi_city = AsyncMock(side_effect=search_multi_city)
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._save_all_results = AsyncMock()
+    collector._delete_daily_cheapest_for_destinations = AsyncMock()
+    collector._upsert_cheapest = AsyncMock()
+
+    stats = await collector.collect_route_batch(
+        origin="YYZ",
+        destinations=["ICN"],
+        dates=[DEPART],
+        route_group_id=ROUTE_ID,
+        batch_size=2,
+        delay_seconds=0,
+        trip_type="multi_city",
+        extra_legs=[ExtraLeg(origin="ASJ,SES", destination="", nights_before=5)],
+        return_origin="YYZ",
+        compare_destinations=True,
+    )
+
+    assert stats == {"success": 2, "errors": 0, "skipped": 0}
+    assert provider.search_multi_city.await_count == 2
+    collector._upsert_cheapest.assert_awaited_once()
+    assert collector._upsert_cheapest.await_args.kwargs["destination"] == "ICN"
+    assert collector._upsert_cheapest.await_args.kwargs["result"].price == 640
