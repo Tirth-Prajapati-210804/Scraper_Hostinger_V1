@@ -93,20 +93,18 @@ def iter_group_segments(group) -> list[RouteSegment]:
 
         return segments
 
-    # ROUND TRIP: collapse a group's multiple destination airports into ONE
-    # comma-combined destination so the collector does a SINGLE Kayak search per
-    # origin (e.g. YOW-ORY,CDG) and Kayak returns the cheapest across all of them
-    # -- instead of one search per airport. Kayak natively supports the
-    # comma-separated form in the URL path (proven live). The combined string is
-    # the segment's single destination entry, so the existing collector loop runs
-    # once per (origin, date). Empty/degenerate airports are dropped; a single
-    # airport stays a plain single-airport search (no comma), so nothing changes
-    # for single-destination groups.
+    # ROUND TRIP: collapse a group's multiple origin and destination airports
+    # into ONE comma-combined Kayak route so the collector does a SINGLE search
+    # per date (e.g. GLA,PIK-MLA or YOW-ORY,CDG). Kayak natively supports comma
+    # alternatives in both sides of the URL path (live-confirmed by client).
+    # Single-airport sides stay plain codes, so single-origin/single-destination
+    # groups behave exactly as before.
+    combined_origin = _combined_destination(group.origins)
     combined_destination = _combined_destination(group.destinations)
-    for origin in group.origins or []:
+    if combined_origin:
         segments.append(
             RouteSegment(
-                origin=_clean_code(origin),
+                origin=combined_origin,
                 destinations=[combined_destination] if combined_destination else [],
                 trip_type="round_trip",
                 nights=group.nights,
@@ -200,4 +198,14 @@ def combined_destination_for_group(group) -> str | None:
     if str(getattr(group, "trip_type", "") or "round_trip") == "multi_city":
         return None
     combined = _combined_destination(getattr(group, "destinations", None))
+    return combined if "," in combined else None
+
+
+def combined_origin_for_group(group) -> str | None:
+    """The combined origin key ("GLA,PIK") for a ROUND-TRIP group with more
+    than one origin airport, else None. Read/export paths use this to show only
+    the fresh combined-origin rows and ignore older per-origin rows."""
+    if str(getattr(group, "trip_type", "") or "round_trip") == "multi_city":
+        return None
+    combined = _combined_destination(getattr(group, "origins", None))
     return combined if "," in combined else None

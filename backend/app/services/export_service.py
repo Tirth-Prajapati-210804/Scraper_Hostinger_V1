@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 from io import BytesIO
-import re
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
@@ -11,6 +11,7 @@ from openpyxl.utils import get_column_letter
 from app.core.logging import get_logger
 from app.models.all_flight_result import AllFlightResult
 from app.models.route_group import RouteGroup
+from app.utils.route_segments import combined_origin_for_group
 
 log = get_logger(__name__)
 _MISSING_VALUE = "N-A"
@@ -342,6 +343,19 @@ def export_route_group(
     sheet_name_map = route_group.sheet_name_map or {
         o: o for o in route_group.origins
     }
+    combined_origin = combined_origin_for_group(route_group)
+    sheet_entries = (
+        [
+            (
+                combined_origin,
+                sheet_name_map.get(combined_origin)
+                or ", ".join(str(origin).strip().upper() for origin in (route_group.origins or []))
+                or combined_origin,
+            )
+        ]
+        if combined_origin
+        else list(sheet_name_map.items())
+    )
 
     main_headers = list(_MAIN_HEADERS) + (["Verification Link"] if include_links else [])
 
@@ -352,7 +366,7 @@ def export_route_group(
         str(code).strip().upper() for code in (route_group.destinations or []) if str(code).strip()
     )
 
-    for origin, sheet_name in sheet_name_map.items():
+    for origin, sheet_name in sheet_entries:
         ws = wb.create_sheet(title=_safe_sheet_title(wb, sheet_name, fallback=origin))
         _write_header_row(ws, main_headers)
 
@@ -586,7 +600,10 @@ def _export_multi_city_route_group(
             # appends the searched metro code in brackets when they differ, e.g.
             # "FCO (ROM)", so the sheet shows the real airport without losing context.
             dep_airport = _display_airport(itinerary.get("actual_outbound_origin"), origin)
-            arr_airport = _display_airport(itinerary.get("actual_outbound_destination"), searched_destination)
+            arr_airport = _display_airport(
+                itinerary.get("actual_outbound_destination"),
+                searched_destination,
+            )
             return_from = _display_airport(
                 itinerary.get("actual_return_origin"),
                 itinerary.get("return_origin") or (itinerary.get("inbound") or {}).get("origin"),

@@ -1,7 +1,7 @@
 """Combined multi-airport round-trip search: iter_group_segments must collapse a
-round-trip group's multiple destination airports into ONE comma-combined
-destination (so the collector does a single Kayak search), while multi-city groups
-keep per-airport destinations (combined URLs are broken for multi-city)."""
+round-trip group's multiple origin/destination airports into ONE comma-combined
+Kayak route (so the collector does a single search), while multi-city groups keep
+per-airport variants (combined URLs are broken for multi-city)."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -38,12 +38,18 @@ def test_round_trip_combined_dedupes_and_drops_blanks_preserving_order():
     assert segments[0].destinations == ["ORY,CDG,BVA"]
 
 
-def test_round_trip_multi_origin_each_origin_gets_combined_destination():
+def test_round_trip_multi_origin_is_combined_into_one_search():
     segments = iter_group_segments(_group(origins=["YOW", "YYC"]))
     assert [(s.origin, s.destinations) for s in segments] == [
-        ("YOW", ["ORY,CDG"]),
-        ("YYC", ["ORY,CDG"]),
+        ("YOW,YYC", ["ORY,CDG"]),
     ]
+
+
+def test_round_trip_multi_origin_single_destination_is_one_combined_route():
+    segments = iter_group_segments(_group(origins=["GLA", "PIK"], destinations=["MLA"]))
+    assert len(segments) == 1
+    assert segments[0].origin == "GLA,PIK"
+    assert segments[0].destinations == ["MLA"]
 
 
 def test_multi_city_keeps_per_airport_destinations_not_combined():
@@ -74,6 +80,15 @@ def test_combined_destination_for_group_none_for_single_and_multi_city():
             )
         )
         is None
+    )
+
+
+def test_combined_origin_for_group_multi_origin_round_trip():
+    from app.utils.route_segments import combined_origin_for_group
+
+    assert (
+        combined_origin_for_group(_group(origins=["GLA", "PIK"], destinations=["MLA"]))
+        == "GLA,PIK"
     )
 
 

@@ -244,9 +244,12 @@ async def get_progress(session: AsyncSession, group_id: uuid.UUID) -> RouteGroup
     expected_destinations = sorted(
         {destination for segment in segments for destination in segment.destinations}
     )
+    expected_origins = sorted({segment.origin for segment in segments})
 
     def _scoped(*extra_filters):
         conditions = [DailyCheapestPrice.route_group_id == group_id]
+        if expected_origins:
+            conditions.append(DailyCheapestPrice.origin.in_(expected_origins))
         if expected_destinations:
             conditions.append(DailyCheapestPrice.destination.in_(expected_destinations))
         return (*conditions, *extra_filters)

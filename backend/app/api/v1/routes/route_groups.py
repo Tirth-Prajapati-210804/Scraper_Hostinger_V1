@@ -24,7 +24,7 @@ from app.schemas.route_group import (
 )
 from app.services import export_service, route_group_service
 from app.utils.location_resolver import search_location_suggestions
-from app.utils.route_segments import combined_destination_for_group
+from app.utils.route_segments import combined_destination_for_group, combined_origin_for_group
 
 router = APIRouter(prefix="/route-groups", tags=["route-groups"])
 
@@ -127,6 +127,9 @@ async def export_group(
     combined_key = combined_destination_for_group(group)
     if combined_key:
         results_q = results_q.where(AllFlightResult.destination == combined_key)
+    combined_origin = combined_origin_for_group(group)
+    if combined_origin:
+        results_q = results_q.where(AllFlightResult.origin == combined_origin)
     all_results_result = await session.execute(results_q)
     all_results = list(all_results_result.scalars().all())
 

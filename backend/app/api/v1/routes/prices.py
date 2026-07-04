@@ -16,7 +16,7 @@ from app.models.route_group import RouteGroup
 from app.models.user import User
 from app.schemas.daily_price import DailyPriceResponse, PriceTrendPoint
 from app.services import route_group_service
-from app.utils.route_segments import combined_destination_for_group
+from app.utils.route_segments import combined_destination_for_group, combined_origin_for_group
 
 router = APIRouter(prefix="/prices", tags=["prices"])
 
@@ -72,6 +72,9 @@ async def list_prices(
         combined_key = combined_destination_for_group(group) if group else None
         if combined_key:
             q = q.where(DailyCheapestPrice.destination == combined_key)
+        combined_origin = combined_origin_for_group(group) if group else None
+        if combined_origin:
+            q = q.where(DailyCheapestPrice.origin == combined_origin)
     if origin:
         q = q.where(DailyCheapestPrice.origin == origin.upper())
     if date_from:
