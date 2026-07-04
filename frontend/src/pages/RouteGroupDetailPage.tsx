@@ -52,6 +52,17 @@ function addDaysIso(iso: string, days: number): string {
   return dt.toISOString().slice(0, 10);
 }
 
+function combinedCode(values: string[]): string {
+  const seen: string[] = [];
+  values.forEach((value) => {
+    const code = value.trim().toUpperCase();
+    if (code && !seen.includes(code)) {
+      seen.push(code);
+    }
+  });
+  return seen.join(",");
+}
+
 /** Reuse a collected fare's stable search URL for a missing date by swapping the
  *  date segment(s). Same approach as the Excel export so links stay consistent. */
 function swapSearchLinkDate(template: string | null, depart: string, ret: string): string | null {
@@ -101,7 +112,15 @@ export function RouteGroupDetailPage() {
   });
 
   const group = groupQuery.data;
-  const activeOrigin = selectedOrigin || group?.origins[0] || "";
+  const combinedRoundTripOrigin =
+    group?.trip_type === "round_trip" && group.origins.length > 1
+      ? combinedCode(group.origins)
+      : "";
+  const originOptions = useMemo(
+    () => (combinedRoundTripOrigin ? [combinedRoundTripOrigin] : (group?.origins ?? [])),
+    [combinedRoundTripOrigin, group?.origins],
+  );
+  const activeOrigin = selectedOrigin || originOptions[0] || "";
   const originForQuery = activeOrigin;
   // Multi-airport groups query the trend with the comma-joined key. Round trip:
   // rows are saved under that literal combined key ("ORY,CDG" -- one combined
@@ -140,7 +159,7 @@ export function RouteGroupDetailPage() {
 
     const byDate = new Map(allPrices.map((p) => [p.depart_date, p]));
     const template = allPrices.find((p) => p.deep_link)?.deep_link ?? null;
-    const dest = group.destinations[0] ?? "";
+    const dest = destForQuery || group.destinations[0] || "";
 
     return windowDates.map((d) => {
       const existing = byDate.get(d);
@@ -162,7 +181,7 @@ export function RouteGroupDetailPage() {
         _missing: true,
       } satisfies DailyPrice;
     });
-  }, [group, selectedOrigin, activeOrigin, allPrices, priceHasMore, effectiveNights]);
+  }, [group, selectedOrigin, activeOrigin, allPrices, priceHasMore, effectiveNights, destForQuery]);
 
   const trendQuery = useQuery({
     queryKey: ["price-trend", id, originForQuery, destForQuery],
@@ -195,20 +214,20 @@ export function RouteGroupDetailPage() {
   const priceOriginRef = useRef("");
 
   useEffect(() => {
-    if (!group?.origins.length) return;
-    if (!selectedOrigin || !group.origins.includes(selectedOrigin)) {
-      setSelectedOrigin(group.origins[0]);
+    if (!originOptions.length) return;
+    if (!selectedOrigin || !originOptions.includes(selectedOrigin)) {
+      setSelectedOrigin(originOptions[0]);
     }
-  }, [group?.origins, selectedOrigin]);
+  }, [originOptions, selectedOrigin]);
 
   useEffect(() => {
-    if (!id || !group?.origins.length || !activeOrigin) return;
+    if (!id || !originOptions.length || !activeOrigin) return;
     if (priceOriginRef.current === activeOrigin) return;
 
     priceOriginRef.current = activeOrigin;
     setAllPrices([]);
     void loadPrices(activeOrigin, 0);
-  }, [activeOrigin, group?.origins, id, loadPrices]);
+  }, [activeOrigin, originOptions, id, loadPrices]);
 
   const handlePriceLoadMore = useCallback(
     () => loadPrices(activeOrigin, priceOffsetRef.current + PRICE_PAGE),
@@ -500,11 +519,11 @@ export function RouteGroupDetailPage() {
             <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 overflow-x-hidden text-sm">
               <Select
                 aria-label="Select origin"
-                value={selectedOrigin || group.origins[0]}
+                value={activeOrigin}
                 onChange={(e) => setSelectedOrigin(e.target.value)}
                 className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm font-medium text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               >
-                {group.origins.map((origin) => (
+                {originOptions.map((origin) => (
                   <option key={origin} value={origin}>
                     {origin}
                   </option>
@@ -545,12 +564,12 @@ export function RouteGroupDetailPage() {
             <div className="flex min-w-0 items-center gap-2">
               <Select
                 aria-label="Filter by origin"
-                value={selectedOrigin}
+                value={combinedRoundTripOrigin ? activeOrigin : selectedOrigin}
                 onChange={(e) => setSelectedOrigin(e.target.value)}
                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               >
-                <option value="">All origins</option>
-                {group.origins.map((origin) => (
+                {!combinedRoundTripOrigin ? <option value="">All origins</option> : null}
+                {originOptions.map((origin) => (
                   <option key={origin} value={origin}>
                     {origin}
                   </option>
