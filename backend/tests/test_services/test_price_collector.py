@@ -399,6 +399,40 @@ async def test_collect_route_batch_reports_started_before_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_round_trip_batch_uses_one_combined_multi_airport_search() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = make_provider("searchapi", [make_result(205, provider="searchapi")])
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+    collector._save_all_results = AsyncMock()
+
+    stats = await collector.collect_route_batch(
+        origin="GLA,PIK",
+        destinations=["MLA,CTA"],
+        dates=[DEPART],
+        route_group_id=ROUTE_ID,
+        batch_size=2,
+        delay_seconds=0,
+        trip_type="round_trip",
+        nights=7,
+    )
+
+    assert stats == {"success": 1, "errors": 0, "skipped": 0}
+    provider.search_round_trip.assert_awaited_once()
+    assert provider.search_round_trip.await_args.kwargs["origin"] == "GLA,PIK"
+    assert provider.search_round_trip.await_args.kwargs["destination"] == "MLA,CTA"
+    collector._upsert_cheapest.assert_awaited_once()
+    assert collector._upsert_cheapest.await_args.args[2] == "GLA,PIK"
+    assert collector._upsert_cheapest.await_args.args[3] == "MLA,CTA"
+
+
+@pytest.mark.asyncio
 async def test_multi_city_batch_compares_destination_alternatives_before_saving() -> None:
     session = AsyncMock()
     session.add = MagicMock()
@@ -859,3 +893,206 @@ async def test_multi_city_batch_compares_leg_airport_alternatives() -> None:
     collector._upsert_cheapest.assert_awaited_once()
     assert collector._upsert_cheapest.await_args.kwargs["destination"] == "ICN"
     assert collector._upsert_cheapest.await_args.kwargs["result"].price == 640
+
+
+@pytest.mark.asyncio
+async def test_multi_city_batch_compares_origin_and_destination_alternatives() -> None:
+    """Multiple first-leg origins and destinations expand to concrete searches;
+    only the cheapest full itinerary is stored under the combined origin key."""
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "searchapi"
+    provider.search_multi_city_diagnostic = None
+
+    prices_by_route = {
+        ("GLA", "MLA"): 420,
+        ("GLA", "CTA"): 390,
+        ("PIK", "MLA"): 310,
+        ("PIK", "CTA"): 220,
+    }
+
+    async def search_multi_city(**kwargs):
+        first_leg = kwargs["legs"][0]
+        route = (first_leg["departure_id"], first_leg["arrival_id"])
+        price = prices_by_route.get(route)
+        if price is None:
+            return []
+        return [make_result(price, provider="searchapi", raw_data={"trip_type": "multi_city"})]
+
+    provider.search_multi_city = AsyncMock(side_effect=search_multi_city)
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._save_all_results = AsyncMock()
+    collector._delete_daily_cheapest_for_destinations = AsyncMock()
+    collector._delete_all_flight_results_for_destinations = AsyncMock()
+    collector._upsert_cheapest = AsyncMock()
+
+    stats = await collector.collect_route_batch(
+        origin="GLA,PIK",
+        destinations=["MLA", "CTA"],
+        dates=[DEPART],
+        route_group_id=ROUTE_ID,
+        batch_size=4,
+        delay_seconds=0,
+        trip_type="multi_city",
+        extra_legs=[],
+        return_origin="MLA",
+        compare_destinations=True,
+    )
+
+    searched_routes = {
+        (
+            call.kwargs["legs"][0]["departure_id"],
+            call.kwargs["legs"][0]["arrival_id"],
+        )
+        for call in provider.search_multi_city.await_args_list
+    }
+
+    assert stats == {"success": 4, "errors": 0, "skipped": 0}
+    assert searched_routes == {
+        ("GLA", "MLA"),
+        ("GLA", "CTA"),
+        ("PIK", "MLA"),
+        ("PIK", "CTA"),
+    }
+    assert collector._save_all_results.await_count == 1
+    assert collector._save_all_results.await_args.args[2] == "GLA,PIK"
+    assert collector._save_all_results.await_args.args[3] == "CTA"
+    collector._delete_daily_cheapest_for_destinations.assert_awaited_once()
+    collector._delete_all_flight_results_for_destinations.assert_awaited_once()
+    collector._upsert_cheapest.assert_awaited_once()
+    assert collector._upsert_cheapest.await_args.kwargs["origin"] == "GLA,PIK"
+    assert collector._upsert_cheapest.await_args.kwargs["destination"] == "CTA"
+    assert collector._upsert_cheapest.await_args.kwargs["result"].price == 220
+
+
+@pytest.mark.asyncio
+async def test_multi_city_compare_saves_cheapest_variant_not_last_variant() -> None:
+    """Comparison mode must pick the cheapest offer across variants and archive
+    only that winner's offers, even when a later searched variant has data."""
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "searchapi"
+    provider.search_multi_city_diagnostic = None
+
+    async def search_multi_city(**kwargs):
+        first_origin = kwargs["legs"][0]["departure_id"]
+        if first_origin == "GLA":
+            return [
+                make_result(900, provider="searchapi", raw_data={"variant": "GLA"}),
+                make_result(500, provider="searchapi", raw_data={"variant": "GLA"}),
+            ]
+        if first_origin == "PIK":
+            return [
+                make_result(700, provider="searchapi", raw_data={"variant": "PIK"}),
+                make_result(650, provider="searchapi", raw_data={"variant": "PIK"}),
+            ]
+        return []
+
+    provider.search_multi_city = AsyncMock(side_effect=search_multi_city)
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._save_all_results = AsyncMock()
+    collector._delete_daily_cheapest_for_destinations = AsyncMock()
+    collector._delete_all_flight_results_for_destinations = AsyncMock()
+    collector._upsert_cheapest = AsyncMock()
+
+    stats = await collector.collect_route_batch(
+        origin="GLA,PIK",
+        destinations=["KEF"],
+        dates=[DEPART],
+        route_group_id=ROUTE_ID,
+        batch_size=1,
+        delay_seconds=0,
+        trip_type="multi_city",
+        extra_legs=[],
+        return_origin="KEF",
+        compare_destinations=True,
+    )
+
+    assert stats == {"success": 2, "errors": 0, "skipped": 0}
+    assert [
+        call.kwargs["legs"][0]["departure_id"]
+        for call in provider.search_multi_city.await_args_list
+    ] == ["GLA", "PIK"]
+    collector._upsert_cheapest.assert_awaited_once()
+    assert collector._upsert_cheapest.await_args.kwargs["origin"] == "GLA,PIK"
+    assert collector._upsert_cheapest.await_args.kwargs["destination"] == "KEF"
+    assert collector._upsert_cheapest.await_args.kwargs["result"].price == 500
+    saved_offers = collector._save_all_results.await_args.args[5]
+    assert [offer.price for offer in saved_offers] == [900, 500]
+    assert {offer.raw_data["variant"] for offer in saved_offers} == {"GLA"}
+
+
+@pytest.mark.asyncio
+async def test_multi_city_batch_compares_four_leg_origin_alternatives_end_to_end() -> None:
+    """A 4-leg multi-city chain searches concrete origins but stores one winner
+    under the combined origin; the empty final destination returns to that
+    concrete origin variant, not the comma key."""
+    from app.utils.route_segments import ExtraLeg
+
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "searchapi"
+    provider.search_multi_city_diagnostic = None
+
+    seen_leg_chains: list[list[tuple[str, str]]] = []
+
+    async def search_multi_city(**kwargs):
+        chain = [
+            (leg["departure_id"], leg["arrival_id"])
+            for leg in kwargs["legs"]
+        ]
+        seen_leg_chains.append(chain)
+        price = 530 if chain[0][0] == "GLA" else 410
+        return [make_result(price, provider="searchapi", raw_data={"trip_type": "multi_city"})]
+
+    provider.search_multi_city = AsyncMock(side_effect=search_multi_city)
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._save_all_results = AsyncMock()
+    collector._delete_daily_cheapest_for_destinations = AsyncMock()
+    collector._delete_all_flight_results_for_destinations = AsyncMock()
+    collector._upsert_cheapest = AsyncMock()
+
+    stats = await collector.collect_route_batch(
+        origin="GLA,PIK",
+        destinations=["KEF"],
+        dates=[DEPART],
+        route_group_id=ROUTE_ID,
+        batch_size=2,
+        delay_seconds=0,
+        trip_type="multi_city",
+        extra_legs=[
+            ExtraLeg(origin="KEF", destination="YYZ", nights_before=2),
+            ExtraLeg(origin="NYC", destination="BOS", nights_before=5),
+            ExtraLeg(origin="BOS", destination="", nights_before=3),
+        ],
+        compare_destinations=True,
+    )
+
+    assert stats == {"success": 2, "errors": 0, "skipped": 0}
+    assert seen_leg_chains == [
+        [("GLA", "KEF"), ("KEF", "YYZ"), ("NYC", "BOS"), ("BOS", "GLA")],
+        [("PIK", "KEF"), ("KEF", "YYZ"), ("NYC", "BOS"), ("BOS", "PIK")],
+    ]
+    collector._save_all_results.assert_awaited_once()
+    assert collector._save_all_results.await_args.args[2] == "GLA,PIK"
+    collector._upsert_cheapest.assert_awaited_once()
+    assert collector._upsert_cheapest.await_args.kwargs["origin"] == "GLA,PIK"
+    assert collector._upsert_cheapest.await_args.kwargs["result"].price == 410

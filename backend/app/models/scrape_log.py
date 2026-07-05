@@ -19,8 +19,8 @@ class ScrapeLog(Base):
         ForeignKey("route_groups.id", ondelete="CASCADE"),
         nullable=True,
     )
-    origin: Mapped[str] = mapped_column(String(8), nullable=False)
-    destination: Mapped[str] = mapped_column(String(8), nullable=False)
+    origin: Mapped[str] = mapped_column(String(64), nullable=False)
+    destination: Mapped[str] = mapped_column(String(64), nullable=False)
     depart_date: Mapped[date] = mapped_column(Date, nullable=False)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)

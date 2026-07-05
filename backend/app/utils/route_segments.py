@@ -78,11 +78,15 @@ def iter_group_segments(group) -> list[RouteSegment]:
         # The segment's "return origin" (used by logs/export labels) is where the
         # final homebound leg departs from.
         return_origin = extra_legs[-1].origin if extra_legs else None
+        # Store multi-origin multi-city groups as one comparison segment. The
+        # collector expands this comma key into concrete provider searches, then
+        # persists only the cheapest winner under the combined origin key.
+        combined_origin = _combined_destination(group.origins)
 
-        for origin in group.origins or []:
+        if combined_origin:
             segments.append(
                 RouteSegment(
-                    origin=_clean_code(origin),
+                    origin=combined_origin,
                     destinations=[_clean_code(destination) for destination in (group.destinations or [])],
                     trip_type="multi_city",
                     nights=group.nights,
@@ -173,12 +177,15 @@ def iter_chain_variants(destinations, extra_legs) -> list[tuple[str, list[ExtraL
 
 def segment_compares_alternatives(segment) -> bool:
     """True when a multi-city segment expands to MORE THAN ONE chain variant --
-    multiple leg-1 destinations and/or comma alternatives on any extra leg -- so
-    the collector compares the variants per date and saves one winner. Used by
-    the scheduler (compare flag + a date is done once ANY variant saved) and by
-    progress (expect 1 row/date). Never True for round trip."""
+    multiple leg-1 origins, multiple leg-1 destinations, and/or comma
+    alternatives on any extra leg -- so the collector compares the variants per
+    date and saves one winner. Used by the scheduler (compare flag + a date is
+    done once ANY variant saved) and by progress (expect 1 row/date). Never True
+    for round trip."""
     if str(getattr(segment, "trip_type", "") or "").strip().lower() != "multi_city":
         return False
+    if "," in str(getattr(segment, "origin", "") or ""):
+        return True
     if len(getattr(segment, "destinations", []) or []) > 1:
         return True
     return any(
@@ -202,10 +209,8 @@ def combined_destination_for_group(group) -> str | None:
 
 
 def combined_origin_for_group(group) -> str | None:
-    """The combined origin key ("GLA,PIK") for a ROUND-TRIP group with more
-    than one origin airport, else None. Read/export paths use this to show only
-    the fresh combined-origin rows and ignore older per-origin rows."""
-    if str(getattr(group, "trip_type", "") or "round_trip") == "multi_city":
-        return None
+    """The combined origin key ("GLA,PIK") for groups with more than one origin
+    airport, else None. Read/export paths use this to show only the fresh
+    combined-origin rows and ignore older per-origin rows."""
     combined = _combined_destination(getattr(group, "origins", None))
     return combined if "," in combined else None

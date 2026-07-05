@@ -112,21 +112,17 @@ export function RouteGroupDetailPage() {
   });
 
   const group = groupQuery.data;
-  const combinedRoundTripOrigin =
-    group?.trip_type === "round_trip" && group.origins.length > 1
-      ? combinedCode(group.origins)
-      : "";
+  const combinedAlternativeOrigin = group && group.origins.length > 1 ? combinedCode(group.origins) : "";
   const originOptions = useMemo(
-    () => (combinedRoundTripOrigin ? [combinedRoundTripOrigin] : (group?.origins ?? [])),
-    [combinedRoundTripOrigin, group?.origins],
+    () => (combinedAlternativeOrigin ? [combinedAlternativeOrigin] : (group?.origins ?? [])),
+    [combinedAlternativeOrigin, group?.origins],
   );
   const activeOrigin = selectedOrigin || originOptions[0] || "";
   const originForQuery = activeOrigin;
-  // Multi-airport groups query the trend with the comma-joined key. Round trip:
-  // rows are saved under that literal combined key ("ORY,CDG" -- one combined
-  // Kayak search). Multi-city: rows are saved under the WINNING airport per date
-  // (compare-then-save), so the backend splits the comma key and matches any of
-  // the airports. Single-destination groups keep the plain code.
+  // Multi-airport destinations query the trend with the comma-joined key. Round
+  // trip rows are saved under that literal combined destination key ("ORY,CDG").
+  // Multi-city rows save the winning destination airport per date, so the
+  // backend splits the comma key and matches any of the airports.
   const destForQuery =
     group && group.destinations.length > 1
       ? group.destinations.map((d) => d.trim().toUpperCase()).filter(Boolean).join(",")
@@ -564,11 +560,11 @@ export function RouteGroupDetailPage() {
             <div className="flex min-w-0 items-center gap-2">
               <Select
                 aria-label="Filter by origin"
-                value={combinedRoundTripOrigin ? activeOrigin : selectedOrigin}
+                value={combinedAlternativeOrigin ? activeOrigin : selectedOrigin}
                 onChange={(e) => setSelectedOrigin(e.target.value)}
                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               >
-                {!combinedRoundTripOrigin ? <option value="">All origins</option> : null}
+                {!combinedAlternativeOrigin ? <option value="">All origins</option> : null}
                 {originOptions.map((origin) => (
                   <option key={origin} value={origin}>
                     {origin}

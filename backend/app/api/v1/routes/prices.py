@@ -22,7 +22,7 @@ router = APIRouter(prefix="/prices", tags=["prices"])
 
 _Auth = Annotated[User, Depends(get_current_user)]
 _DB = Annotated[AsyncSession, Depends(get_db_session)]
-_IATA_QUERY_PATTERN = r"^[A-Za-z0-9]{2,4}$"
+_ORIGIN_QUERY_PATTERN = r"^[A-Za-z0-9]{2,4}(?:,[A-Za-z0-9]{2,4}){0,7}$"
 # Destination may be a single airport OR a comma-combined multi-airport key
 # (e.g. "ORY,CDG") for round-trip groups that do one combined Kayak search. Accept
 # 1-8 comma-separated 2-4 char codes; matches the widened destination column.
@@ -47,7 +47,7 @@ async def list_prices(
     session: _DB,
     current_user: _Auth,
     route_group_id: uuid.UUID | None = Query(default=None),
-    origin: str | None = Query(default=None, min_length=2, max_length=4, pattern=_IATA_QUERY_PATTERN),
+    origin: str | None = Query(default=None, min_length=2, max_length=64, pattern=_ORIGIN_QUERY_PATTERN),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
@@ -122,7 +122,7 @@ async def list_prices(
 async def price_trend(
     session: _DB,
     current_user: _Auth,
-    origin: str = Query(min_length=2, max_length=4, pattern=_IATA_QUERY_PATTERN),
+    origin: str = Query(min_length=2, max_length=64, pattern=_ORIGIN_QUERY_PATTERN),
     destination: str = Query(min_length=2, max_length=64, pattern=_DEST_QUERY_PATTERN),
     route_group_id: uuid.UUID | None = Query(default=None),
     date_from: date | None = Query(default=None),

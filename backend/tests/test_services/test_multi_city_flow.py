@@ -134,3 +134,57 @@ def test_multi_city_export_marks_missing_dates_as_na() -> None:
     assert sheet["G3"].value == "N-A"  # Stop Result
     assert sheet["H3"].value == "N-A"  # Duration
     assert sheet["I3"].value == "N-A"  # Flight Price
+
+
+def test_multi_city_export_handles_combined_origin_four_leg_itinerary() -> None:
+    group = SimpleNamespace(
+        trip_type="multi_city",
+        origins=["GLA", "PIK"],
+        destinations=["KEF"],
+        nights=10,
+        sheet_name_map={"GLA,PIK": "Glasgow Options"},
+        multi_city_legs=[
+            SimpleNamespace(origin="KEF", destination="YYZ", nights_before=2),
+            SimpleNamespace(origin="NYC", destination="BOS", nights_before=5),
+            SimpleNamespace(origin="BOS", destination="", nights_before=3),
+        ],
+    )
+
+    results = [
+        SimpleNamespace(
+            origin="GLA,PIK",
+            destination="KEF",
+            depart_date=date(2026, 7, 1),
+            airline="Icelandair / Air Canada",
+            price=410.0,
+            stops=0,
+            stop_label="Direct",
+            deep_link="https://example.com/flights",
+            itinerary_data={
+                "return_date": "2026-07-11",
+                "actual_outbound_origin": "GLA",
+                "actual_outbound_destination": "KEF",
+                "actual_return_origin": "BOS",
+                "return_origin": "BOS",
+                "legs": [
+                    {"actual_origin": "GLA", "actual_destination": "KEF", "duration_minutes": 210},
+                    {"actual_origin": "KEF", "actual_destination": "YYZ", "duration_minutes": 360},
+                    {"actual_origin": "NYC", "actual_destination": "BOS", "duration_minutes": 80},
+                    {"actual_origin": "BOS", "actual_destination": "PIK", "duration_minutes": 390},
+                ],
+            },
+        )
+    ]
+
+    workbook_bytes = export_route_group(group, results, include_links=True)
+    workbook = load_workbook(BytesIO(workbook_bytes))
+
+    assert "Glasgow Options" in workbook.sheetnames
+    sheet = workbook["Glasgow Options"]
+    assert sheet["A2"].value == datetime(2026, 7, 1)
+    assert sheet["B2"].value == datetime(2026, 7, 11)
+    assert sheet["C2"].value == "GLA-KEF / KEF-YYZ / NYC-BOS / BOS-PIK"
+    assert sheet["D2"].value == "KEF"
+    assert sheet["H2"].value == "3h 30m / 6h 0m / 1h 20m / 6h 30m"
+    assert sheet["I2"].value == 410
+    assert sheet["J2"].value == "https://example.com/flights"

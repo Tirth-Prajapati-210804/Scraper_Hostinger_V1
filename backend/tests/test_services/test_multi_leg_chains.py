@@ -123,7 +123,8 @@ def test_segments_built_from_multi_city_legs() -> None:
         ],
     )
     segments = iter_group_segments(group)
-    assert len(segments) == 2
+    assert len(segments) == 1
+    assert segments[0].origin == "YHZ,YEG"
     assert segments[0].extra_legs == [
         ExtraLeg(origin="SAI", destination="YYC", nights_before=9),
         ExtraLeg(origin="YYC", destination="", nights_before=1),

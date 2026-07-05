@@ -33,7 +33,9 @@ class AllFlightResult(Base):
         ForeignKey("route_groups.id", ondelete="CASCADE"),
         nullable=False,
     )
-    origin: Mapped[str] = mapped_column(String(10), nullable=False)
+    # 64 chars: holds a comma-combined multi-airport origin key for groups that
+    # compare origin alternatives (e.g. "GLA,PIK"), not just one 3-letter code.
+    origin: Mapped[str] = mapped_column(String(64), nullable=False)
     # 64 chars: holds a comma-combined multi-airport destination key for round-trip
     # groups (e.g. "ORY,CDG" or "ORY,LHR,CDG"), not just a single 3-letter code.
     destination: Mapped[str] = mapped_column(String(64), nullable=False)

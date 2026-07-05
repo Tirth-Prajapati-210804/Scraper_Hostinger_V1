@@ -160,8 +160,8 @@ async def list_group_results(
     session: _DB,
     current_user: _Auth,
     depart_date: date_type | None = Query(default=None),
-    origin: str | None = Query(default=None, min_length=2, max_length=4),
-    destination: str | None = Query(default=None, min_length=2, max_length=4),
+    origin: str | None = Query(default=None, min_length=2, max_length=64),
+    destination: str | None = Query(default=None, min_length=2, max_length=64),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[dict]:
     group = await route_group_service.get_by_id(session, group_id)

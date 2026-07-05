@@ -1,7 +1,4 @@
-"""Combined multi-airport round-trip search: iter_group_segments must collapse a
-round-trip group's multiple origin/destination airports into ONE comma-combined
-Kayak route (so the collector does a single search), while multi-city groups keep
-per-airport variants (combined URLs are broken for multi-city)."""
+"""Route segment behavior for multi-airport route groups."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -52,12 +49,27 @@ def test_round_trip_multi_origin_single_destination_is_one_combined_route():
     assert segments[0].destinations == ["MLA"]
 
 
-def test_multi_city_keeps_per_airport_destinations_not_combined():
-    # Combined comma URLs are broken for multi-city, so it must NOT combine.
+def test_multi_city_keeps_destinations_as_comparable_variants():
+    # Multi-city cannot use one comma URL for destinations. Each destination is
+    # searched as a concrete chain variant, then the cheapest date winner is saved.
     segments = iter_group_segments(
         _group(trip_type="multi_city", multi_city_legs=[{"origin": "CDG", "destination": "", "nights_before": 3}])
     )
     assert segments[0].destinations == ["ORY", "CDG"]
+
+
+def test_multi_city_multi_origin_is_one_comparison_segment():
+    segments = iter_group_segments(
+        _group(
+            trip_type="multi_city",
+            origins=["GLA", "PIK"],
+            destinations=["MLA"],
+            multi_city_legs=[{"origin": "MLA", "destination": "", "nights_before": 7}],
+        )
+    )
+    assert len(segments) == 1
+    assert segments[0].origin == "GLA,PIK"
+    assert segments[0].destinations == ["MLA"]
 
 
 def test_combined_destination_for_group_multi_dest_round_trip():
@@ -88,6 +100,22 @@ def test_combined_origin_for_group_multi_origin_round_trip():
 
     assert (
         combined_origin_for_group(_group(origins=["GLA", "PIK"], destinations=["MLA"]))
+        == "GLA,PIK"
+    )
+
+
+def test_combined_origin_for_group_multi_origin_multi_city():
+    from app.utils.route_segments import combined_origin_for_group
+
+    assert (
+        combined_origin_for_group(
+            _group(
+                trip_type="multi_city",
+                origins=["GLA", "PIK"],
+                destinations=["MLA"],
+                multi_city_legs=[{"origin": "MLA", "destination": "", "nights_before": 7}],
+            )
+        )
         == "GLA,PIK"
     )
 
@@ -124,13 +152,16 @@ def test_iter_chain_variants_expands_leg_alternatives():
 def test_segment_compares_alternatives_predicate():
     from app.utils.route_segments import ExtraLeg, segment_compares_alternatives
 
-    def seg(trip_type="multi_city", destinations=("BER",), legs=()):
+    def seg(trip_type="multi_city", origin="YYZ", destinations=("BER",), legs=()):
         return SimpleNamespace(
             trip_type=trip_type,
+            origin=origin,
             destinations=list(destinations),
             extra_legs=list(legs),
         )
 
+    # Comma alternatives on the first-leg origin trigger compare too.
+    assert segment_compares_alternatives(seg(origin="GLA,PIK"))
     # Comma alternatives on an extra leg trigger compare even with ONE leg-1 dest.
     assert segment_compares_alternatives(
         seg(legs=[ExtraLeg(origin="ASJ,SES", destination="", nights_before=3)])
