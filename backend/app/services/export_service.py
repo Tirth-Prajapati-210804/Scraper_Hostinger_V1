@@ -386,16 +386,28 @@ def export_route_group(
         for row_idx, d in enumerate(all_dates, start=2):
             result = cheapest_by_origin_date.get((origin, d))
 
+            departure_airport = str(origin or "").strip().upper()
             arrival_airport = group_dest_codes
+            return_airport = str(origin or "").strip().upper()
             if result is not None:
                 itinerary = getattr(result, "itinerary_data", None)
-                actual_dest = (itinerary or {}).get("actual_outbound_destination") if isinstance(itinerary, dict) else None
+                itinerary_data = itinerary if isinstance(itinerary, dict) else {}
+                departure_airport = _display_airport(
+                    itinerary_data.get("actual_outbound_origin"),
+                    getattr(result, "origin", "") or origin,
+                ) or departure_airport
+                actual_dest = itinerary_data.get("actual_outbound_destination")
                 resolved = _display_airport(actual_dest, getattr(result, "destination", "") or group_dest_codes)
                 if resolved:
                     arrival_airport = resolved
+                return_airport = _display_airport(
+                    itinerary_data.get("actual_return_destination"),
+                    getattr(result, "origin", "") or origin,
+                ) or return_airport
 
-            # Round trip route = out + back: MAN-VCE-MAN.
-            route = f"{origin}-{arrival_airport or group_dest_codes}-{origin}"
+            # Round trip route = out + back, using actual airports when Kayak exposes
+            # them: STN (LON)-NAP-LGW (LON). N-A rows keep the searched route.
+            route = f"{departure_airport}-{arrival_airport or group_dest_codes}-{return_airport}"
 
             # Return Date = return flight date. Prefer the actual return_date the
             # scraper captured; else depart + nights (the round-trip return rule).

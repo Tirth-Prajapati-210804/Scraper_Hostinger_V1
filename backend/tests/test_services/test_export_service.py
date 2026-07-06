@@ -109,6 +109,27 @@ def test_export_route_column_annotates_searched_metro_code() -> None:
     assert ws.cell(2, 3).value == "YVR-FCO (ROM)-YVR"
 
 
+def test_export_round_trip_route_uses_actual_metro_origin_airports() -> None:
+    rg = make_route_group(
+        sheet_name_map={"LON": "London"},
+        destination_label="London - Naples",
+        destinations=["NAP"],
+        nights=5,
+    )
+    result = make_result(origin="LON", destination="NAP")
+    result.itinerary_data = {
+        "actual_outbound_origin": "STN",
+        "actual_outbound_destination": "NAP",
+        "actual_return_origin": "NAP",
+        "actual_return_destination": "LGW",
+    }
+
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
+    ws = wb["London"]
+
+    assert ws.cell(2, 3).value == "STN (LON)-NAP-LGW (LON)"
+
+
 def test_export_nights_in_night_column() -> None:
     rg = make_route_group(nights=12)
     result = make_result()

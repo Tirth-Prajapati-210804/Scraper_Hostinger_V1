@@ -33,7 +33,11 @@ const BASE_COLUMNS: Column[] = [
 // actual arrival airport the scraper extracted; falls back to the stored
 // destination when it is one plain airport code.
 function fareAirport(price: DailyPrice): string {
-  const actual = (price.itinerary_data?.legs?.[0]?.actual_destination ?? "").trim().toUpperCase();
+  const actual = (
+    price.itinerary_data?.legs?.[0]?.actual_destination ??
+    price.itinerary_data?.actual_outbound_destination ??
+    ""
+  ).trim().toUpperCase();
   if (actual) return actual;
   const stored = (price.destination ?? "").trim().toUpperCase();
   if (stored && !stored.includes(",")) return stored;
@@ -47,6 +51,7 @@ function displayAirport(actual?: string | null, searched?: string | null): strin
   const a = (actual ?? "").trim().toUpperCase();
   const s = (searched ?? "").trim().toUpperCase();
   if (!a) return s;
+  if (s && s.split(",").map((code) => code.trim()).includes(a)) return a;
   if (s && s !== a) return `${a} (${s})`;
   return a;
 }
@@ -67,10 +72,21 @@ function buildRoute(
   const actualLegs = price.itinerary_data?.legs;
 
   if (!isMultiCity) {
-    const dest = actualLegs?.[0]
-      ? displayAirport(actualLegs[0].actual_destination, price.destination)
-      : price.destination;
-    return `${price.origin}-${dest}-${price.origin}`;
+    const firstLeg = actualLegs?.[0];
+    const lastLeg = actualLegs?.[actualLegs.length - 1];
+    const origin = displayAirport(
+      firstLeg?.actual_origin ?? price.itinerary_data?.actual_outbound_origin,
+      price.origin,
+    );
+    const dest = displayAirport(
+      firstLeg?.actual_destination ?? price.itinerary_data?.actual_outbound_destination,
+      price.destination,
+    );
+    const returnTo = displayAirport(
+      lastLeg?.actual_destination ?? price.itinerary_data?.actual_return_destination,
+      price.origin,
+    );
+    return `${origin}-${dest}-${returnTo}`;
   }
 
   // The SEARCHED leg codes in order: leg 1 = origin->destination, then each

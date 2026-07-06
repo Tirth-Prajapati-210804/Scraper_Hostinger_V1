@@ -12,6 +12,10 @@ export interface DailyPrice {
   stop_label?: string | null;
   duration_minutes: number | null;
   itinerary_data?: {
+    actual_outbound_origin?: string | null;
+    actual_outbound_destination?: string | null;
+    actual_return_origin?: string | null;
+    actual_return_destination?: string | null;
     duration_text?: string | null;
     leg_durations?: number[] | null;
     legs?: Array<{
