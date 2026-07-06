@@ -21,6 +21,8 @@ export interface DailyPrice {
     legs?: Array<{
       duration_text?: string | null;
       duration_minutes?: number | null;
+      route_text?: string | null;
+      text?: string | null;
       /** Actual airport flown on this leg (e.g. NRT when TYO metro was searched). */
       actual_origin?: string | null;
       actual_destination?: string | null;

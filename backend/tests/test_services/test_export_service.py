@@ -130,6 +130,50 @@ def test_export_round_trip_route_uses_actual_metro_origin_airports() -> None:
     assert ws.cell(2, 3).value == "STN (LON)-NAP-LGW (LON)"
 
 
+def test_export_round_trip_route_uses_per_leg_actual_airports_when_top_level_missing() -> None:
+    rg = make_route_group(
+        sheet_name_map={"NYC": "NYC"},
+        destination_label="New York - Rome",
+        destinations=["ROM"],
+        nights=6,
+    )
+    result = make_result(origin="NYC", destination="ROM")
+    result.itinerary_data = {
+        "legs": [
+            {"actual_origin": "JFK", "actual_destination": "FCO"},
+            {"actual_origin": "FCO", "actual_destination": "EWR"},
+        ],
+    }
+
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
+    ws = wb["NYC"]
+
+    assert ws.cell(2, 3).value == "JFK (NYC)-FCO (ROM)-EWR (NYC)"
+    assert ws.cell(2, 4).value == "FCO"
+
+
+def test_export_round_trip_route_parses_actual_pair_from_leg_text() -> None:
+    rg = make_route_group(
+        sheet_name_map={"NYC": "NYC"},
+        destination_label="New York - Rome",
+        destinations=["ROM"],
+        nights=6,
+    )
+    result = make_result(origin="NYC", destination="ROM")
+    result.itinerary_data = {
+        "legs": [
+            {"route_text": "JFKJohn F Kennedy Intl – FCORome Fiumicino"},
+            {"text": "FCO-EWR Rome Fiumicino to Newark"},
+        ],
+    }
+
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
+    ws = wb["NYC"]
+
+    assert ws.cell(2, 3).value == "JFK (NYC)-FCO (ROM)-EWR (NYC)"
+    assert ws.cell(2, 4).value == "FCO"
+
+
 def test_export_nights_in_night_column() -> None:
     rg = make_route_group(nights=12)
     result = make_result()
@@ -290,6 +334,27 @@ def test_multi_city_route_uses_per_leg_pairs() -> None:
     wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
     ws = wb["YVR"]
     assert ws.cell(2, 3).value == "YVR-BER / BER-LON / BUD-YVR"
+
+
+def test_multi_city_route_parses_actual_pair_from_leg_text() -> None:
+    rg = make_route_group(sheet_name_map={"YOW": "YOW"}, destinations=["LON"])
+    rg.trip_type = "multi_city"
+    rg.origins = ["YOW"]
+    rg.multi_city_legs = [{"origin": "PAR", "destination": "YOW", "nights_before": 8}]
+    result = make_result(origin="YOW", destination="LON", price=868.0)
+    result.itinerary_data = {
+        "return_date": "2026-07-23",
+        "legs": [
+            {"route_text": "YOWOttawa – LHRHeathrow"},
+            {"route_text": "CDGCharles de Gaulle – YOWOttawa"},
+        ],
+    }
+
+    wb = openpyxl.load_workbook(BytesIO(export_route_group(rg, [result])))
+    ws = wb["YOW"]
+
+    assert ws.cell(2, 3).value == "YOW-LHR (LON) / CDG (PAR)-YOW"
+    assert ws.cell(2, 4).value == "LHR"
 
 
 def test_na_row_gets_search_link_with_swapped_dates() -> None:

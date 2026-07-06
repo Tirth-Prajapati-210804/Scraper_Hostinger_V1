@@ -929,3 +929,46 @@ def test_route_airport_pair_parses_current_glued_name_format() -> None:
     # No airport codes -> None (never guess).
     assert provider._route_airport_pair("New York – Paris") is None
     assert provider._route_airport_pair("") is None
+
+
+def test_normalize_reads_actual_airports_from_full_leg_text_when_route_text_is_generic() -> None:
+    provider = make_provider()
+    results = provider._normalize_rendered_cards(
+        {
+            "cards": [
+                {
+                    "text": "Norse Atlantic Airways $678",
+                    "price_text": "$678",
+                    "airline_text": "Norse Atlantic Airways",
+                    "legs": [
+                        {
+                            "airline": "Norse Atlantic Airways",
+                            "text": "JFK-FCO New York John F Kennedy Intl to Rome Fiumicino",
+                            "route_text": "Norse Atlantic Airways",
+                            "stops_text": "direct",
+                            "duration_text": "8h 0m",
+                        },
+                        {
+                            "airline": "Norse Atlantic Airways",
+                            "text": "FCO-JFK Rome Fiumicino to New York John F Kennedy Intl",
+                            "route_text": "Norse Atlantic Airways",
+                            "stops_text": "direct",
+                            "duration_text": "9h 25m",
+                        },
+                    ],
+                }
+            ]
+        },
+        currency="USD",
+        deep_link="https://www.kayak.com/flights/NYC-ROM/2026-07-07/2026-07-13",
+        trip_type="round_trip",
+        market_country_code="us",
+        expected_leg_count=2,
+    )
+
+    assert len(results) == 1
+    raw = results[0].raw_data
+    assert raw["actual_outbound_origin"] == "JFK"
+    assert raw["actual_outbound_destination"] == "FCO"
+    assert raw["actual_return_origin"] == "FCO"
+    assert raw["actual_return_destination"] == "JFK"

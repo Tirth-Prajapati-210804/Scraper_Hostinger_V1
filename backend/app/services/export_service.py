@@ -16,6 +16,9 @@ from app.utils.route_segments import combined_origin_for_group
 log = get_logger(__name__)
 _MISSING_VALUE = "N-A"
 _INVALID_SHEET_TITLE_RE = re.compile(r"[\[\]:*?/\\]")
+_AIRPORT_PAIR_RE = re.compile(r"\b([A-Z]{3})\s*[-–—]\s*([A-Z]{3})\b")
+_SPACED_DASH_RE = re.compile(r"\s+[-–—]\s+")
+_LEADING_AIRPORT_CODE_RE = re.compile(r"^\s*([A-Z]{3})(?=$|\s|[A-Z][a-z])")
 
 _MAIN_HEADERS = [
     "Date",
@@ -59,6 +62,50 @@ def _display_airport(actual: object, searched: object) -> str:
     return actual_code
 
 
+def _actual_leg_airport(itinerary: dict, index: int, field: str) -> str:
+    legs = itinerary.get("legs")
+    if not isinstance(legs, list):
+        return ""
+    try:
+        leg = legs[index]
+    except IndexError:
+        return ""
+    if not isinstance(leg, dict):
+        return ""
+    explicit = str(leg.get(field) or "").strip().upper()
+    if explicit:
+        return explicit
+    pair = _airport_pair_from_leg(leg)
+    if not pair:
+        return ""
+    return pair[0] if field == "actual_origin" else pair[1]
+
+
+def _airport_pair_from_leg(leg: dict) -> tuple[str, str] | None:
+    for key in ("route_text", "text"):
+        pair = _airport_pair_from_text(leg.get(key))
+        if pair:
+            return pair
+    return None
+
+
+def _airport_pair_from_text(value: object) -> tuple[str, str] | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = _AIRPORT_PAIR_RE.search(text.upper())
+    if match:
+        return match.group(1), match.group(2)
+
+    parts = _SPACED_DASH_RE.split(text)
+    if len(parts) >= 2:
+        origin = _LEADING_AIRPORT_CODE_RE.match(parts[0])
+        destination = _LEADING_AIRPORT_CODE_RE.match(parts[-1])
+        if origin and destination:
+            return origin.group(1), destination.group(1)
+    return None
+
+
 def _fare_airport_code(result, itinerary: dict) -> str:
     """The single airport this fare's data actually belongs to, shown plainly
     (e.g. "CDG" or "ORY") in the Airport column. Combined multi-airport groups
@@ -67,7 +114,14 @@ def _fare_airport_code(result, itinerary: dict) -> str:
     scraper extracted; falls back to the row's stored destination when that is a
     single airport (legacy/single-destination rows). N-A when unknowable (e.g. a
     combined row whose render didn't expose the airport)."""
-    actual = str(itinerary.get("actual_outbound_destination") or "").strip().upper()
+    actual = (
+        _actual_leg_airport(
+            itinerary,
+            0,
+            "actual_destination",
+        )
+        or str(itinerary.get("actual_outbound_destination") or "").strip().upper()
+    )
     if actual:
         return actual
     stored = str(getattr(result, "destination", "") or "").strip().upper()
@@ -144,8 +198,15 @@ def _multi_city_route_label(
             if not isinstance(leg, dict):
                 continue
             searched = searched_pairs[i] if i < len(searched_pairs) else ("", "")
-            o = _display_airport(leg.get("actual_origin"), searched[0])
-            d = _display_airport(leg.get("actual_destination"), searched[1])
+            leg_itinerary = {"legs": [leg]}
+            o = _display_airport(
+                _actual_leg_airport(leg_itinerary, 0, "actual_origin"),
+                searched[0],
+            )
+            d = _display_airport(
+                _actual_leg_airport(leg_itinerary, 0, "actual_destination"),
+                searched[1],
+            )
             if o and d:
                 pairs.append(f"{o}-{d}")
     if pairs:
@@ -393,15 +454,21 @@ def export_route_group(
                 itinerary = getattr(result, "itinerary_data", None)
                 itinerary_data = itinerary if isinstance(itinerary, dict) else {}
                 departure_airport = _display_airport(
-                    itinerary_data.get("actual_outbound_origin"),
+                    _actual_leg_airport(itinerary_data, 0, "actual_origin")
+                    or itinerary_data.get("actual_outbound_origin"),
                     getattr(result, "origin", "") or origin,
                 ) or departure_airport
-                actual_dest = itinerary_data.get("actual_outbound_destination")
+                actual_dest = _actual_leg_airport(
+                    itinerary_data,
+                    0,
+                    "actual_destination",
+                ) or itinerary_data.get("actual_outbound_destination")
                 resolved = _display_airport(actual_dest, getattr(result, "destination", "") or group_dest_codes)
                 if resolved:
                     arrival_airport = resolved
                 return_airport = _display_airport(
-                    itinerary_data.get("actual_return_destination"),
+                    _actual_leg_airport(itinerary_data, -1, "actual_destination")
+                    or itinerary_data.get("actual_return_destination"),
                     getattr(result, "origin", "") or origin,
                 ) or return_airport
 
@@ -611,13 +678,23 @@ def _export_multi_city_route_group(
             # ROM metro code), falling back to the searched code. _display_airport
             # appends the searched metro code in brackets when they differ, e.g.
             # "FCO (ROM)", so the sheet shows the real airport without losing context.
-            dep_airport = _display_airport(itinerary.get("actual_outbound_origin"), origin)
+            dep_airport = _display_airport(
+                _actual_leg_airport(itinerary, 0, "actual_origin")
+                or itinerary.get("actual_outbound_origin"),
+                origin,
+            )
             arr_airport = _display_airport(
-                itinerary.get("actual_outbound_destination"),
+                _actual_leg_airport(itinerary, 0, "actual_destination")
+                or itinerary.get("actual_outbound_destination"),
                 searched_destination,
             )
             return_from = _display_airport(
-                itinerary.get("actual_return_origin"),
+                _actual_leg_airport(
+                    itinerary,
+                    -1,
+                    "actual_origin",
+                )
+                or itinerary.get("actual_return_origin"),
                 itinerary.get("return_origin") or (itinerary.get("inbound") or {}).get("origin"),
             )
 

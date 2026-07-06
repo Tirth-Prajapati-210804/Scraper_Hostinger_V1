@@ -1774,7 +1774,9 @@ class ScrapingBeeProvider:
                 total_duration += leg_duration
                 leg_stops = self._parse_stops(f"{stops_text} {layover_text}".strip())
                 leg_stop_counts.append(leg_stops)
-                airport_pair = self._route_airport_pair(route_text)
+                airport_pair = self._route_airport_pair(route_text) or self._route_airport_pair(
+                    leg.get("text")
+                )
                 normalized_legs.append(
                     {
                         "airline": airline,

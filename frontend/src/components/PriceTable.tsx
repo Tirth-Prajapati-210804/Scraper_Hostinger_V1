@@ -27,6 +27,33 @@ const BASE_COLUMNS: Column[] = [
   { key: "scraped_at", label: "Freshness" },
 ];
 
+type PriceLeg = NonNullable<NonNullable<DailyPrice["itinerary_data"]>["legs"]>[number];
+
+function airportPairFromText(value?: string | null): [string, string] | null {
+  const raw = (value ?? "").trim();
+  const compactMatch = raw.toUpperCase().match(/\b([A-Z]{3})\s*[-–—]\s*([A-Z]{3})\b/);
+  if (compactMatch) return [compactMatch[1], compactMatch[2]];
+
+  const parts = raw.split(/\s+[-–—]\s+/);
+  if (parts.length >= 2) {
+    const origin = parts[0].match(/^\s*([A-Z]{3})(?=$|\s|[A-Z][a-z])/);
+    const destination = parts[parts.length - 1].match(/^\s*([A-Z]{3})(?=$|\s|[A-Z][a-z])/);
+    if (origin && destination) return [origin[1], destination[1]];
+  }
+  return null;
+}
+
+function actualLegAirport(
+  leg: PriceLeg | undefined,
+  field: "actual_origin" | "actual_destination",
+): string {
+  const explicit = (leg?.[field] ?? "").trim().toUpperCase();
+  if (explicit) return explicit;
+  const pair = airportPairFromText(leg?.route_text) ?? airportPairFromText(leg?.text);
+  if (!pair) return "";
+  return field === "actual_origin" ? pair[0] : pair[1];
+}
+
 // The single airport this fare's data belongs to (e.g. "CDG" vs "ORY").
 // Combined multi-airport groups store destination "ORY,CDG", so the client
 // can't tell from the Route alone which airport the price is for. Prefers the
@@ -34,8 +61,8 @@ const BASE_COLUMNS: Column[] = [
 // destination when it is one plain airport code.
 function fareAirport(price: DailyPrice): string {
   const actual = (
-    price.itinerary_data?.legs?.[0]?.actual_destination ??
-    price.itinerary_data?.actual_outbound_destination ??
+    actualLegAirport(price.itinerary_data?.legs?.[0], "actual_destination") ||
+    price.itinerary_data?.actual_outbound_destination ||
     ""
   ).trim().toUpperCase();
   if (actual) return actual;
@@ -75,15 +102,17 @@ function buildRoute(
     const firstLeg = actualLegs?.[0];
     const lastLeg = actualLegs?.[actualLegs.length - 1];
     const origin = displayAirport(
-      firstLeg?.actual_origin ?? price.itinerary_data?.actual_outbound_origin,
+      actualLegAirport(firstLeg, "actual_origin") || price.itinerary_data?.actual_outbound_origin,
       price.origin,
     );
     const dest = displayAirport(
-      firstLeg?.actual_destination ?? price.itinerary_data?.actual_outbound_destination,
+      actualLegAirport(firstLeg, "actual_destination") ||
+        price.itinerary_data?.actual_outbound_destination,
       price.destination,
     );
     const returnTo = displayAirport(
-      lastLeg?.actual_destination ?? price.itinerary_data?.actual_return_destination,
+      actualLegAirport(lastLeg, "actual_destination") ||
+        price.itinerary_data?.actual_return_destination,
       price.origin,
     );
     return `${origin}-${dest}-${returnTo}`;
@@ -107,8 +136,8 @@ function buildRoute(
     const pairs = actualLegs
       .map((leg, i) => {
         const searched = searchedPairs[i];
-        const o = displayAirport(leg.actual_origin, searched?.[0]);
-        const d = displayAirport(leg.actual_destination, searched?.[1]);
+        const o = displayAirport(actualLegAirport(leg, "actual_origin"), searched?.[0]);
+        const d = displayAirport(actualLegAirport(leg, "actual_destination"), searched?.[1]);
         return o && d ? `${o}-${d}` : "";
       })
       .filter(Boolean);
