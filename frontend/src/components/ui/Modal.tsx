@@ -27,6 +27,10 @@ interface ModalProps {
   children: ReactNode;
   eyebrow?: string;
   className?: string;
+  /** Inline style on the panel — for a one-off width (e.g. viewport-percentage)
+   *  that a Tailwind size preset can't express. Wins over `size`'s max-width
+   *  class since it's applied via the style attribute, not the class list. */
+  style?: React.CSSProperties;
   size?: ModalSize;
   headerClassName?: string;
   bodyClassName?: string;
@@ -42,6 +46,7 @@ export function Modal({
   children,
   eyebrow = "Route configuration",
   className,
+  style,
   size = "lg",
   headerClassName,
   bodyClassName,
@@ -102,6 +107,7 @@ export function Modal({
           SIZE_CLASS[size],
           className
         )}
+        style={style}
       >
         {/* Header */}
         <div

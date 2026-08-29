@@ -46,9 +46,9 @@ export function Button({
 
   const variants = {
     primary: `
-      bg-[#4B5EDE] text-white
-      hover:bg-[#4354cd]
-      active:bg-[#3d4dc1]
+      bg-brand-600 text-white
+      hover:bg-brand-700
+      active:bg-brand-800
     `,
 
     secondary: `

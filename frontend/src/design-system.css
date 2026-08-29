@@ -219,9 +219,12 @@
 .stat__sub { margin-top: 8px; font-size: var(--fs-xs); color: var(--muted); }
 
 /* Mini stat */
-.ministat { background: var(--surface-soft); border-radius: var(--r-sm); padding: 8px 11px; }
+.ministat { background: var(--surface-soft); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 11px; }
 .ministat .k { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
 .ministat .v { font-size: var(--fs-sm); font-weight: 600; color: var(--ink); }
+.ministat__row { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+.ministat__row .k { margin-bottom: 0; }
+.ministat__icon { display: flex; color: var(--accent-500); }
 
 /* Section header */
 .sechead { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }

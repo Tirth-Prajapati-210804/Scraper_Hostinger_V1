@@ -1,20 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Activity,
-  AlertTriangle,
-  Database,
-  Download,
-  FolderOpen,
-  Globe,
-  Grid2X2,
-  List,
-  MapPin,
-  Play,
-  RefreshCw,
-  Search,
-  Square,
-} from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Activity, Database, Globe, MapPin } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
@@ -38,7 +24,19 @@ import { ProviderStatus } from "../components/ProviderStatus";
 import { RouteGroupCard } from "../components/RouteGroupCard";
 import { RouteGroupForm } from "../components/RouteGroupForm";
 import { StatCard } from "../components/StatCard";
-import { Button } from "../components/ui/Button";
+import {
+  Banner,
+  Bar,
+  Btn,
+  Card,
+  Empty,
+  IconBtn,
+  PageHeader,
+  SearchInput,
+  SectionHead,
+  Seg,
+  StatusChip,
+} from "../components/ds";
 import { Skeleton } from "../components/ui/Skeleton";
 import { useToast } from "../context/ToastContext";
 import type { RouteGroup } from "../types/route-group";
@@ -273,100 +271,64 @@ export function DashboardPage() {
 
   return (
     <ErrorBoundary>
-      <div className="space-y-8">
-        <TopBar
-          title="Flight Scraper Overview"
-          subtitle="DASHBOARD"
-          actions={
-            <>
-              <StatusBar
-                isCollecting={isCollecting}
-                schedulerRunning={health?.scheduler_running ?? false}
-                databaseOk={health?.database_status === "ok"}
-              />
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setCreateOpen(true)}
-                className="rounded-[8px] px-3 py-1.5 text-[13px]"
-              >
-                New Group
-              </Button>
-              {isCollecting ? (
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => stopMut.mutate()}
-                  loading={stopMut.isPending}
-                  className="rounded-[8px] px-3 py-1.5 text-[13px]"
-                >
-                  <Square className="h-[13px] w-[13px]" />
-                  Stop
-                </Button>
-              ) : (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleTriggerAll}
-                  loading={triggering}
-                  className="rounded-[8px] px-3 py-1.5 text-[13px]"
-                >
-                  <Play className="h-[13px] w-[13px]" />
-                  Trigger
-                </Button>
-              )}
-            </>
-          }
-        />
+      <div className="stack-6">
+        <PageHeader eyebrow="Dashboard" title="Flight Scraper Overview">
+          <StatusChip tone="ok" dot>
+            {isCollecting || (health?.scheduler_running ?? false) ? "Scheduler Running" : "Scheduler Idle"}
+          </StatusChip>
+          <StatusChip tone="info" icon="database">
+            {health?.database_status === "ok" ? "DB ok" : "DB check"}
+          </StatusChip>
+          <Btn variant="secondary" size="sm" icon="plus" onClick={() => setCreateOpen(true)}>
+            New group
+          </Btn>
+          {isCollecting ? (
+            <Btn variant="danger" size="sm" icon="square" onClick={() => stopMut.mutate()} loading={stopMut.isPending}>
+              Stop
+            </Btn>
+          ) : (
+            <Btn variant="primary" size="sm" icon="play" onClick={handleTriggerAll} loading={triggering}>
+              Trigger
+            </Btn>
+          )}
+        </PageHeader>
 
         {noProvider ? (
-          <Banner
-            tone="amber"
-            icon={<AlertTriangle className="h-[15px] w-[15px]" />}
-            title="No API key configured"
-            text="Add SCRAPINGBEE_API_KEY or SCRAPINGBEE_API_KEYS."
-          />
+          <Banner tone="warn" icon="alert" title="No API key configured">
+            Add SCRAPINGBEE_API_KEY or SCRAPINGBEE_API_KEYS.
+          </Banner>
         ) : null}
 
         {isCollecting && statusQuery.data?.progress ? (
-          <div className="rounded-[12px] border border-brand-100 bg-brand-50 p-3">
+          <Card style={{ background: "var(--accent-50)", borderColor: "var(--accent-100)" }}>
             <CollectionProgressBar progress={statusQuery.data.progress} />
-          </div>
+          </Card>
         ) : null}
 
         {groupsQuery.error ? (
-          <Banner
-            tone="amber"
-            icon={<AlertTriangle className="h-[15px] w-[15px]" />}
-            title="Route groups could not be loaded"
-            text={getErrorMessage(groupsQuery.error, "The dashboard could not load your route groups.")}
-          />
+          <Banner tone="warn" icon="alert" title="Route groups could not be loaded">
+            {getErrorMessage(groupsQuery.error, "The dashboard could not load your route groups.")}
+          </Banner>
         ) : null}
 
         {statsQuery.error ? (
-          <Banner
-            tone="amber"
-            icon={<AlertTriangle className="h-[15px] w-[15px]" />}
-            title="Overview stats could not be loaded"
-            text={getErrorMessage(statsQuery.error, "Current totals are temporarily unavailable.")}
-          />
+          <Banner tone="warn" icon="alert" title="Overview stats could not be loaded">
+            {getErrorMessage(statsQuery.error, "Current totals are temporarily unavailable.")}
+          </Banner>
         ) : null}
 
         {healthQuery.error ? (
-          <Banner
-            tone="amber"
-            icon={<AlertTriangle className="h-[15px] w-[15px]" />}
-            title="Health status could not be loaded"
-            text={getErrorMessage(
+          <Banner tone="warn" icon="alert" title="Health status could not be loaded">
+            {getErrorMessage(
               healthQuery.error,
               "Provider and database checks are temporarily unavailable.",
             )}
-          />
+          </Banner>
         ) : null}
 
         <section>
-          <SectionEyebrow>OVERVIEW</SectionEyebrow>
-          <div className="mt-[10px] grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="eyebrow" style={{ marginBottom: 10 }}>Overview</div>
+          <div className="ds-grid ds-g-4">
             {statsQuery.isLoading ? (
               [...Array(4)].map((_, index) => (
                 <Skeleton key={index} className="h-[118px] rounded-[12px]" />
@@ -402,103 +364,48 @@ export function DashboardPage() {
         </section>
 
         <section>
-          <div className="mb-4 flex flex-wrap items-center gap-[10px]">
-            <div className="flex-1">
-              <div className="text-[15px] font-semibold text-[#1a1d23]">Route Groups</div>
-              <div className="text-[12px] text-[#9CA3AF]">
-                {groups.length} configured | {matchedGroups.length} shown
-              </div>
-            </div>
-
-            <div className="relative w-full sm:w-auto">
-              <Search className="pointer-events-none absolute left-[10px] top-1/2 h-[13px] w-[13px] -translate-y-1/2 text-[#9CA3AF]" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search groups..."
-                className="w-full rounded-[8px] border-[1.5px] border-[#E2E8F0] bg-white px-3 py-[7px] pl-8 text-[13px] text-[#1a1d23] outline-none transition focus:border-brand-600 sm:w-[200px]"
-              />
-            </div>
-
-            <div className="flex gap-1 rounded-[8px] bg-[#F4F6FA] p-[3px]">
-              {[
+          <SectionHead title="Route Groups" sub={`${groups.length} configured · ${matchedGroups.length} shown`}>
+            <SearchInput value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search groups…" width={200} />
+            <Seg
+              value={statusFilter}
+              onChange={(id) => setStatusFilter(id)}
+              options={[
                 { id: "all", label: "All" },
                 { id: "needs_collection", label: "Needs Collection" },
                 { id: "collected", label: "Collected" },
                 { id: "paused", label: "Paused" },
-              ].map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setStatusFilter(item.id as "all" | "needs_collection" | "collected" | "paused")}
-                  className={`rounded-[6px] px-3 py-[5px] text-[12px] transition ${
-                    statusFilter === item.id
-                      ? "bg-white font-semibold text-[#1a1d23] shadow-[0_1px_3px_rgba(0,0,0,0.07)]"
-                      : "font-normal text-[#9CA3AF]"
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex gap-[2px] rounded-[8px] bg-[#F4F6FA] p-[3px]">
-              <button
-                type="button"
-                onClick={() => setViewMode("grid")}
-                className={`flex h-7 w-[30px] items-center justify-center rounded-[6px] transition ${
-                  viewMode === "grid"
-                    ? "bg-white text-brand-700 shadow-[0_1px_3px_rgba(0,0,0,0.07)]"
-                    : "text-[#9CA3AF]"
-                }`}
-              >
-                <Grid2X2 className="h-[13px] w-[13px]" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("list")}
-                className={`flex h-7 w-[30px] items-center justify-center rounded-[6px] transition ${
-                  viewMode === "list"
-                    ? "bg-white text-brand-700 shadow-[0_1px_3px_rgba(0,0,0,0.07)]"
-                    : "text-[#9CA3AF]"
-                }`}
-              >
-                <List className="h-[13px] w-[13px]" />
-              </button>
-            </div>
-
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setCreateOpen(true)}
-              className="rounded-[8px] px-3 py-1.5 text-[13px]"
-            >
-              Add Group
-            </Button>
-          </div>
+              ]}
+            />
+            <Seg
+              value={viewMode}
+              onChange={setViewMode}
+              icons
+              options={[
+                { id: "grid", icon: "grid" },
+                { id: "list", icon: "list" },
+              ]}
+            />
+            <Btn variant="primary" size="sm" icon="plus" onClick={() => setCreateOpen(true)}>
+              Add group
+            </Btn>
+          </SectionHead>
 
           {groupsQuery.isLoading ? (
-            <div className="grid gap-[14px]" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+            <div className="cards-auto">
               {[...Array(4)].map((_, index) => (
                 <Skeleton key={index} className="h-64 rounded-[12px]" />
               ))}
             </div>
           ) : matchedGroups.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-[12px] bg-[#F4F6FA]">
-                <FolderOpen className="h-5 w-5 text-[#C4CAD4]" />
-              </div>
-              <div className="mb-1 text-[14px] font-semibold text-[#6B7280]">No groups match your search</div>
-              <div className="text-[12px] text-[#9CA3AF]">Try a different keyword or filter.</div>
-            </div>
+            <Empty icon="search" title="No groups match your search" text="Try a different keyword or filter." />
           ) : viewMode === "grid" ? (
-            <div className="space-y-6">
+            <div className="stack-5">
               <RouteGroupSection title="Needs Collection" groups={groupedGroups.needsCollection} />
               <RouteGroupSection title="Paused" groups={groupedGroups.paused} />
               <RouteGroupSection title="Collected" groups={groupedGroups.collected} />
             </div>
           ) : (
-            <div className="space-y-6">
+            <div className="stack-5">
               <RouteGroupTableSection title="Needs Collection" groups={groupedGroups.needsCollection} />
               <RouteGroupTableSection title="Paused" groups={groupedGroups.paused} />
               <RouteGroupTableSection title="Collected" groups={groupedGroups.collected} />
@@ -506,15 +413,13 @@ export function DashboardPage() {
           )}
         </section>
 
-        <section className="mt-8">
-          <SectionEyebrow>PROVIDER STATUS</SectionEyebrow>
-          <div className="mt-[10px]">
-            {healthQuery.isLoading ? (
-              <Skeleton className="h-[72px] rounded-[12px]" />
-            ) : (
-              <ProviderStatus health={health} />
-            )}
-          </div>
+        <section>
+          <div className="eyebrow" style={{ marginBottom: 10 }}>Provider Status</div>
+          {healthQuery.isLoading ? (
+            <Skeleton className="h-[72px] rounded-[12px]" />
+          ) : (
+            <ProviderStatus health={health} />
+          )}
         </section>
       </div>
 
@@ -580,70 +485,35 @@ function DashboardGroupRow({ group }: { group: RouteGroup }) {
   return (
     <tr
       onClick={() => navigate(`/route-groups/${group.id}`)}
-      className="cursor-pointer border-b border-[#F4F6FA] bg-white transition hover:bg-[#FAFBFF]"
+      className="clickable"
     >
-      <td className="px-4 py-[11px]">
-        <div className="text-[13px] font-semibold text-[#1a1d23]">{group.name}</div>
-        <div className="text-[11px] text-[#9CA3AF]">{group.destination_label}</div>
+      <td>
+        <div style={{ fontWeight: 600, color: "var(--ink)" }}>{group.name}</div>
+        <div style={{ fontSize: 11, color: "var(--muted)" }}>{group.destination_label}</div>
       </td>
-      <td className="px-4 py-[11px]">
-        <span className="rounded-[4px] bg-[#F4F6FA] px-[7px] py-[2px] font-mono text-[12px] font-semibold text-[#6B7280]">
-          {routeLabel}
-        </span>
-      </td>
-      <td className="px-4 py-[11px]">
-        <span className="rounded-full bg-[#EEF2FF] px-2 py-[2px] text-[12px] font-medium text-[#4B5EDE]">
-          {tripType}
-        </span>
-      </td>
-      <td className="min-w-[120px] px-4 py-[11px]">
-        <div className="flex items-center gap-2">
-          <div className="h-1 flex-1 overflow-hidden rounded-full bg-[#EEF2FF]">
-            <div
-              className={`h-full rounded-full ${coverage > 90 ? "bg-brand-600" : "bg-amber-500"}`}
-              style={{ width: `${coverage}%` }}
-            />
+      <td><span className="codetag">{routeLabel}</span></td>
+      <td><span className="badge badge--accent">{tripType}</span></td>
+      <td style={{ minWidth: 130 }}>
+        <div className="ds-row ds-gap-2">
+          <div className="ds-grow">
+            <Bar pct={coverage} warn={coverage <= 90} />
           </div>
-          <span className="w-[38px] text-right text-[11px] font-semibold text-[#6B7280]">
+          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-soft)", width: 36, textAlign: "right" }}>
             {progress ? `${progress.coverage_percent.toFixed(0)}%` : "-"}
           </span>
         </div>
       </td>
-      <td className="px-4 py-[11px] text-[13px] text-[#6B7280]">{group.days_ahead}d</td>
-      <td className="px-4 py-[11px]">
-        <span className="rounded-full bg-[#F1F5F9] px-2 py-[2px] text-[12px] font-medium text-[#64748B]">
-          {group.currency}
-        </span>
-      </td>
-      <td className="px-4 py-[11px]">
-        <span
-          className={`rounded-full px-2 py-[2px] text-[12px] font-medium ${
-            group.is_active ? "bg-[#ECFDF5] text-[#059669]" : "bg-[#FFFBEB] text-[#D97706]"
-          }`}
-        >
+      <td style={{ color: "var(--text-soft)" }}>{group.days_ahead}d</td>
+      <td><span className="badge badge--neutral">{group.currency}</span></td>
+      <td>
+        <span className={`badge badge--${group.is_active ? "success" : "warning"}`}>
           {group.is_active ? "Active" : "Paused"}
         </span>
       </td>
-      <td className="px-4 py-[11px]">
-        <div className="flex gap-2" onClick={(event) => event.stopPropagation()}>
-          <button
-            type="button"
-            onClick={handleTrigger}
-            disabled={triggering}
-            className="flex h-[26px] w-[26px] items-center justify-center rounded-[6px] border border-[#E8ECF4] bg-white text-[#6B7280] transition hover:bg-[#F8FAFF] disabled:opacity-50"
-            title="Trigger scrape"
-          >
-            <RefreshCw className={`h-3 w-3 ${triggering ? "animate-spin" : ""}`} />
-          </button>
-          <button
-            type="button"
-            onClick={handleDownload}
-            disabled={downloading}
-            className="flex h-[26px] w-[26px] items-center justify-center rounded-[6px] border border-[#E8ECF4] bg-white text-[#6B7280] transition hover:bg-[#F8FAFF] disabled:opacity-50"
-            title="Download export"
-          >
-            <Download className="h-3 w-3" />
-          </button>
+      <td onClick={(event) => event.stopPropagation()}>
+        <div className="ds-row ds-gap-1">
+          <IconBtn icon="refresh" title="Trigger scrape" onClick={handleTrigger} spinning={triggering} />
+          <IconBtn icon="download" title="Download export" onClick={handleDownload} disabled={downloading} />
         </div>
       </td>
     </tr>
@@ -662,9 +532,11 @@ function RouteGroupSection({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="text-[13px] font-semibold text-[#6B7280]">{title}</div>
-      <div className="grid gap-[14px]" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+    <div className="stack-3">
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-soft)" }}>
+        {title} <span style={{ color: "var(--muted)", fontWeight: 400 }}>· {groups.length}</span>
+      </div>
+      <div className="cards-auto">
         {groups.map((group) => (
           <RouteGroupCard key={group.id} group={group} />
         ))}
@@ -685,19 +557,16 @@ function RouteGroupTableSection({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="text-[13px] font-semibold text-[#6B7280]">{title}</div>
-      <div className="overflow-hidden rounded-[12px] border border-[#E8ECF4] bg-white">
-        <table className="w-full border-collapse">
+    <div className="stack-3">
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-soft)" }}>
+        {title} <span style={{ color: "var(--muted)", fontWeight: 400 }}>· {groups.length}</span>
+      </div>
+      <Card pad0 style={{ overflow: "hidden" }}>
+        <table className="tbl">
           <thead>
-            <tr className="border-b border-[#E8ECF4] bg-[#FAFBFF]">
+            <tr>
               {["Group", "Route", "Type", "Coverage", "Window", "Currency", "Status", ""].map((heading) => (
-                <th
-                  key={heading}
-                  className="whitespace-nowrap px-4 py-[10px] text-left text-[11px] font-semibold tracking-[0.05em] text-[#9CA3AF]"
-                >
-                  {heading}
-                </th>
+                <th key={heading}>{heading}</th>
               ))}
             </tr>
           </thead>
@@ -707,91 +576,7 @@ function RouteGroupTableSection({
             ))}
           </tbody>
         </table>
-      </div>
-    </div>
-  );
-}
-
-function TopBar({
-  title,
-  subtitle,
-  actions,
-}: {
-  title: string;
-  subtitle?: string;
-  actions?: ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-      <div>
-        {subtitle ? (
-          <div className="mb-[2px] text-[11px] font-medium tracking-[0.05em] text-[#9CA3AF]">
-            {subtitle}
-          </div>
-        ) : null}
-        <h1 className="text-[22px] font-bold text-[#1a1d23]">{title}</h1>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">{actions}</div>
-    </div>
-  );
-}
-
-function StatusBar({
-  isCollecting,
-  schedulerRunning,
-  databaseOk,
-}: {
-  isCollecting: boolean;
-  schedulerRunning: boolean;
-  databaseOk: boolean;
-}) {
-  const schedulerActive = isCollecting || schedulerRunning;
-
-  return (
-    <div className="flex items-center gap-2">
-      <div className="flex items-center gap-[6px] rounded-full border border-[#A7F3D0] bg-[#ECFDF5] px-[10px] py-[5px]">
-        <span className="inline-block h-[7px] w-[7px] rounded-full bg-[#10B981] shadow-[0_0_0_2px_#D1FAE5]" />
-        <span className="text-[11px] font-medium text-[#059669]">
-          {schedulerActive ? "Scheduler Running" : "Scheduler Idle"}
-        </span>
-      </div>
-      <div className="flex items-center gap-[6px] rounded-full border border-[#C7D2FE] bg-[#EEF2FF] px-[10px] py-[5px]">
-        <Database className="h-[11px] w-[11px] text-brand-700" />
-        <span className="text-[11px] font-medium text-brand-700">
-          {databaseOk ? "DB ok" : "DB check"}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function SectionEyebrow({ children }: { children: ReactNode }) {
-  return <div className="text-[11px] font-semibold tracking-[0.06em] text-[#9CA3AF]">{children}</div>;
-}
-
-function Banner({
-  tone,
-  icon,
-  title,
-  text,
-}: {
-  tone: "amber" | "blue";
-  icon: ReactNode;
-  title: string;
-  text: ReactNode;
-}) {
-  const styles =
-    tone === "amber"
-      ? "border-amber-200 bg-amber-50 text-amber-800"
-      : "border-blue-200 bg-blue-50 text-blue-800";
-
-  return (
-    <div className={`flex items-center gap-[10px] rounded-[10px] border px-4 py-[10px] text-[13px] ${styles}`}>
-      <div className="shrink-0">{icon}</div>
-      <div>
-        <p className="font-semibold">{title}</p>
-        <p className="opacity-90">{text}</p>
-      </div>
+      </Card>
     </div>
   );
 }

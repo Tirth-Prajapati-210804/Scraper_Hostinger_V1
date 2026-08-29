@@ -1,6 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, MapPin, RefreshCw } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { triggerGroupCollection } from "../api/collection";
@@ -14,7 +13,7 @@ import { useToast } from "../context/ToastContext";
 import type { RouteGroup } from "../types/route-group";
 import { formatNumber } from "../utils/format";
 
-import { Card } from "./ui/Card";
+import { Badge, Bar, Card, Icon, IconBtn, MiniStat } from "./ds";
 import { Skeleton } from "./ui/Skeleton";
 
 interface RouteGroupCardProps {
@@ -43,6 +42,7 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
   const stayLabel = `${group.nights} nights`;
   const routeLabel = `${group.origins[0] ?? "-"} → ${group.destinations[0] ?? "-"}`;
   const coveragePct = progress ? Math.min(progress.coverage_percent, 100) : 0;
+  const warn = coveragePct <= 90;
 
   async function handleDownload() {
     setDownloading(true);
@@ -76,158 +76,82 @@ export function RouteGroupCard({ group }: RouteGroupCardProps) {
 
   return (
     <Card
-      className="flex h-full cursor-pointer flex-col rounded-[12px] border-[#E8ECF4] bg-white p-[18px] shadow-none transition-[box-shadow] duration-150 hover:shadow-[0_4px_18px_rgba(75,94,222,0.08)]"
+      hover
+      className="flex h-full flex-col"
+      style={{ cursor: "pointer", padding: 18 }}
       onClick={() => navigate(`/route-groups/${group.id}`)}
     >
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-[#1a1d23]">
+      <div className="ds-row ds-between ds-start ds-gap-2">
+        <h3 className="truncate" style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)", minWidth: 0, flex: 1 }}>
           {group.name}
         </h3>
 
-        <div className="flex shrink-0 gap-1" onClick={(event) => event.stopPropagation()}>
-          <IconButton
+        <div className="ds-row ds-gap-1" onClick={(event) => event.stopPropagation()}>
+          <IconBtn
+            icon="refresh"
             title="Trigger scrape"
             onClick={handleTrigger}
             spinning={triggering}
-            icon={<RefreshCw className="h-4 w-4" />}
           />
-          <IconButton
+          <IconBtn
+            icon="download"
             title="Download export"
             onClick={handleDownload}
             disabled={downloading}
-            icon={<Download className="h-4 w-4" />}
           />
         </div>
       </div>
 
-      <div className="mt-[10px] flex flex-wrap items-center gap-[5px]">
-        <StatusBadge active={group.is_active} />
-        <Badge tone="blue">{tripType}</Badge>
-        <Badge tone="slate">{group.currency}</Badge>
+      <div className="ds-row ds-wrap ds-gap-1" style={{ marginTop: 10 }}>
+        <Badge tone={group.is_active ? "success" : "warning"} dot>
+          {group.is_active ? "Active" : "Paused"}
+        </Badge>
+        <Badge tone="accent">{tripType}</Badge>
+        <Badge tone="neutral">{group.currency}</Badge>
       </div>
 
-      <div className="mt-[14px] flex items-center gap-[6px]">
-        <MapPin className="h-3 w-3 shrink-0 text-[#9CA3AF]" />
-        <span className="min-w-0 flex-1 truncate text-[12px] text-[#9CA3AF]">
+      <div className="ds-row ds-gap-2" style={{ marginTop: 14, fontSize: 12, color: "var(--muted)" }}>
+        <Icon name="pin" size={13} />
+        <span className="truncate" style={{ minWidth: 0, flex: 1 }}>
           {group.destination_label}
         </span>
-        <span className="shrink-0 rounded-[4px] bg-[#F4F6FA] px-[6px] py-[1px] font-mono text-[11px] font-semibold text-[#6B7280]">
-          {routeLabel}
-        </span>
+        <span className="codetag" style={{ marginLeft: "auto" }}>{routeLabel}</span>
       </div>
 
-      <div className="mt-[14px] grid grid-cols-3 gap-2">
-        <MiniStat label="Origins" value={String(group.origins.length)} />
-        <MiniStat label="Stay" value={stayLabel} />
-        <MiniStat label="Window" value={`${group.days_ahead}d`} />
+      <div className="ds-grid ds-g-3" style={{ marginTop: 14, gap: 8 }}>
+        <MiniStat icon="globe" k="Origins" v={group.origins.length} />
+        <MiniStat icon="calendar" k="Stay" v={stayLabel} />
+        <MiniStat icon="activity" k="Window" v={`${group.days_ahead}d`} />
       </div>
 
-      <div className="mt-auto pt-[14px]">
+      <div style={{ marginTop: "auto", paddingTop: 14, borderTop: "1px solid var(--border)" }}>
         {progressQuery.isLoading ? (
-          <div className="space-y-2">
+          <div className="stack-2">
             <Skeleton className="h-2 w-full rounded-full" />
             <Skeleton className="h-4 w-36 rounded-md" />
           </div>
         ) : progress ? (
-          <div className="space-y-2">
-            <div className="mb-[5px] flex items-center justify-between">
-              <span className="text-[11px] text-[#9CA3AF]">
+          <>
+            <div className="ds-row ds-between" style={{ marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>
                 {formatNumber(progress.dates_with_data)} / {formatNumber(progress.total_dates)} scanned
               </span>
-              <span className={`text-[11px] font-semibold ${coveragePct > 90 ? "text-[#059669]" : "text-[#D97706]"}`}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: warn ? "var(--warning)" : "var(--success)" }}>
                 {progress.coverage_percent.toFixed(1)}%
               </span>
             </div>
-            <div className="h-1 overflow-hidden rounded-full bg-[#DBE3F0]">
-              <div
-                className="h-full rounded-full transition-[width] duration-300"
-                style={{
-                  width: `${coveragePct}%`,
-                  background:
-                    coveragePct > 90 ? "linear-gradient(90deg,#4A689B,#3C5681)" : "#F59E0B",
-                }}
-              />
-            </div>
-          </div>
+            <Bar pct={coveragePct} warn={warn} />
+          </>
         ) : (
-          <div className="space-y-2">
-            <div className="mb-[5px] flex items-center justify-between">
-              <span className="text-[11px] text-[#9CA3AF]">No collection yet</span>
-              <span className="text-[11px] font-semibold text-[#9CA3AF]">0%</span>
+          <>
+            <div className="ds-row ds-between" style={{ marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>No collection yet</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>0%</span>
             </div>
-            <div className="h-1 overflow-hidden rounded-full bg-[#EEF2FF]">
-              <div className="h-full w-0 rounded-full bg-brand-600" />
-            </div>
-          </div>
+            <Bar pct={0} />
+          </>
         )}
       </div>
     </Card>
-  );
-}
-
-function Badge({
-  children,
-  tone,
-}: {
-  children: ReactNode;
-  tone: "blue" | "slate";
-}) {
-  const styles =
-    tone === "blue"
-      ? "bg-[#EEF2FF] text-[#4B5EDE]"
-      : "bg-[#F1F5F9] text-[#64748B]";
-
-  return (
-    <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-medium ${styles}`}>
-      {children}
-    </span>
-  );
-}
-
-function StatusBadge({ active }: { active: boolean }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-[3px] text-[11px] font-medium ${
-        active ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-      }`}
-    >
-      <span className={`h-[5px] w-[5px] rounded-full ${active ? "bg-emerald-500" : "bg-amber-500"}`} />
-      {active ? "Active" : "Paused"}
-    </span>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[7px] bg-[#F8FAFF] px-[10px] py-[7px]">
-      <p className="mb-[1px] text-[10px] font-medium text-[#9CA3AF]">{label}</p>
-      <p className="text-[13px] font-semibold text-[#1a1d23]">{value}</p>
-    </div>
-  );
-}
-
-function IconButton({
-  title,
-  onClick,
-  icon,
-  disabled,
-  spinning = false,
-}: {
-  title: string;
-  onClick: () => void;
-  icon: ReactNode;
-  disabled?: boolean;
-  spinning?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      disabled={disabled}
-      className="flex h-7 w-7 items-center justify-center rounded-[7px] border border-[#E8ECF4] bg-white text-[#6B7280] transition hover:bg-[#F8FAFF] disabled:opacity-50"
-    >
-      <span className={spinning ? "animate-spin" : ""}>{icon}</span>
-    </button>
   );
 }

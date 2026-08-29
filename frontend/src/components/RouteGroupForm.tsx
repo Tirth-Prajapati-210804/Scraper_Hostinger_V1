@@ -17,7 +17,7 @@ import { Modal } from "./ui/Modal";
 import { Select } from "./ui/Select";
 import { TagInput } from "./ui/TagInput";
 import { AirportInput } from "./ui/AirportInput";
-import { Icon } from "./ds";
+import { Btn, Icon } from "./ds";
 
 interface RouteGroupFormProps {
   open: boolean;
@@ -103,7 +103,7 @@ const TRIP_TYPES: Array<{
   icon: string;
 }> = [
   { id: "roundtrip", label: "Round trip", description: "Out and back from the same origin airports.", icon: "swap" },
-  { id: "multicity", label: "Multi-city · open-jaw", description: "Return from a different airport than you landed at.", icon: "layers" },
+  { id: "multicity", label: "Multi-city", description: "Open-jaw: return from a different airport than you landed at.", icon: "layers" },
 ];
 const MAX_LEG_DURATION_OPTIONS = [
   { label: "Any", value: "" },
@@ -395,16 +395,15 @@ function TripTypeSelector({
             <button
               key={type.id}
               type="button"
+              title={type.description}
               onClick={() => onChange(type.id)}
               className={`triptype__card${active ? " is-active" : ""}`}
+              style={{ padding: "10px 14px" }}
             >
-              <span className="triptype__icon">
-                <Icon name={type.icon} size={18} />
+              <span className="triptype__icon" style={{ width: 30, height: 30 }}>
+                <Icon name={type.icon} size={15} />
               </span>
-              <span className="triptype__txt">
-                <span className="triptype__title">{type.label}</span>
-                <span className="triptype__desc">{type.description}</span>
-              </span>
+              <span className="triptype__title">{type.label}</span>
               <span className="triptype__check">
                 <Icon name="check" size={13} />
               </span>
@@ -432,12 +431,7 @@ function AirportField({
   return (
     <div className="field">
       <FieldLabel hint={hint}>{label}</FieldLabel>
-      <TagInput
-        value={value}
-        onChange={onChange}
-        placeholder={placeholder}
-        hint={hint}
-      />
+      <TagInput value={value} onChange={onChange} placeholder={placeholder} />
     </div>
   );
 }
@@ -496,20 +490,21 @@ function SameAirlineToggle({
 }) {
   return (
     <label
-      className="ds-row ds-gap-3 ds-start"
-      style={{ background: "var(--surface-soft)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "12px 14px", cursor: "pointer" }}
+      className="ds-row ds-gap-2"
+      style={{ background: "var(--surface-soft)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: "10px 14px", height: 38, cursor: "pointer" }}
     >
       <input
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-4 w-4 rounded border-[#c7d2e4] text-brand-600"
+        className="h-4 w-4 rounded border-[#c7d2e4] text-brand-600"
       />
-      <span style={{ fontSize: 13, color: "var(--text-soft)" }}>
-        <b style={{ color: "var(--ink)", fontWeight: 600 }}>Same airline only</b> — only
-        itineraries flown by ONE airline on every leg qualify, and the cheapest of those is
-        saved. Off saves the cheapest itinerary regardless of airline mix. Changing this on an
-        existing group clears its collected data.
+      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>Same airline only</span>
+      <span
+        title="Only itineraries flown by one airline on every leg qualify; the cheapest of those is saved. Off saves the cheapest itinerary regardless of airline mix. Changing this on an existing group clears its collected data."
+        style={{ color: "var(--muted)", display: "flex", marginLeft: "auto" }}
+      >
+        <CircleHelp className="h-3.5 w-3.5" />
       </span>
     </label>
   );
@@ -805,18 +800,18 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         <div className="grid gap-5">
           <RoutePanel title="Outbound Leg">
             <AirportField
-              label="From (Origin Airport)"
+              label="From"
               value={state.mainLeg.from}
               onChange={(tags) => setState((current) => ({ ...current, mainLeg: { ...current.mainLeg, from: tags } }))}
-              placeholder="Search origin airport..."
-              hint="Use Enter, comma, or a location suggestion."
+              placeholder="Origin airport..."
+              hint="Press Enter, comma, or pick a suggestion."
             />
             <AirportField
-              label="To (Destination Airport)"
+              label="To"
               value={state.mainLeg.to}
               onChange={(tags) => setState((current) => ({ ...current, mainLeg: { ...current.mainLeg, to: tags } }))}
-              placeholder="Search destination airport..."
-              hint="Use Enter, comma, or a location suggestion."
+              placeholder="Destination airport..."
+              hint="Press Enter, comma, or pick a suggestion."
             />
             <div className="grid gap-4 md:grid-cols-2">
               <div>
@@ -856,32 +851,22 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
 
           {state.tripType === "roundtrip" ? (
             <RoutePanel title="Return Leg">
-              <div className="space-y-4 rounded-[20px] border border-[#e3eaf4] bg-[#f8fbff] p-5">
+              <div
+                className="stack-3"
+                style={{ borderRadius: "var(--r-md)", border: "1px solid var(--border)", background: "var(--surface-soft)", padding: 16 }}
+              >
                 <div className="grid gap-4 md:grid-cols-[1fr_auto_1fr] md:items-center">
-                  <div className="rounded-2xl border border-[#dfe6f0] bg-white px-4 py-3 text-[14px] text-[#47556f]">
+                  <div style={{ borderRadius: "var(--r-sm)", border: "1px solid var(--border-strong)", background: "var(--surface)", padding: "12px 16px", fontSize: 14, color: "var(--text)" }}>
                     {normalizedDestinations.length ? normalizedDestinations.join(", ") : "Outbound destination"}
                   </div>
-                  <div className="flex justify-center text-[#a0aec4]">
+                  <div className="ds-row ds-center" style={{ color: "var(--muted)" }}>
                     <ArrowLeftRight className="h-4 w-4" />
                   </div>
-                  <div className="rounded-2xl border border-[#dfe6f0] bg-white px-4 py-3 text-[14px] text-[#47556f]">
+                  <div style={{ borderRadius: "var(--r-sm)", border: "1px solid var(--border-strong)", background: "var(--surface)", padding: "12px 16px", fontSize: 14, color: "var(--text)" }}>
                     {normalizedOrigins.length ? normalizedOrigins.join(", ") : "Outbound origin"}
                   </div>
                 </div>
-                <label className="flex items-start gap-3 rounded-2xl bg-white px-4 py-3 text-[14px] text-[#47556f]">
-                  <input
-                    type="checkbox"
-                    checked
-                    readOnly
-                    className="mt-0.5 h-4 w-4 rounded border-[#c7d2e4] text-brand-600"
-                  />
-                  <span>
-                    <span className="block font-medium text-[#12203f]">Auto-generate return from outbound</span>
-                    <span className="mt-1 block text-[13px] text-[#7b8aa4]">
-                      Return airports are mirrored automatically using the outbound route.
-                    </span>
-                  </span>
-                </label>
+                <p style={{ fontSize: 12, color: "var(--muted)" }}>Mirrors the outbound route automatically.</p>
               </div>
             </RoutePanel>
           ) : (
@@ -891,10 +876,11 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                 return (
                   <div
                     key={index}
-                    className="rounded-2xl border border-[#e3eaf4] bg-[#f8fbff] p-4"
+                    className="stack-3"
+                    style={{ borderRadius: "var(--r-md)", border: "1px solid var(--border)", background: "var(--surface-soft)", padding: 14 }}
                   >
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-[13px] font-semibold text-[#3f4e6e]">
+                    <div className="ds-row ds-between">
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-soft)" }}>
                         Leg {index + 2}
                       </span>
                       {state.extraLegs.length > 1 ? (
@@ -906,7 +892,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                               extraLegs: current.extraLegs.filter((_, i) => i !== index),
                             }))
                           }
-                          className="text-[12px] font-medium text-red-500 hover:text-red-600"
+                          style={{ border: "none", background: "none", color: "var(--danger)", fontSize: 12, fontWeight: 500, cursor: "pointer" }}
                         >
                           Remove
                         </button>
@@ -994,7 +980,8 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
                       ],
                     }))
                   }
-                  className="flex items-center gap-1.5 rounded-2xl border border-dashed border-[#c7d2e4] px-4 py-2.5 text-[13px] font-medium text-brand-600 hover:border-brand-400"
+                  className="ds-row ds-gap-2"
+                  style={{ borderRadius: "var(--r-md)", border: "1px dashed var(--border-strong)", padding: "10px 16px", fontSize: 13, fontWeight: 500, color: "var(--accent-600)", background: "transparent" }}
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Add a leg ({state.extraLegs.length + 1}/4 flights)
@@ -1007,7 +994,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         <FormSection label="Schedule & market">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <FieldLabel>Travel Window From</FieldLabel>
+              <FieldLabel hint="Start of the travel date range to search.">From</FieldLabel>
               <TextInput
                 type="date"
                 value={state.startDate}
@@ -1033,7 +1020,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
               />
             </div>
             <div>
-              <FieldLabel>Travel Window To</FieldLabel>
+              <FieldLabel hint="End of the travel date range to search.">To</FieldLabel>
               <TextInput
                 type="date"
                 value={state.endDate}
@@ -1056,7 +1043,7 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
               />
             </div>
             <StepperField
-              label="Booking Window (Days)"
+              label="Booking Window"
               value={state.days}
               max={730}
               onChange={(days) =>
@@ -1128,7 +1115,10 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         </FormSection>
 
         {isEditing ? (
-          <label className="flex items-center gap-3 rounded-[8px] border border-[#E7ECF3] bg-[#F8FAFC] px-4 py-3 text-[13px] text-[#64748B]">
+          <label
+            className="ds-row ds-gap-3"
+            style={{ borderRadius: "var(--r-sm)", border: "1px solid var(--border)", background: "var(--surface-soft)", padding: "12px 16px", fontSize: 13, color: "var(--text-soft)" }}
+          >
             <input
               type="checkbox"
               checked={state.isActive}
@@ -1140,16 +1130,19 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         ) : null}
 
         {error ? (
-          <div className="rounded-[8px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="banner banner--danger" style={{ display: "block" }}>
             {error}
           </div>
         ) : null}
 
-        <div className="flex flex-col gap-3 border-t border-[#E7ECF3] pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+          style={{ borderTop: "1px solid var(--border)", paddingTop: 16 }}
+        >
           {state.tripType === "multicity" ? (
             <span />
           ) : (
-            <p className="text-[12px] text-[#94A3B8]">
+            <p style={{ fontSize: 12, color: "var(--muted)" }}>
               Cheapest valid same-airline fare is saved per date.
             </p>
           )}
@@ -1174,32 +1167,27 @@ export function RouteGroupForm({ open, onClose, initial }: RouteGroupFormProps) 
         </div>
 
         {pendingWipe ? (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
-            <div className="mx-4 w-full max-w-md rounded-[24px] bg-white p-6 shadow-xl">
-              <h3 className="text-base font-semibold text-slate-900">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: "rgba(15,23,42,0.4)" }}>
+            <div className="mx-4 w-full max-w-md" style={{ borderRadius: "var(--r-lg)", background: "var(--surface)", padding: 24, boxShadow: "var(--shadow-pop)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>
                 This edit clears collected data
               </h3>
-              <p className="mt-2 text-sm text-slate-500">
+              <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-soft)" }}>
                 You changed:{" "}
-                <span className="font-medium text-slate-700">{pendingWipe.changes.join(", ")}</span>.
+                <span style={{ fontWeight: 500, color: "var(--text)" }}>{pendingWipe.changes.join(", ")}</span>.
               </p>
-              <p className="mt-2 text-sm text-slate-500">
-                Changing the route definition deletes <span className="font-medium">all</span>{" "}
+              <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-soft)" }}>
+                Changing the route definition deletes <span style={{ fontWeight: 500 }}>all</span>{" "}
                 prices, results and scrape history already collected for this group. Collection
                 starts over from scratch on the next scrape.
               </p>
-              <div className="mt-5 flex justify-end gap-2">
+              <div className="ds-row ds-gap-2" style={{ marginTop: 20, justifyContent: "flex-end" }}>
                 <Button type="button" variant="secondary" onClick={() => setPendingWipe(null)}>
                   Go back
                 </Button>
-                <button
-                  type="button"
-                  onClick={confirmWipeAndSave}
-                  disabled={saving}
-                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                >
-                  {saving ? "Saving..." : "Clear data & save"}
-                </button>
+                <Btn variant="danger" onClick={confirmWipeAndSave} disabled={saving} loading={saving}>
+                  {saving ? "Saving…" : "Clear data & save"}
+                </Btn>
               </div>
             </div>
           </div>

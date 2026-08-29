@@ -144,10 +144,10 @@ export function TagInput({
       <div
         ref={containerRef}
         onClick={() => containerRef.current?.querySelector("input")?.focus()}
-        className={`tag-input-wrap min-h-[46px] w-full cursor-text rounded-[10px] border bg-white px-3 py-2 transition ${
+        className={`tag-input-wrap min-h-[38px] w-full cursor-text rounded-[8px] border bg-white px-3 py-1.5 transition ${
           invalid
             ? "border-red-400 ring-4 ring-red-100"
-            : "border-slate-200 hover:border-slate-300 focus-within:border-brand-500"
+            : "border-[#DCE3EC] hover:border-slate-300 focus-within:border-brand-500"
         } ${className ?? ""}`}
       >
         <div className="flex flex-wrap items-center gap-1.5">
@@ -182,60 +182,40 @@ export function TagInput({
             onBlur={handleBlur}
             onFocus={() => setOpen(true)}
             placeholder={value.length === 0 ? placeholder : ""}
-            className={`h-7 min-w-[90px] flex-1 border-none bg-transparent p-0 text-sm text-slate-900 outline-none placeholder:text-slate-400 ${inputClassName ?? ""}`}
+            className={`h-6 min-w-[90px] flex-1 border-0 bg-transparent p-0 text-sm text-slate-900 outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 placeholder:text-slate-400 ${inputClassName ?? ""}`}
           />
         </div>
       </div>
 
       {showSuggestions ? (
-        <div className="rounded-[12px] border border-slate-200 bg-white p-1 shadow-[0_18px_50px_-38px_rgba(15,23,42,0.45)]">
+        <div className="rounded-[8px] border border-[#DCE3EC] bg-white p-1 shadow-[0_18px_50px_-38px_rgba(15,23,42,0.45)]">
           {suggestions.map((suggestion, index) => (
             <button
               key={`${suggestion.kind}-${suggestion.label}`}
               type="button"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => addSuggestion(suggestion)}
-              className={`flex w-full items-start justify-between gap-3 rounded-[10px] px-3 py-2 text-left transition ${
+              className={`flex w-full items-center justify-between gap-3 rounded-[6px] px-3 py-2 text-left transition ${
                 index === highlightedIndex ? "bg-brand-50" : "hover:bg-slate-50"
               }`}
             >
-                <div>
-                  <div className="text-sm font-medium text-slate-900">{suggestion.label}</div>
-                  <div className="mt-0.5 text-xs text-slate-400">
-                    {suggestion.kind === "airport_code"
-                      ? "Add code"
-                      : suggestion.kind === "airport"
-                        ? "Add airport code"
-                        : suggestion.kind === "country"
-                          ? "Add country airports"
-                          : suggestion.codes.length === 1 &&
-                              /^[A-Z]{3}$/.test(suggestion.codes[0]) &&
-                              suggestion.codes[0] !== suggestion.label.toUpperCase()
-                            ? "Metro city code — covers all airports"
-                            : "Add city airports"}
-                  </div>
-                </div>
-              <div className="text-xs font-medium text-slate-500">
+              <span className="text-sm font-medium text-slate-900">{suggestion.label}</span>
+              <span className="text-xs font-medium text-slate-500">
                 {suggestion.codes.slice(0, 3).join(", ")}
                 {suggestion.codes.length > 3 ? ` +${suggestion.codes.length - 3}` : ""}
-              </div>
+              </span>
             </button>
           ))}
         </div>
       ) : null}
 
       {invalid ? (
-        <p className="text-xs text-red-500">
-          Enter a Kayak code (2-4 letters/digits). Tip: use a city code for all its
-          airports (Rome = ROM, London = LON, New York = NYC), or a single airport (FCO).
-        </p>
-      ) : (
-        <p className={`text-[11px] text-slate-400 ${hintClassName ?? ""}`}>
-          {loading
-            ? "Searching locations..."
-            : hint ?? "Tip: city codes (ROM, LON, NYC, TYO) search all airports for the best fare. Press Enter, comma, or Tab to add."}
-        </p>
-      )}
+        <p className="text-xs text-red-500">Enter a valid airport or city code.</p>
+      ) : loading ? (
+        <p className={`text-[11px] text-slate-400 ${hintClassName ?? ""}`}>Searching…</p>
+      ) : hint ? (
+        <p className={`text-[11px] text-slate-400 ${hintClassName ?? ""}`}>{hint}</p>
+      ) : null}
     </div>
   );
 }

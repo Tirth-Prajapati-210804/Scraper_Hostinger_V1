@@ -211,10 +211,25 @@ export function StatCard({ label, value, sub, icon }: { label: string; value: Re
   );
 }
 
-export function MiniStat({ k, v }: { k: ReactNode; v: ReactNode }) {
+export function MiniStat({
+  k,
+  v,
+  icon,
+}: {
+  k: ReactNode;
+  v: ReactNode;
+  icon?: IconName | string;
+}) {
   return (
     <div className="ministat">
-      <div className="k">{k}</div>
+      {icon ? (
+        <div className="ministat__row">
+          <span className="ministat__icon"><Icon name={icon} size={13} /></span>
+          <div className="k">{k}</div>
+        </div>
+      ) : (
+        <div className="k">{k}</div>
+      )}
       <div className="v">{v}</div>
     </div>
   );

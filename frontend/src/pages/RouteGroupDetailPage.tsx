@@ -1,5 +1,4 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, Pencil, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -24,9 +23,9 @@ const PriceChart = lazy(() =>
 import { PriceTable } from "../components/PriceTable";
 import { RouteGroupForm } from "../components/RouteGroupForm";
 import { Button } from "../components/ui/Button";
-import { Card } from "../components/ui/Card";
 import { Select } from "../components/ui/Select";
 import { Skeleton } from "../components/ui/Skeleton";
+import { Badge, Btn, Card, Icon, IconBtn, MiniStat } from "../components/ds";
 import { useToast } from "../context/ToastContext";
 import type { DailyPrice } from "../types/price";
 import { formatStopModeLabel } from "../utils/stopModes";
@@ -303,162 +302,107 @@ export function RouteGroupDetailPage() {
 
   return (
     <ErrorBoundary>
-      <div className="relative box-border w-full min-w-0 max-w-full space-y-6 overflow-x-hidden">
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 overflow-x-hidden">
+      <div className="relative box-border w-full min-w-0 max-w-full stack-6" style={{ overflowX: "hidden" }}>
+        <div className="ds-row ds-between ds-wrap ds-gap-3" style={{ minWidth: 0, overflowX: "hidden" }}>
           <Link
             to="/"
-            className="flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:text-brand-700"
+            className="ds-row ds-gap-2"
+            style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-600)" }}
           >
-            <ArrowLeft className="h-4 w-4" />
+            <Icon name="back" size={15} />
             Back to Dashboard
           </Link>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <Button variant="secondary" onClick={() => setEditOpen(true)}>
-              <Pencil className="h-4 w-4" />
+          <div className="ds-row ds-wrap ds-gap-2" style={{ minWidth: 0, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" size="sm" icon="pencil" onClick={() => setEditOpen(true)}>
               Edit
-            </Button>
-            <Button variant="secondary" onClick={() => setConfirmTrigger(true)} loading={triggering}>
-              <RefreshCw className="h-4 w-4" />
-              Trigger Scrape
-            </Button>
-            <Button
+            </Btn>
+            <Btn variant="secondary" size="sm" icon="refresh" onClick={() => setConfirmTrigger(true)} loading={triggering}>
+              Trigger scrape
+            </Btn>
+            <Btn
               variant="secondary"
+              size="sm"
+              icon="refresh"
               onClick={() => setConfirmResetCaps(true)}
               loading={resettingCaps}
             >
-              <RotateCcw className="h-4 w-4" />
-              Reset Retry Caps
-            </Button>
-            <Button variant="primary" onClick={() => setDownloadOpen(true)}>
-              <Download className="h-4 w-4" />
+              Reset retry caps
+            </Btn>
+            <Btn variant="primary" size="sm" icon="download" onClick={() => setDownloadOpen(true)}>
               Download Excel
-            </Button>
-            <button
-              onClick={() => setConfirmDelete(true)}
-              aria-label="Delete route group"
+            </Btn>
+            <IconBtn
+              icon="trash"
               title="Delete route group"
-              className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+              onClick={() => setConfirmDelete(true)}
+              style={{ color: "var(--danger)", borderColor: "var(--danger-bd)", background: "var(--danger-bg)" }}
+            />
           </div>
         </div>
 
-        <Card className="w-full min-w-0 max-w-full overflow-hidden p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0 space-y-1">
-              <h2 className="break-words text-2xl font-bold text-slate-950">{group.name}</h2>
-              <p className="text-sm text-slate-500">{group.destination_label}</p>
-              <p className="text-xs font-medium text-slate-400">
+        <Card className="w-full min-w-0 max-w-full overflow-hidden">
+          <div className="ds-row ds-between ds-start ds-wrap ds-gap-4">
+            <div className="min-w-0 stack-1">
+              <h2 className="break-words" style={{ fontSize: 22, fontWeight: 700, color: "var(--ink)", letterSpacing: "-0.02em" }}>{group.name}</h2>
+              <p style={{ fontSize: 13, color: "var(--text-soft)" }}>{group.destination_label}</p>
+              <p style={{ fontSize: 12, fontWeight: 500, color: "var(--muted)" }}>
                 {formatFreshnessLabel(progressQuery.data?.last_scraped_at ?? null)}
               </p>
             </div>
-            <span
-              className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                group.is_active ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"
-              }`}
-            >
+            <Badge tone={group.is_active ? "success" : "neutral"} dot>
               {group.is_active ? "Active" : "Inactive"}
-            </span>
-          </div>
-
-          <div className="mt-5 grid min-w-0 grid-cols-2 gap-4 lg:grid-cols-6">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Nights</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800">{group.nights}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Days Ahead</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800">{group.days_ahead}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Currency</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800">{group.currency}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Stops</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800">{formatStopModeLabel(group.max_stops)}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Airline Match</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800">
-                {group.same_airline_only ? "Same airline only" : "Any airline mix"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Max Layover</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800">
-                {group.max_layover_minutes
-                  ? `${Math.round(group.max_layover_minutes / 60)}h`
-                  : "Any"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Max Leg Duration</p>
-              <p className="mt-0.5 text-sm font-semibold text-slate-800">
-                {group.max_leg_duration_minutes
-                  ? `${Math.round(group.max_leg_duration_minutes / 60)}h`
-                  : "Any"}
-              </p>
-            </div>
+            </Badge>
           </div>
 
           <div
-            className={`mt-5 grid min-w-0 gap-4 border-t border-slate-100 pt-5 ${
-              group.trip_type === "multi_city" ? "lg:grid-cols-2" : ""
-            }`}
+            className="mt-5 grid min-w-0 grid-cols-2 gap-2 lg:grid-cols-4 xl:grid-cols-7"
+            style={{ borderTop: "1px solid var(--border)", paddingTop: 18 }}
           >
-            <div className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-400">Outbound</p>
-              <div className="flex max-w-full flex-wrap items-center gap-2 overflow-x-hidden">
+            <MiniStat icon="calendar" k="Nights" v={group.nights} />
+            <MiniStat icon="activity" k="Days Ahead" v={group.days_ahead} />
+            <MiniStat icon="globe" k="Currency" v={group.currency} />
+            <MiniStat icon="swap" k="Stops" v={formatStopModeLabel(group.max_stops)} />
+            <MiniStat icon="shield" k="Airline Match" v={group.same_airline_only ? "Same airline only" : "Any airline mix"} />
+            <MiniStat icon="chevright" k="Max Layover" v={group.max_layover_minutes ? `${Math.round(group.max_layover_minutes / 60)}h` : "Any"} />
+            <MiniStat icon="plane" k="Max Leg Duration" v={group.max_leg_duration_minutes ? `${Math.round(group.max_leg_duration_minutes / 60)}h` : "Any"} />
+          </div>
+
+          <div
+            className={`mt-5 grid min-w-0 gap-4 ${group.trip_type === "multi_city" ? "lg:grid-cols-2" : ""}`}
+            style={{ borderTop: "1px solid var(--border)", paddingTop: 18 }}
+          >
+            <div className="min-w-0 max-w-full overflow-hidden" style={{ borderRadius: "var(--r-md)", border: "1px solid var(--border)", background: "var(--surface-soft)", padding: 14 }}>
+              <p className="eyebrow" style={{ marginBottom: 8 }}>Outbound</p>
+              <div className="flex max-w-full flex-wrap items-center gap-2" style={{ overflowX: "hidden" }}>
                 {group.origins.map((code) => (
-                  <span
-                    key={`origin-${code}`}
-                    className="rounded-md border border-brand-200 bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700"
-                  >
-                    {code}
-                  </span>
+                  <span key={`origin-${code}`} className="badge badge--accent">{code}</span>
                 ))}
-                <span className="text-slate-300">-&gt;</span>
+                <span style={{ color: "var(--faint)" }}>-&gt;</span>
                 {group.destinations.map((code) => (
-                  <span
-                    key={`destination-${code}`}
-                    className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700"
-                  >
-                    {code}
-                  </span>
+                  <span key={`destination-${code}`} className="badge badge--success">{code}</span>
                 ))}
               </div>
             </div>
 
             {group.trip_type === "multi_city" && chainLegs?.length ? (
-              <div className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-400">
+              <div className="min-w-0 max-w-full overflow-hidden" style={{ borderRadius: "var(--r-md)", border: "1px solid var(--border)", background: "var(--surface-soft)", padding: 14 }}>
+                <p className="eyebrow" style={{ marginBottom: 8 }}>
                   Onward Legs ({chainLegs.length + 1} flights total)
                 </p>
-                <div className="space-y-1.5">
+                <div className="stack-2">
                   {chainLegs.map((leg, index) => (
-                    <div key={`leg-${index}`} className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="font-medium text-slate-400">Leg {index + 2}:</span>
-                      <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
-                        {leg.origin}
-                      </span>
-                      <span className="text-slate-300">-&gt;</span>
+                    <div key={`leg-${index}`} className="ds-row ds-wrap ds-gap-2" style={{ fontSize: 12 }}>
+                      <span style={{ fontWeight: 500, color: "var(--muted)" }}>Leg {index + 2}:</span>
+                      <span className="badge badge--warning">{leg.origin}</span>
+                      <span style={{ color: "var(--faint)" }}>-&gt;</span>
                       {leg.destination ? (
-                        <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
-                          {leg.destination}
-                        </span>
+                        <span className="badge badge--success">{leg.destination}</span>
                       ) : (
                         group.origins.map((code) => (
-                          <span
-                            key={`home-${code}`}
-                            className="rounded-md border border-brand-200 bg-brand-50 px-2 py-0.5 font-semibold text-brand-700"
-                          >
-                            {code}
-                          </span>
+                          <span key={`home-${code}`} className="badge badge--accent">{code}</span>
                         ))
                       )}
-                      <span className="text-slate-400">
+                      <span style={{ color: "var(--muted)" }}>
                         after {leg.nights_before} night{leg.nights_before === 1 ? "" : "s"}
                       </span>
                     </div>
@@ -466,20 +410,13 @@ export function RouteGroupDetailPage() {
                 </div>
               </div>
             ) : group.trip_type === "multi_city" && returnOrigin ? (
-              <div className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wider text-slate-400">Return</p>
-                <div className="flex max-w-full flex-wrap items-center gap-2 overflow-x-hidden">
-                  <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                    {returnOrigin}
-                  </span>
-                  <span className="text-slate-300">-&gt;</span>
+              <div className="min-w-0 max-w-full overflow-hidden" style={{ borderRadius: "var(--r-md)", border: "1px solid var(--border)", background: "var(--surface-soft)", padding: 14 }}>
+                <p className="eyebrow" style={{ marginBottom: 8 }}>Return</p>
+                <div className="flex max-w-full flex-wrap items-center gap-2" style={{ overflowX: "hidden" }}>
+                  <span className="badge badge--warning">{returnOrigin}</span>
+                  <span style={{ color: "var(--faint)" }}>-&gt;</span>
                   {group.origins.map((code) => (
-                    <span
-                      key={`return-${code}`}
-                      className="rounded-md border border-brand-200 bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700"
-                    >
-                      {code}
-                    </span>
+                    <span key={`return-${code}`} className="badge badge--accent">{code}</span>
                   ))}
                 </div>
               </div>
@@ -487,17 +424,17 @@ export function RouteGroupDetailPage() {
           </div>
         </Card>
 
-        <Card className="w-full min-w-0 max-w-full overflow-hidden p-6">
-          <h3 className="mb-4 text-[15px] font-semibold text-slate-900">Scrape Health</h3>
+        <Card className="w-full min-w-0 max-w-full overflow-hidden">
+          <h3 style={{ marginBottom: 16, fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>Scrape Health</h3>
           <ScrapeHealthPanel groupId={group.id} health={progressQuery.data?.health} />
         </Card>
 
-        <Card className="w-full min-w-0 max-w-full overflow-hidden p-6">
-          <h3 className="mb-4 text-[15px] font-semibold text-slate-900">Collection Progress</h3>
+        <Card className="w-full min-w-0 max-w-full overflow-hidden">
+          <h3 style={{ marginBottom: 16, fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>Collection Progress</h3>
           {progressQuery.isLoading ? (
             <Skeleton className="h-32" />
           ) : progressQuery.isError ? (
-            <p className="text-sm text-red-500">Failed to load progress. Try refreshing the page.</p>
+            <p style={{ fontSize: 14, color: "var(--danger)" }}>Failed to load progress. Try refreshing the page.</p>
           ) : progressQuery.data ? (
             <DateCoverageGrid
               progress={progressQuery.data}
@@ -505,13 +442,13 @@ export function RouteGroupDetailPage() {
               windowEnd={group.end_date}
             />
           ) : (
-            <p className="text-sm text-slate-400">No data collected yet. Trigger a collection to start.</p>
+            <p style={{ fontSize: 14, color: "var(--muted)" }}>No data collected yet. Trigger a collection to start.</p>
           )}
         </Card>
 
-        <Card className="w-full min-w-0 max-w-full overflow-hidden p-6">
-          <div className="mb-4 flex min-w-0 flex-wrap items-center justify-between gap-4">
-            <h3 className="text-[15px] font-semibold text-slate-900">Price Trend</h3>
+        <Card className="w-full min-w-0 max-w-full overflow-hidden">
+          <div className="ds-row ds-wrap ds-between ds-gap-4" style={{ marginBottom: 16, minWidth: 0 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>Price Trend</h3>
             <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 overflow-x-hidden text-sm">
               <Select
                 aria-label="Select origin"
@@ -525,8 +462,8 @@ export function RouteGroupDetailPage() {
                   </option>
                 ))}
               </Select>
-              <span className="text-slate-400">-&gt;</span>
-              <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm font-medium text-slate-700">
+              <span style={{ color: "var(--muted)" }}>-&gt;</span>
+              <span className="codetag" style={{ padding: "8px 12px" }}>
                 {destForQuery}
               </span>
             </div>
@@ -534,9 +471,9 @@ export function RouteGroupDetailPage() {
           {trendQuery.isLoading ? (
             <Skeleton className="h-64" />
           ) : trendQuery.isError ? (
-            <p className="py-8 text-center text-sm text-red-500">Failed to load price trend data.</p>
+            <p style={{ padding: "32px 0", textAlign: "center", fontSize: 14, color: "var(--danger)" }}>Failed to load price trend data.</p>
           ) : (trendQuery.data ?? []).length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-400">
+            <p style={{ padding: "32px 0", textAlign: "center", fontSize: 14, color: "var(--muted)" }}>
               No price data yet for this route. Trigger a collection first.
             </p>
           ) : (
@@ -546,23 +483,22 @@ export function RouteGroupDetailPage() {
           )}
         </Card>
 
-        <Card className="w-full min-w-0 max-w-full overflow-hidden p-0">
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-4 px-6 pt-6">
+        <Card pad0 className="w-full min-w-0 max-w-full overflow-hidden">
+          <div className="ds-row ds-wrap ds-between ds-gap-4" style={{ minWidth: 0, padding: "20px 20px 0" }}>
             <div className="min-w-0">
-              <h3 className="text-[15px] font-semibold text-slate-900">Price Data</h3>
+              <h3 style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}>Price Data</h3>
               {group.trip_type === "multi_city" && returnOrigin ? (
-                <p className="mt-1 break-words text-xs text-slate-400">
+                <p className="break-words" style={{ marginTop: 4, fontSize: 12, color: "var(--muted)" }}>
                   Each row is one full itinerary fare for {group.origins[0]} -&gt; {group.destinations[0]} and{" "}
                   {returnOrigin} -&gt; {group.origins[0]} after {group.nights} nights.
                 </p>
               ) : null}
             </div>
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="ds-row ds-gap-2" style={{ minWidth: 0 }}>
               <Select
                 aria-label="Filter by origin"
                 value={combinedAlternativeOrigin ? activeOrigin : selectedOrigin}
                 onChange={(e) => setSelectedOrigin(e.target.value)}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               >
                 {!combinedAlternativeOrigin ? <option value="">All origins</option> : null}
                 {originOptions.map((origin) => (
@@ -572,7 +508,7 @@ export function RouteGroupDetailPage() {
                 ))}
               </Select>
               {filledPrices.length > 0 ? (
-                <span className="text-xs text-slate-400">
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>
                   {filledPrices.length} rows{priceHasMore ? "+" : ""}
                 </span>
               ) : null}
@@ -598,13 +534,13 @@ export function RouteGroupDetailPage() {
         ) : null}
 
         {downloadOpen ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="mx-4 w-full max-w-sm rounded-[24px] bg-white p-6 shadow-xl">
-              <h3 className="text-base font-semibold text-slate-900">Download Excel</h3>
-              <p className="mt-2 text-sm text-slate-500">
-                Export collected fares for <span className="font-medium">{group.name}</span>.
+          <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(15,23,42,0.4)" }}>
+            <div className="mx-4 w-full max-w-sm" style={{ borderRadius: "var(--r-lg)", background: "var(--surface)", padding: 24, boxShadow: "var(--shadow-pop)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>Download Excel</h3>
+              <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-soft)" }}>
+                Export collected fares for <span style={{ fontWeight: 500 }}>{group.name}</span>.
               </p>
-              <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-sm text-slate-700">
+              <label className="ds-row ds-gap-2 ds-start" style={{ marginTop: 16, cursor: "pointer", fontSize: 14, color: "var(--text-soft)" }}>
                 <input
                   type="checkbox"
                   checked={includeLinks}
@@ -613,83 +549,83 @@ export function RouteGroupDetailPage() {
                 />
                 <span>
                   Include verification links
-                  <span className="block text-xs text-slate-400">
+                  <span style={{ display: "block", fontSize: 12, color: "var(--muted)" }}>
                     Adds a column with the Kayak link each fare was scraped from.
                   </span>
                 </span>
               </label>
-              <div className="mt-5 flex justify-end gap-2">
+              <div className="ds-row ds-gap-2" style={{ marginTop: 20, justifyContent: "flex-end" }}>
                 <Button variant="secondary" onClick={() => setDownloadOpen(false)}>
                   Cancel
                 </Button>
-                <Button variant="primary" onClick={handleDownload} loading={downloading}>
-                  <Download className="h-4 w-4" />
+                <Btn variant="primary" icon="download" onClick={handleDownload} loading={downloading}>
                   Download
-                </Button>
+                </Btn>
               </div>
             </div>
           </div>
         ) : null}
 
         {confirmTrigger ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="mx-4 w-full max-w-sm rounded-[24px] bg-white p-6 shadow-xl">
-              <h3 className="text-base font-semibold text-slate-900">Trigger Full Scrape?</h3>
-              <p className="mt-2 text-sm text-slate-500">
-                This will start a collection run for missing dates in <span className="font-medium">{group.name}</span>.
+          <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(15,23,42,0.4)" }}>
+            <div className="mx-4 w-full max-w-sm" style={{ borderRadius: "var(--r-lg)", background: "var(--surface)", padding: 24, boxShadow: "var(--shadow-pop)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>Trigger Full Scrape?</h3>
+              <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-soft)" }}>
+                This will start a collection run for missing dates in <span style={{ fontWeight: 500 }}>{group.name}</span>.
               </p>
-              <div className="mt-5 flex justify-end gap-2">
+              <div className="ds-row ds-gap-2" style={{ marginTop: 20, justifyContent: "flex-end" }}>
                 <Button variant="secondary" onClick={() => setConfirmTrigger(false)}>
                   Cancel
                 </Button>
-                <Button variant="primary" onClick={handleTrigger} loading={triggering}>
+                <Btn variant="primary" onClick={handleTrigger} loading={triggering}>
                   Yes, trigger
-                </Button>
+                </Btn>
               </div>
             </div>
           </div>
         ) : null}
 
         {confirmResetCaps ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="mx-4 w-full max-w-sm rounded-[24px] bg-white p-6 shadow-xl">
-              <h3 className="text-base font-semibold text-slate-900">Reset Retry Caps?</h3>
-              <p className="mt-2 text-sm text-slate-500">
+          <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(15,23,42,0.4)" }}>
+            <div className="mx-4 w-full max-w-sm" style={{ borderRadius: "var(--r-lg)", background: "var(--surface)", padding: 24, boxShadow: "var(--shadow-pop)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>Reset Retry Caps?</h3>
+              <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-soft)" }}>
                 Dates that repeatedly returned no fare or errored are skipped after a
                 few attempts. This clears those skipped-attempt records for{" "}
-                <span className="font-medium text-slate-700">{group.name}</span> so they
+                <span style={{ fontWeight: 500, color: "var(--text)" }}>{group.name}</span> so they
                 can be collected again on the next scrape.
               </p>
-              <p className="mt-2 text-sm text-slate-500">
-                Your already-collected prices are <span className="font-medium">not</span>{" "}
+              <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-soft)" }}>
+                Your already-collected prices are <span style={{ fontWeight: 500 }}>not</span>{" "}
                 deleted, and already-collected dates are not re-scraped.
               </p>
-              <div className="mt-5 flex justify-end gap-2">
+              <div className="ds-row ds-gap-2" style={{ marginTop: 20, justifyContent: "flex-end" }}>
                 <Button variant="secondary" onClick={() => setConfirmResetCaps(false)}>
                   Cancel
                 </Button>
-                <Button variant="primary" onClick={handleResetCaps} loading={resettingCaps}>
-                  <RotateCcw className="h-4 w-4" />
+                <Btn variant="primary" icon="refresh" onClick={handleResetCaps} loading={resettingCaps}>
                   Yes, reset caps
-                </Button>
+                </Btn>
               </div>
             </div>
           </div>
         ) : null}
 
         {confirmDelete ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="mx-4 w-full max-w-sm rounded-[24px] bg-white p-6 shadow-xl">
-              <h3 className="text-base font-semibold text-slate-900">Delete Route Group</h3>
-              <p className="mt-2 text-sm text-slate-500">
-                Are you sure you want to delete <span className="font-medium text-slate-700">{group.name}</span>? All
+          <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(15,23,42,0.4)" }}>
+            <div className="mx-4 w-full max-w-sm" style={{ borderRadius: "var(--r-lg)", background: "var(--surface)", padding: 24, boxShadow: "var(--shadow-pop)" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>Delete Route Group</h3>
+              <p style={{ marginTop: 8, fontSize: 14, color: "var(--text-soft)" }}>
+                Are you sure you want to delete <span style={{ fontWeight: 500, color: "var(--text)" }}>{group.name}</span>? All
                 collected price data will be permanently lost.
               </p>
-              <div className="mt-5 flex justify-end gap-2">
+              <div className="ds-row ds-gap-2" style={{ marginTop: 20, justifyContent: "flex-end" }}>
                 <Button variant="secondary" onClick={() => setConfirmDelete(false)}>
                   Cancel
                 </Button>
-                <button
+                <Btn
+                  variant="danger"
+                  loading={deleting}
                   onClick={async () => {
                     setDeleting(true);
                     try {
@@ -703,11 +639,9 @@ export function RouteGroupDetailPage() {
                       setConfirmDelete(false);
                     }
                   }}
-                  disabled={deleting}
-                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
                 >
-                  {deleting ? "Deleting..." : "Delete"}
-                </button>
+                  {deleting ? "Deleting…" : "Delete"}
+                </Btn>
               </div>
             </div>
           </div>
