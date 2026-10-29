@@ -17,6 +17,10 @@ class ProviderRateLimitedError(RuntimeError):
     pass
 
 
+class ProviderBlockedError(RuntimeError):
+    """The target site served an anti-bot/security challenge instead of data."""
+
+
 @dataclass
 class ProviderResult:
     """One flight offer from a provider, already normalized."""

@@ -112,6 +112,74 @@ def test_smart_gate_per_leg_stop_cap_is_embedded() -> None:
     assert "x<=2" in cap_in(5)
 
 
+def test_kayak_security_check_is_recognised_as_provider_wide_block() -> None:
+    provider = make_provider()
+
+    rendered = {
+        "resolved-url": "https://www.ca.kayak.com/security/check?out=%2Fflights%2FYYC-PMI",
+        "body": "Security Check: Please confirm that you are a real KAYAK user.",
+    }
+
+    assert provider._rendered_payload_is_security_check(rendered) is True
+    assert provider._render_failure_snapshot(rendered)["markers"]["captcha_or_block"] is True
+
+
+def test_support_homepage_redirect_flow_uses_compact_extract_rules() -> None:
+    provider = ScrapingBeeProvider(api_key="test-key", kayak_homepage_extract=True)
+    target_url = "https://www.ca.kayak.com/flights/YYC-PMI/2027-09-15/BCN-YYC/2027-09-24"
+
+    scenario = provider._support_redirect_scenario(target_url)
+    rules = provider._support_extract_rules()
+
+    assert scenario == {
+        "instructions": [
+            {"wait": 1_000},
+            {"evaluate": f"window.location.href={json.dumps(target_url)}"},
+            {"wait": 10_000},
+        ]
+    }
+    assert rules["cards"]["type"] == "list"
+    assert rules["cards"]["output"]["price_text"] == _RESULT_PRICE_SELECTOR
+    assert rules["cards"]["output"]["legs"]["type"] == "list"
+
+
+def test_support_extract_cards_payload_is_compact_and_deduplicated() -> None:
+    provider = ScrapingBeeProvider(api_key="test-key", kayak_homepage_extract=True)
+    extracted = {
+        "cards": [
+            {
+                "price_text": "C$ 1,343",
+                "airline_text": "Air Canada",
+                "legs": [
+                    {
+                        "airline": "Air Canada",
+                        "time_text": "6:00 am – 8:30 am +1",
+                        "route_text": "YYC Calgary - PMI Son Sant Joan",
+                        "stops_text": "1 stop",
+                        "layover_text": "YUL 6h 35m layover",
+                        "duration_text": "18h 30m",
+                    },
+                    {
+                        "airline": "Air Canada",
+                        "time_text": "1:15 pm – 10:42 pm",
+                        "route_text": "BCN Barcelona-El Prat - YYC Calgary",
+                        "stops_text": "1 stop",
+                        "layover_text": "YYZ 4h 30m layover",
+                        "duration_text": "17h 27m",
+                    },
+                ],
+            },
+        ]
+    }
+
+    payload = provider._support_extract_cards_payload(extracted)
+
+    assert payload["card_count"] == 1
+    assert payload["cards"][0]["price_text"] == "C$ 1,343"
+    assert payload["cards"][0]["airline_text"] == "Air Canada"
+    assert len(payload["cards"][0]["legs"]) == 2
+
+
 def test_same_airline_filters_are_carried_in_kayak_url() -> None:
     """Round-trip URL carries sort=price_a & airlines=-MULT,flylocal, plus stops=
     only when the group caps at <=1 stop. flylocal is REQUIRED (re-verified: -MULT

@@ -6,7 +6,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import date
 from time import monotonic
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from tenacity import (
@@ -20,6 +20,7 @@ from tenacity import (
 from app.core.logging import get_logger
 from app.providers.base import (
     ProviderAuthError,
+    ProviderBlockedError,
     ProviderQuotaExhaustedError,
     ProviderRateLimitedError,
     ProviderResult,
@@ -149,6 +150,9 @@ _SCRAPINGBEE_COUNTRY_CODE_ALIASES = {
 _FAST_MULTI_CITY_CARD_LIMIT = 40
 _DEEP_MULTI_CITY_CARD_LIMIT = 40
 _RESULT_PRICE_SELECTOR = ".nrc6-price-section .e2GB-price-text"
+_RESULT_CARD_SELECTOR = (
+    "div[aria-label^='Result item'],div[data-resultid],div.nrc6,div[class*='nrc6']"
+)
 _SAME_AIRLINE_INITIAL_WAIT_MS = 5_000
 _SAME_AIRLINE_RETRY_WAIT_MS = 9_000
 # STEPPED load gate, sized to ScrapingBee's documented ~40s JS-SCENARIO limit
@@ -294,6 +298,7 @@ class ScrapingBeeProvider:
         premium_proxy: bool = False,
         stealth_proxy: bool = False,
         multi_city_debug: bool = False,
+        kayak_homepage_extract: bool = False,
         user_agent: str = "flight-harvester/1.0",
         enforce_poll_agreement: bool = False,
     ) -> None:
@@ -305,6 +310,7 @@ class ScrapingBeeProvider:
         self._premium_proxy = premium_proxy
         self._stealth_proxy = stealth_proxy
         self._multi_city_debug = multi_city_debug
+        self._kayak_homepage_extract = bool(kayak_homepage_extract)
         # Two-witness enforcement: refuse saves whose DOM price disagrees with
         # Kayak's own poll JSON after one retry. OFF = shadow mode (log only).
         self._enforce_poll_agreement = bool(enforce_poll_agreement)
@@ -505,6 +511,122 @@ class ScrapingBeeProvider:
         path = re.sub(r"(\d{2})(\d{2})-(\d{2})-(\d{2})", r"\2\3\4", match.group(1))
         return re.sub(r"[^A-Za-z0-9_-]+", "_", path).strip("_")[:36] or "kayak"
 
+    @staticmethod
+    def _support_redirect_scenario(target_url: str) -> dict[str, object]:
+        """ScrapingBee's KAYAK-specific homepage navigation recipe.
+
+        Starting on the regional KAYAK homepage before navigating to the search
+        page is the configuration ScrapingBee support reproduced successfully.
+        Keep this minimal: extraction happens through ``extract_rules`` after
+        navigation, rather than through json_response/evaluate_results.
+        """
+        return {
+            "instructions": [
+                {"wait": 1_000},
+                {"evaluate": f"window.location.href={json.dumps(target_url)}"},
+                {"wait": 10_000},
+            ]
+        }
+
+    @staticmethod
+    def _support_extract_rules() -> dict[str, object]:
+        """Compact, nested fare-card schema returned directly by ScrapingBee.
+
+        It intentionally contains only fields required by the existing
+        normalizer. This keeps API responses small and avoids persisting or
+        logging KAYAK's full rendered HTML.
+        """
+        return {
+            "cards": {
+                "selector": _RESULT_CARD_SELECTOR,
+                "type": "list",
+                "output": {
+                    "price_text": _RESULT_PRICE_SELECTOR,
+                    "airline_text": ".J0g6-operator-text",
+                    "legs": {
+                        "selector": "ol.hJSA-list > li",
+                        "type": "list",
+                        "output": {
+                            "airline": {
+                                "selector": ".tdCx-leg-carrier img",
+                                "output": "@alt",
+                            },
+                            "time_text": ".VY2U .vmXl",
+                            "route_text": ".VY2U [dir='ltr']",
+                            "stops_text": ".JWEO .vmXl",
+                            "layover_text": ".JWEO .c_cgF",
+                            "duration_text": ".xdW8 .vmXl",
+                        },
+                    },
+                },
+            },
+        }
+
+    def _support_extract_cards_payload(self, extracted: dict[str, object]) -> dict[str, object]:
+        """Adapt extract_rules output to the established compact card contract."""
+        raw_cards = extracted.get("cards")
+        if not isinstance(raw_cards, list):
+            raw_cards = []
+
+        cards: list[dict[str, object]] = []
+        seen: set[tuple[str, tuple[str, ...]]] = set()
+        for raw_card in raw_cards:
+            if not isinstance(raw_card, dict):
+                continue
+            raw_legs = raw_card.get("legs")
+            legs = (
+                [leg for leg in raw_legs if isinstance(leg, dict)]
+                if isinstance(raw_legs, list)
+                else []
+            )
+            price_text = _clean_text(raw_card.get("price_text"))
+            leg_texts = [
+                " ".join(
+                    _clean_text(leg.get(field))
+                    for field in (
+                        "time_text",
+                        "route_text",
+                        "stops_text",
+                        "layover_text",
+                        "duration_text",
+                        "airline",
+                    )
+                    if _clean_text(leg.get(field))
+                )
+                for leg in legs
+            ]
+            dedupe_key = (price_text, tuple(leg_texts))
+            if not price_text or not legs or dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            cards.append(
+                {
+                    "text": " ".join(
+                        value
+                        for value in (
+                            " ".join(leg_texts),
+                            _clean_text(raw_card.get("airline_text")),
+                            price_text,
+                        )
+                        if value
+                    ),
+                    "price_text": price_text,
+                    "airline_text": _clean_text(raw_card.get("airline_text")),
+                    "legs": legs,
+                }
+            )
+
+        return {
+            "card_count": len(cards),
+            "captured_count": len(cards),
+            "cards": cards,
+            "summary": {},
+            "facet": {"selected": "", "options": []},
+            "settled": True,
+            "how": "support_homepage_redirect",
+            "no_results": False,
+        }
+
     async def _get_rendered_payload(
         self,
         target_url: str,
@@ -512,9 +634,29 @@ class ScrapingBeeProvider:
         js_scenario: dict[str, object],
         country_code: str | None = None,
     ) -> dict:
-        params = self._base_request_params(target_url, country_code=country_code)
-        params["json_response"] = "True"
-        params["js_scenario"] = json.dumps(js_scenario, separators=(",", ":"))
+        support_flow = self._kayak_homepage_extract
+        request_url = target_url
+        if support_flow:
+            parsed_target = urlsplit(target_url)
+            if not parsed_target.scheme or not parsed_target.netloc:
+                raise RuntimeError("KAYAK search URL is invalid.")
+            request_url = f"{parsed_target.scheme}://{parsed_target.netloc}/"
+
+        params = self._base_request_params(request_url, country_code=country_code)
+        if support_flow:
+            # Exact support requirements: homepage URL, networkidle2, resource
+            # blocking allowed, but no block_ads and no json_response wrapper.
+            params.pop("block_ads", None)
+            params["wait_browser"] = "networkidle2"
+            params["js_scenario"] = json.dumps(
+                self._support_redirect_scenario(target_url), separators=(",", ":")
+            )
+            params["extract_rules"] = json.dumps(
+                self._support_extract_rules(), separators=(",", ":")
+            )
+        else:
+            params["json_response"] = "True"
+            params["js_scenario"] = json.dumps(js_scenario, separators=(",", ":"))
         params["block_resources"] = "True"
         params["tag"] = self._tag_for_url(target_url)
         # NOTE: do NOT add session_id here. Probed live 2026-06-10: session-pinned
@@ -555,6 +697,18 @@ class ScrapingBeeProvider:
 
         if not isinstance(data, dict):
             raise RuntimeError("ScrapingBee returned an unexpected rendered response body.")
+
+        if support_flow:
+            cards_payload = self._support_extract_cards_payload(data)
+            compact_body = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+            data = {
+                "initial-status-code": response.headers.get("Spb-initial-status-code"),
+                "cost": response.headers.get("Spb-cost"),
+                "resolved-url": response.headers.get("Spb-resolved-url"),
+                "body": compact_body,
+                "evaluate_results": [json.dumps(cards_payload, separators=(",", ":"))],
+                "extract_rules": data,
+            }
 
         # Per-render observability (free: all fields ship in every json_response).
         # scenario_duration_s is the REAL js_scenario time from ScrapingBee's own
@@ -1132,6 +1286,22 @@ class ScrapingBeeProvider:
             return False
         return bool(payload.get("no_results"))
 
+    def _rendered_payload_is_security_check(self, rendered: dict) -> bool:
+        """True when KAYAK served its anti-bot page rather than flight results.
+
+        A security challenge is a provider-wide condition, not a bad route or a
+        selector failure.  Recognising it before the normal hollow/fallback
+        renders prevents one blocked provider session from consuming credits for
+        every date in a collection run.
+        """
+        body = rendered.get("body")
+        body_text = body.lower() if isinstance(body, str) else ""
+        resolved_url = _clean_text(rendered.get("resolved-url")).lower()
+        return (
+            "/security/check" in resolved_url
+            or "security check: please confirm that you are a real kayak user" in body_text
+        )
+
     def _looks_hollow_render(
         self,
         rendered: dict,
@@ -1202,7 +1372,13 @@ class ScrapingBeeProvider:
             "airlines_facet": "Airlines" in body_text,
             "captcha_or_block": any(
                 token in body_text.lower()
-                for token in ("captcha", "are you a robot", "access denied", "unusual traffic")
+                for token in (
+                    "captcha",
+                    "are you a robot",
+                    "access denied",
+                    "unusual traffic",
+                    "security check",
+                )
             ),
         }
 
@@ -2053,6 +2229,16 @@ class ScrapingBeeProvider:
             max_stops=max_stops,
             budget=budget,
         )
+        if self._rendered_payload_is_security_check(rendered):
+            log.warning(
+                "scrapingbee_kayak_security_check",
+                trip_type=trip_type,
+                target_url=target_url,
+                **self._render_failure_snapshot(rendered),
+            )
+            raise ProviderBlockedError(
+                "KAYAK served a security-check page instead of flight results."
+            )
         # Hollow-render retry: the session got NO inventory at all (no cards, no
         # 'no results' page, empty poll JSON) -- a dud proxy/browser session, not a
         # statement about the date. One plain retry (which lands on a fresh proxy
@@ -2333,6 +2519,16 @@ class ScrapingBeeProvider:
             max_stops=max_stops,
             budget=budget,
         )
+        if self._rendered_payload_is_security_check(rendered):
+            log.warning(
+                "scrapingbee_kayak_security_check",
+                trip_type="multi_city",
+                target_url=target_url,
+                **self._render_failure_snapshot(rendered),
+            )
+            raise ProviderBlockedError(
+                "KAYAK served a security-check page instead of flight results."
+            )
         # Hollow-render retry (see _search_rendered_itinerary_diagnostic): a dud
         # session saw no inventory at all; retry ONCE (fresh proxy IP).
         if budget.has_room() and self._looks_hollow_render(rendered, results, card_count):

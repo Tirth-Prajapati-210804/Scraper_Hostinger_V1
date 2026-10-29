@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     scrapingbee_premium_proxy: bool = False
     scrapingbee_stealth_proxy: bool = False
     scrapingbee_multi_city_debug: bool = False
+    # KAYAK currently accepts ScrapingBee's homepage -> in-browser redirect flow
+    # with compact CSS extraction. This deliberately does NOT use ScrapingBee's
+    # json_response wrapper, which started returning KAYAK security checks.
+    scrapingbee_kayak_homepage_extract: bool = True
 
     # Scheduler
     scheduler_enabled: bool = True
@@ -220,6 +224,7 @@ class Settings(BaseSettings):
         "scrapingbee_premium_proxy",
         "scrapingbee_stealth_proxy",
         "scrapingbee_multi_city_debug",
+        "scrapingbee_kayak_homepage_extract",
         "scrape_enforce_poll_agreement",
         mode="before",
     )

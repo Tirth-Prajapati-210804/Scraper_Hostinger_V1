@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.providers.base import ProviderAuthError, ProviderQuotaExhaustedError
+from app.providers.base import ProviderAuthError, ProviderBlockedError, ProviderQuotaExhaustedError
 from app.providers.registry import ProviderRegistry
 
 
@@ -18,6 +18,7 @@ def make_settings(**overrides) -> MagicMock:
     settings.scrapingbee_premium_proxy = False
     settings.scrapingbee_stealth_proxy = False
     settings.scrapingbee_multi_city_debug = False
+    settings.scrapingbee_kayak_homepage_extract = True
     settings.provider_timeout_seconds = 30
     settings.provider_max_retries = 3
     settings.provider_concurrency_limit = 2
@@ -56,6 +57,17 @@ def test_scrapingbee_debug_flag_is_passed_to_provider() -> None:
     provider = registry.get_enabled()[0]
 
     assert provider._providers[0]._multi_city_debug is True
+
+
+def test_scrapingbee_kayak_homepage_extract_flag_is_passed_to_provider() -> None:
+    registry = ProviderRegistry(
+        make_settings(
+            scrapingbee_api_key="bee-key-123",
+            scrapingbee_kayak_homepage_extract=True,
+        )
+    )
+
+    assert registry.get_enabled()[0]._providers[0]._kayak_homepage_extract is True
 
 
 def test_scrapingbee_provider_respects_configured_concurrency_limit() -> None:
@@ -107,6 +119,15 @@ def test_success_clears_scrapingbee_failure_status() -> None:
     providers = registry.get_enabled()
     assert len(providers) == 1
     assert registry.status()["scrapingbee"] == "configured"
+
+
+def test_kayak_security_block_cools_down_provider() -> None:
+    registry = ProviderRegistry(make_settings(scrapingbee_api_key="bee-key"))
+
+    registry.report_failure("scrapingbee", ProviderBlockedError("security check"))
+
+    assert registry.get_enabled() == []
+    assert registry.status()["scrapingbee"] == "blocked"
 
 
 def test_status_nothing_configured() -> None:

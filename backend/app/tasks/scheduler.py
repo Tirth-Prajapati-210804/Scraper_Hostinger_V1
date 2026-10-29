@@ -18,7 +18,11 @@ from app.core.logging import get_logger
 from app.core.redaction import redact_text
 from app.models.collection_run import CollectionRun
 from app.models.route_group import RouteGroup
-from app.providers.base import ProviderAuthError, ProviderQuotaExhaustedError
+from app.providers.base import (
+    ProviderAuthError,
+    ProviderBlockedError,
+    ProviderQuotaExhaustedError,
+)
 from app.providers.registry import ProviderRegistry
 from app.services.alert_service import AlertService
 from app.services.price_collector import PriceCollector
@@ -1049,7 +1053,7 @@ class FlightScheduler:
         dates done -- they collect normally next cycle once credit/key is back.
         """
         self.provider_registry.report_failure(provider_name, exc)
-        if isinstance(exc, (ProviderQuotaExhaustedError, ProviderAuthError)):
+        if isinstance(exc, (ProviderQuotaExhaustedError, ProviderAuthError, ProviderBlockedError)):
             if not self._stop_requested:
                 log.warning(
                     "collection_halted_provider_block",

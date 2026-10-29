@@ -20,9 +20,9 @@ from app.providers.base import (
     ProviderAuthError,
     ProviderQuotaExhaustedError,
     ProviderRateLimitedError,
+    ProviderResult,
     ProviderSearchDiagnostics,
     ProviderSearchOutcome,
-    ProviderResult,
 )
 from app.utils.airline_codes import normalize_airline
 from app.utils.route_segments import iter_chain_variants, split_alternative_codes
@@ -1007,15 +1007,19 @@ class PriceCollector:
                     break
 
                 per_date_results: list[CollectionResult] = []
-                date_tasks = [
-                    run_one(search_origin_variant, dest, leg_variant, depart_date)
+                date_work = [
+                    (search_origin_variant, dest, leg_variant, depart_date)
                     for search_origin_variant, dest, leg_variant in chain_variants
                 ]
-                for i in range(0, len(date_tasks), batch_size):
+                for i in range(0, len(date_work), batch_size):
                     if stop_check and stop_check():
                         break
-                    per_date_results.extend(await gather_chunk(date_tasks[i:i + batch_size]))
-                    if i + batch_size < len(date_tasks):
+                    chunk = [
+                        run_one(*work_item)
+                        for work_item in date_work[i:i + batch_size]
+                    ]
+                    per_date_results.extend(await gather_chunk(chunk))
+                    if i + batch_size < len(date_work):
                         slept = 0.0
                         while slept < delay_seconds:
                             if stop_check and stop_check():
@@ -1036,19 +1040,23 @@ class PriceCollector:
                         await asyncio.sleep(interval)
                         slept += interval
         else:
-            tasks = []
+            work_items = []
 
             for depart_date in prioritized_dates:
                 for search_origin_variant, dest, leg_variant in chain_variants:
-                    tasks.append(run_one(search_origin_variant, dest, leg_variant, depart_date))
+                    work_items.append((search_origin_variant, dest, leg_variant, depart_date))
 
-            for i in range(0, len(tasks), batch_size):
+            for i in range(0, len(work_items), batch_size):
                 if stop_check and stop_check():
                     break
 
-                await gather_chunk(tasks[i:i + batch_size])
+                chunk = [
+                    run_one(*work_item)
+                    for work_item in work_items[i:i + batch_size]
+                ]
+                await gather_chunk(chunk)
 
-                if i + batch_size < len(tasks):
+                if i + batch_size < len(work_items):
                     slept = 0.0
                     while slept < delay_seconds:
                         if stop_check and stop_check():

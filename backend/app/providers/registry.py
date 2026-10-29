@@ -7,6 +7,7 @@ from app.core.logging import get_logger
 from app.providers.base import (
     FlightProvider,
     ProviderAuthError,
+    ProviderBlockedError,
     ProviderQuotaExhaustedError,
     ProviderRateLimitedError,
 )
@@ -33,6 +34,7 @@ class ProviderRegistry:
 
         self._default_cooldown_seconds = 0
         self._rate_limit_cooldown_seconds = 300
+        self._blocked_cooldown_seconds = 1800
 
         scrapingbee_keys = settings.get_scrapingbee_keys()
         if scrapingbee_keys:
@@ -56,6 +58,9 @@ class ProviderRegistry:
                 premium_proxy=settings.scrapingbee_premium_proxy,
                 stealth_proxy=settings.scrapingbee_stealth_proxy,
                 multi_city_debug=settings.scrapingbee_multi_city_debug,
+                kayak_homepage_extract=getattr(
+                    settings, "scrapingbee_kayak_homepage_extract", True
+                ),
                 user_agent=settings.scrapingbee_user_agent,
                 enforce_poll_agreement=getattr(
                     settings, "scrape_enforce_poll_agreement", False
@@ -151,6 +156,11 @@ class ProviderRegistry:
                 provider_name,
                 self._rate_limit_cooldown_seconds,
             )
+            return
+
+        if isinstance(exc, ProviderBlockedError):
+            self._last_status[provider_name] = "blocked"
+            self._set_cooldown(provider_name, self._blocked_cooldown_seconds)
             return
 
         # generic repeated failures
