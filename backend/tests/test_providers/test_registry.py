@@ -19,6 +19,7 @@ def make_settings(**overrides) -> MagicMock:
     settings.scrapingbee_stealth_proxy = False
     settings.scrapingbee_multi_city_debug = False
     settings.scrapingbee_kayak_homepage_extract = True
+    settings.scrapingbee_kayak_result_wait_ms = 35_000
     settings.provider_timeout_seconds = 30
     settings.provider_max_retries = 3
     settings.provider_concurrency_limit = 2
@@ -68,6 +69,7 @@ def test_scrapingbee_kayak_homepage_extract_flag_is_passed_to_provider() -> None
     )
 
     assert registry.get_enabled()[0]._providers[0]._kayak_homepage_extract is True
+    assert registry.get_enabled()[0]._providers[0]._kayak_result_wait_ms == 35_000
 
 
 def test_scrapingbee_provider_respects_configured_concurrency_limit() -> None:

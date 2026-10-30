@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # with compact CSS extraction. This deliberately does NOT use ScrapingBee's
     # json_response wrapper, which started returning KAYAK security checks.
     scrapingbee_kayak_homepage_extract: bool = True
+    # KAYAK continues streaming and re-sorting fares after the search URL opens.
+    # Keep this below ScrapingBee's ~40s JavaScript-scenario limit; the scenario
+    # also spends one second on the regional homepage before the redirect.
+    scrapingbee_kayak_result_wait_ms: int = 35_000
 
     # Scheduler
     scheduler_enabled: bool = True

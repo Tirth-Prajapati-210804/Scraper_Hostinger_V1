@@ -61,6 +61,9 @@ class ProviderRegistry:
                 kayak_homepage_extract=getattr(
                     settings, "scrapingbee_kayak_homepage_extract", True
                 ),
+                kayak_result_wait_ms=getattr(
+                    settings, "scrapingbee_kayak_result_wait_ms", 35_000
+                ),
                 user_agent=settings.scrapingbee_user_agent,
                 enforce_poll_agreement=getattr(
                     settings, "scrape_enforce_poll_agreement", False

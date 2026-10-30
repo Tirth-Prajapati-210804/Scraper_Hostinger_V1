@@ -128,14 +128,14 @@ def test_support_homepage_redirect_flow_uses_compact_extract_rules() -> None:
     provider = ScrapingBeeProvider(api_key="test-key", kayak_homepage_extract=True)
     target_url = "https://www.ca.kayak.com/flights/YYC-PMI/2027-09-15/BCN-YYC/2027-09-24"
 
-    scenario = provider._support_redirect_scenario(target_url)
+    scenario = provider._support_redirect_scenario(target_url, 35_000)
     rules = provider._support_extract_rules()
 
     assert scenario == {
         "instructions": [
             {"wait": 1_000},
             {"evaluate": f"window.location.href={json.dumps(target_url)}"},
-            {"wait": 10_000},
+            {"wait": 35_000},
         ]
     }
     assert rules["cards"]["type"] == "list"

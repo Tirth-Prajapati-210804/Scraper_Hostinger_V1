@@ -299,6 +299,7 @@ class ScrapingBeeProvider:
         stealth_proxy: bool = False,
         multi_city_debug: bool = False,
         kayak_homepage_extract: bool = False,
+        kayak_result_wait_ms: int = 35_000,
         user_agent: str = "flight-harvester/1.0",
         enforce_poll_agreement: bool = False,
     ) -> None:
@@ -311,6 +312,10 @@ class ScrapingBeeProvider:
         self._stealth_proxy = stealth_proxy
         self._multi_city_debug = multi_city_debug
         self._kayak_homepage_extract = bool(kayak_homepage_extract)
+        # ScrapingBee limits JavaScript scenarios to roughly 40 seconds. The
+        # homepage redirect itself waits one second, leaving a safe 39-second
+        # ceiling for KAYAK to populate and price-sort its cards.
+        self._kayak_result_wait_ms = max(10_000, min(int(kayak_result_wait_ms), 39_000))
         # Two-witness enforcement: refuse saves whose DOM price disagrees with
         # Kayak's own poll JSON after one retry. OFF = shadow mode (log only).
         self._enforce_poll_agreement = bool(enforce_poll_agreement)
@@ -512,7 +517,10 @@ class ScrapingBeeProvider:
         return re.sub(r"[^A-Za-z0-9_-]+", "_", path).strip("_")[:36] or "kayak"
 
     @staticmethod
-    def _support_redirect_scenario(target_url: str) -> dict[str, object]:
+    def _support_redirect_scenario(
+        target_url: str,
+        result_wait_ms: int = 35_000,
+    ) -> dict[str, object]:
         """ScrapingBee's KAYAK-specific homepage navigation recipe.
 
         Starting on the regional KAYAK homepage before navigating to the search
@@ -524,7 +532,7 @@ class ScrapingBeeProvider:
             "instructions": [
                 {"wait": 1_000},
                 {"evaluate": f"window.location.href={json.dumps(target_url)}"},
-                {"wait": 10_000},
+                {"wait": result_wait_ms},
             ]
         }
 
@@ -649,7 +657,11 @@ class ScrapingBeeProvider:
             params.pop("block_ads", None)
             params["wait_browser"] = "networkidle2"
             params["js_scenario"] = json.dumps(
-                self._support_redirect_scenario(target_url), separators=(",", ":")
+                self._support_redirect_scenario(
+                    target_url,
+                    self._kayak_result_wait_ms,
+                ),
+                separators=(",", ":"),
             )
             params["extract_rules"] = json.dumps(
                 self._support_extract_rules(), separators=(",", ":")
