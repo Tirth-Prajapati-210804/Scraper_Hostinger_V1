@@ -58,16 +58,13 @@ class Settings(BaseSettings):
     scrapingbee_country_code: str = ""
     scrapingbee_user_agent: str = "flight-harvester/1.0"
     scrapingbee_premium_proxy: bool = False
-    scrapingbee_stealth_proxy: bool = False
+    scrapingbee_stealth_proxy: bool = True
     scrapingbee_multi_city_debug: bool = False
-    # KAYAK currently accepts ScrapingBee's homepage -> in-browser redirect flow
-    # with compact CSS extraction. This deliberately does NOT use ScrapingBee's
-    # json_response wrapper, which started returning KAYAK security checks.
-    scrapingbee_kayak_homepage_extract: bool = True
-    # KAYAK continues streaming and re-sorting fares after the search URL opens.
-    # Keep this below ScrapingBee's ~40s JavaScript-scenario limit; the scenario
-    # also spends one second on the regional homepage before the redirect.
-    scrapingbee_kayak_result_wait_ms: int = 35_000
+    # Use the support-tested direct KAYAK results URL flow for stealth proxy.
+    # Homepage navigation is a separate standard-proxy recipe.
+    scrapingbee_kayak_homepage_extract: bool = False
+    # The verified stealth recipe uses three 10-second JavaScript scenario waits.
+    scrapingbee_kayak_result_wait_ms: int = 30_000
 
     # Scheduler
     scheduler_enabled: bool = True
@@ -118,7 +115,7 @@ class Settings(BaseSettings):
     # ~1500-flight pages plus the smart-load gate (up to 50s) need well over the old
     # ~25s budget (timeout=60), which caused 500/timeout renders before the page
     # could settle. The httpx client timeout rises with this automatically.
-    provider_timeout_seconds: int = 120
+    provider_timeout_seconds: int = 175
     provider_max_retries: int = 1
     provider_concurrency_limit: int = 3
     provider_rendered_concurrency_limit: int = 1

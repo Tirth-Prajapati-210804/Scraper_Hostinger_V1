@@ -59,10 +59,10 @@ class ProviderRegistry:
                 stealth_proxy=settings.scrapingbee_stealth_proxy,
                 multi_city_debug=settings.scrapingbee_multi_city_debug,
                 kayak_homepage_extract=getattr(
-                    settings, "scrapingbee_kayak_homepage_extract", True
+                    settings, "scrapingbee_kayak_homepage_extract", False
                 ),
                 kayak_result_wait_ms=getattr(
-                    settings, "scrapingbee_kayak_result_wait_ms", 35_000
+                    settings, "scrapingbee_kayak_result_wait_ms", 30_000
                 ),
                 user_agent=settings.scrapingbee_user_agent,
                 enforce_poll_agreement=getattr(

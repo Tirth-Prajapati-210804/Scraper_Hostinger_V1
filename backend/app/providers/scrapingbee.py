@@ -642,16 +642,53 @@ class ScrapingBeeProvider:
         js_scenario: dict[str, object],
         country_code: str | None = None,
     ) -> dict:
-        support_flow = self._kayak_homepage_extract
+        # ScrapingBee support's validated stealth recipe targets the flight URL
+        # directly. The homepage -> redirect + networkidle2 recipe is retained for
+        # standard proxies, but combining it with stealth returned provider 400s.
+        stealth_direct_flow = self._stealth_proxy
+        support_flow = self._kayak_homepage_extract or stealth_direct_flow
         request_url = target_url
-        if support_flow:
+        if support_flow and not stealth_direct_flow:
             parsed_target = urlsplit(target_url)
             if not parsed_target.scheme or not parsed_target.netloc:
                 raise RuntimeError("KAYAK search URL is invalid.")
             request_url = f"{parsed_target.scheme}://{parsed_target.netloc}/"
 
         params = self._base_request_params(request_url, country_code=country_code)
-        if support_flow:
+        if stealth_direct_flow:
+            # Match the successful support probe: direct results URL, JS enabled,
+            # regional country code, a configurable scenario wait, and extract_rules
+            # JSON. The stealth API does not support `timeout`; omit other
+            # non-recipe options to avoid provider-side 400s.
+            for option in (
+                "timeout",
+                "wait",
+                "wait_browser",
+                "block_ads",
+                "device",
+                "window_width",
+                "window_height",
+            ):
+                params.pop(option, None)
+            # A single 20s/30s wait was rejected by ScrapingBee with an upstream
+            # 400, while two/three 10s wait instructions succeeded on the same
+            # direct-results stealth request. Split the configured total into
+            # <=10s steps; the configured ceiling remains below the ~40s scenario
+            # limit. Do not replace this with the top-level `wait` parameter: its
+            # 20s stealth request was also rejected in the probe.
+            remaining_wait_ms = self._kayak_result_wait_ms
+            wait_instructions: list[dict[str, int]] = []
+            while remaining_wait_ms > 0:
+                step_ms = min(10_000, remaining_wait_ms)
+                wait_instructions.append({"wait": step_ms})
+                remaining_wait_ms -= step_ms
+            params["js_scenario"] = json.dumps(
+                {"instructions": wait_instructions}, separators=(",", ":")
+            )
+            params["extract_rules"] = json.dumps(
+                self._support_extract_rules(), separators=(",", ":")
+            )
+        elif support_flow:
             # Exact support requirements: homepage URL, networkidle2, resource
             # blocking allowed, but no block_ads and no json_response wrapper.
             params.pop("block_ads", None)
