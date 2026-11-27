@@ -103,3 +103,14 @@ def test_redact_log_event_processor() -> None:
     assert result["password"] == "[REDACTED]"
     assert "abc123" not in result["url"]
     assert result["event"] == "request"
+
+
+def test_redact_scrapedo_token_in_url_and_dict() -> None:
+    url_text = "https://api.scrape.do/?token=sdsecret999&url=https://kayak.co.uk"
+    redacted_url = redact_text(url_text)
+    assert "sdsecret999" not in redacted_url
+    assert "[REDACTED]" in redacted_url
+
+    redacted_dict = redact_value({"scrapedo_api_key": "sdsecret", "scrapedo_api_keys": "k1,k2"})
+    assert redacted_dict["scrapedo_api_key"] == "[REDACTED]"
+    assert redacted_dict["scrapedo_api_keys"] == "[REDACTED]"

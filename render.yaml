@@ -34,6 +34,20 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      - key: SCRAPEDO_API_KEY
+        sync: false
+      - key: SCRAPEDO_API_KEYS
+        sync: false
+      - key: SCRAPEDO_COUNTRY_CODE
+        value: ""
+      - key: SCRAPEDO_SUPER_PROXY
+        value: "true"
+      - key: SCRAPEDO_INITIAL_POLL_DELAY_SECONDS
+        value: "24.0"
+      - key: SCRAPEDO_POLL_DELAY_SECONDS
+        value: "6.0"
+      - key: SCRAPEDO_MAX_POLLS
+        value: "3"
       - key: SCRAPINGBEE_API_KEY
         sync: false
       - key: SCRAPINGBEE_API_KEYS

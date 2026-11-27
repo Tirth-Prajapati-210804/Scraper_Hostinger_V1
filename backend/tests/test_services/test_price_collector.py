@@ -1096,3 +1096,44 @@ async def test_multi_city_batch_compares_four_leg_origin_alternatives_end_to_end
     collector._upsert_cheapest.assert_awaited_once()
     assert collector._upsert_cheapest.await_args.kwargs["origin"] == "GLA,PIK"
     assert collector._upsert_cheapest.await_args.kwargs["result"].price == 410
+
+
+@pytest.mark.asyncio
+async def test_collect_single_date_forwards_search_filters_to_scrapedo() -> None:
+    session = AsyncMock()
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+
+    provider = MagicMock()
+    provider.name = "scrapedo"
+    provider.search_round_trip = AsyncMock(
+        return_value=[make_result(491, airline="Gulf Air", provider="scrapedo")]
+    )
+    provider.search_round_trip_diagnostic = None
+
+    collector = PriceCollector(
+        session_factory=make_session_factory(session),
+        providers=[provider],
+    )
+    collector._upsert_cheapest = AsyncMock()
+    collector._save_all_results = AsyncMock()
+
+    await collector.collect_single_date(
+        origin="MAN",
+        destination="DXB",
+        depart_date=DEPART,
+        route_group_id=ROUTE_ID,
+        market="uk",
+        currency="GBP",
+        trip_type="round_trip",
+        nights=7,
+        same_airline_only=False,
+        max_leg_duration_minutes=960,
+        max_layover_minutes=660,
+    )
+
+    kwargs = provider.search_round_trip.call_args.kwargs
+    assert kwargs["market"] == "uk"
+    assert kwargs["same_airline_only"] is False
+    assert kwargs["max_leg_duration_minutes"] == 960
+    assert kwargs["max_layover_minutes"] == 660

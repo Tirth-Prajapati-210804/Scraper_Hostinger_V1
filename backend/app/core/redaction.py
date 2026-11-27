@@ -6,6 +6,7 @@ from typing import Any
 
 _REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?i)(api_key=)([^&\s]+)"), r"\1[REDACTED]"),
+    (re.compile(r"(?i)([?&]token=)([^&\s]+)"), r"\1[REDACTED]"),
     (re.compile(r"(?i)(bearer\s+)([A-Za-z0-9._-]+)"), r"\1[REDACTED]"),
     (re.compile(r"(?i)(password=)([^&\s]+)"), r"\1[REDACTED]"),
     (re.compile(r"(?i)(jwt_secret_key=)([^&\s]+)"), r"\1[REDACTED]"),
@@ -26,6 +27,8 @@ _SENSITIVE_KEYS = {
     "admin_password",
     "database_url",
     "serpapi_key",
+    "scrapedo_api_key",
+    "scrapedo_api_keys",
     "scrapingbee_api_key",
     "scrapingbee_api_keys",
 }

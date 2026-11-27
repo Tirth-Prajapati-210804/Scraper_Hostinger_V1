@@ -295,7 +295,7 @@ export function DashboardPage() {
 
         {noProvider ? (
           <Banner tone="warn" icon="alert" title="No API key configured">
-            Add SCRAPINGBEE_API_KEY or SCRAPINGBEE_API_KEYS.
+            Add SCRAPEDO_API_KEY (or SCRAPINGBEE_API_KEY / SCRAPINGBEE_API_KEYS).
           </Banner>
         ) : null}
 

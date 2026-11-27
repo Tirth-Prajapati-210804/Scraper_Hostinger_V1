@@ -59,8 +59,8 @@ def _provider_unavailable_detail(registry) -> str:
             return f"{label} {status_messages[provider_state]}"
 
     return (
-        "No flight data provider is configured. Add SCRAPINGBEE_API_KEY or "
-        "SCRAPINGBEE_API_KEYS to your .env file."
+        "No flight data provider is configured. Add SCRAPEDO_API_KEY (or "
+        "SCRAPINGBEE_API_KEY / SCRAPINGBEE_API_KEYS) to your .env file."
     )
 
 

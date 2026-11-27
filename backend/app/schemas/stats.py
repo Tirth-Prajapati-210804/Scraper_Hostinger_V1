@@ -22,9 +22,10 @@ class OverviewStats(BaseModel):
 
 
 class ProviderCredits(BaseModel):
-    """Live ScrapingBee credit balance, summed across all configured keys."""
+    """Live credit balance for the active provider, summed across configured keys."""
 
     available: bool  # False when no key is configured or the lookup failed
+    provider: str | None = None
     max_credits: int | None = None
     used_credits: int | None = None
     remaining_credits: int | None = None

@@ -11,6 +11,7 @@ from app.providers.base import (
     ProviderQuotaExhaustedError,
     ProviderRateLimitedError,
 )
+from app.providers.scrapedo import ScrapeDoPoolProvider
 from app.providers.scrapingbee import ScrapingBeePoolProvider
 
 log = get_logger(__name__)
@@ -21,7 +22,7 @@ class ProviderRegistry:
     Adds:
     - provider health memory
     - temporary cooldown for failing providers
-    - ScrapingBee-only production provider registration
+    - Scrape.do primary provider (with ScrapingBee fallback when Scrape.do is unset)
     - cleaner status reporting
     """
 
@@ -36,9 +37,36 @@ class ProviderRegistry:
         self._rate_limit_cooldown_seconds = 300
         self._blocked_cooldown_seconds = 1800
 
+        concurrency_limit = max(1, settings.provider_concurrency_limit)
+        scrapedo_keys = (
+            settings.get_scrapedo_keys()
+            if callable(getattr(settings, "get_scrapedo_keys", None))
+            else [
+                key.strip()
+                for key in [getattr(settings, "scrapedo_api_key", "")]
+                if isinstance(key, str) and key.strip()
+            ]
+        )
+        if scrapedo_keys:
+            self.providers["scrapedo"] = ScrapeDoPoolProvider(
+                api_keys=scrapedo_keys,
+                base_url=getattr(settings, "scrapedo_base_url", "https://api.scrape.do"),
+                timeout=settings.provider_timeout_seconds,
+                max_retries=settings.provider_max_retries,
+                concurrency_limit=concurrency_limit,
+                min_delay_seconds=settings.provider_min_delay_seconds,
+                country_code=getattr(settings, "scrapedo_country_code", ""),
+                super_proxy=getattr(settings, "scrapedo_super_proxy", True),
+                initial_poll_delay_seconds=getattr(
+                    settings, "scrapedo_initial_poll_delay_seconds", 24.0
+                ),
+                poll_delay_seconds=getattr(settings, "scrapedo_poll_delay_seconds", 6.0),
+                max_polls=getattr(settings, "scrapedo_max_polls", 3),
+                user_agent=settings.scrapingbee_user_agent,
+            )
+
         scrapingbee_keys = settings.get_scrapingbee_keys()
-        if scrapingbee_keys:
-            concurrency_limit = max(1, settings.provider_concurrency_limit)
+        if scrapingbee_keys and "scrapedo" not in self.providers:
             rendered_concurrency_limit = max(
                 1,
                 min(
@@ -179,6 +207,7 @@ class ProviderRegistry:
         """
 
         result: dict[str, str] = {
+            "scrapedo": "disabled",
             "scrapingbee": "disabled",
         }
 

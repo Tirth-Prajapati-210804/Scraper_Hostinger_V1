@@ -10,6 +10,14 @@ from app.providers.registry import ProviderRegistry
 
 def make_settings(**overrides) -> MagicMock:
     settings = MagicMock()
+    settings.scrapedo_api_key = ""
+    settings.scrapedo_api_keys = ""
+    settings.scrapedo_base_url = "https://api.scrape.do"
+    settings.scrapedo_country_code = ""
+    settings.scrapedo_super_proxy = True
+    settings.scrapedo_initial_poll_delay_seconds = 24.0
+    settings.scrapedo_poll_delay_seconds = 6.0
+    settings.scrapedo_max_polls = 3
     settings.scrapingbee_api_key = ""
     settings.scrapingbee_api_keys = ""
     settings.scrapingbee_base_url = "https://app.scrapingbee.com/api/v1"
@@ -27,6 +35,11 @@ def make_settings(**overrides) -> MagicMock:
     settings.provider_min_delay_seconds = 0.5
     for k, v in overrides.items():
         setattr(settings, k, v)
+    settings.get_scrapedo_keys = lambda: [
+        key
+        for key in [settings.scrapedo_api_key, *settings.scrapedo_api_keys.split(",")]
+        if isinstance(key, str) and key.strip()
+    ]
     settings.get_scrapingbee_keys = lambda: [
         key
         for key in [settings.scrapingbee_api_key, *settings.scrapingbee_api_keys.split(",")]
@@ -135,7 +148,32 @@ def test_kayak_security_block_cools_down_provider() -> None:
 def test_status_nothing_configured() -> None:
     registry = ProviderRegistry(make_settings())
     status = registry.status()
+    assert status["scrapedo"] == "disabled"
     assert status["scrapingbee"] == "disabled"
+
+
+def test_scrapedo_key_creates_primary_scrapedo_provider() -> None:
+    registry = ProviderRegistry(
+        make_settings(
+            scrapedo_api_key="sd-key-123",
+            scrapingbee_api_key="bee-key-456",
+        )
+    )
+    providers = registry.get_enabled()
+    assert len(providers) == 1
+    assert providers[0].name == "scrapedo"
+    status = registry.status()
+    assert status["scrapedo"] == "configured"
+    assert status["scrapingbee"] == "disabled"
+
+
+def test_scrapedo_failure_cools_down_provider() -> None:
+    registry = ProviderRegistry(make_settings(scrapedo_api_key="sd-key-123"))
+    registry.report_failure("scrapedo", ProviderBlockedError("security check"))
+    assert registry.get_enabled() == []
+    assert registry.status()["scrapedo"] == "blocked"
+    registry.report_success("scrapedo")
+    assert len(registry.get_enabled()) == 1
 
 
 @pytest.mark.asyncio

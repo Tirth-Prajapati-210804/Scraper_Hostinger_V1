@@ -9,7 +9,7 @@ from app.api.deps import get_current_user
 from app.db.session import get_db_session
 from app.models.user import User
 from app.schemas.stats import OverviewStats, ProviderCredits
-from app.services.provider_credits_service import get_provider_credits
+from app.services.provider_credits_service import get_active_provider_credits
 from app.services.stats_service import get_overview
 
 router = APIRouter(prefix="/stats", tags=["stats"])
@@ -26,6 +26,6 @@ async def overview(request: Request, session: _DB, current_user: _Auth) -> Overv
 
 @router.get("/provider-credits", response_model=ProviderCredits)
 async def provider_credits(request: Request, current_user: _Auth) -> ProviderCredits:
-    """Live ScrapingBee credit balance (summed across configured keys)."""
+    """Live credit balance for the active provider (summed across configured keys)."""
     settings = request.app.state.settings
-    return await get_provider_credits(settings.get_scrapingbee_keys())
+    return await get_active_provider_credits(settings)

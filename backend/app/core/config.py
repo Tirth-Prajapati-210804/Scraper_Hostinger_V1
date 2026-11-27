@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     admin_full_name: str = "System Admin"
 
     # Provider API keys (empty = disabled)
+    scrapedo_api_key: str = ""
+    scrapedo_api_keys: str = ""
+    scrapedo_base_url: str = "https://api.scrape.do"
+    scrapedo_country_code: str = ""
+    scrapedo_super_proxy: bool = True
+    scrapedo_initial_poll_delay_seconds: float = 24.0
+    scrapedo_poll_delay_seconds: float = 6.0
+    scrapedo_max_polls: int = 3
     scrapingbee_api_key: str = ""
     scrapingbee_api_keys: str = ""
     scrapingbee_base_url: str = "https://app.scrapingbee.com/api/v1"
@@ -138,6 +146,7 @@ class Settings(BaseSettings):
     @field_validator(
         "cors_origins",
         "allowed_hosts",
+        "scrapedo_api_keys",
         "scrapingbee_api_keys",
         mode="before",
     )
@@ -150,6 +159,9 @@ class Settings(BaseSettings):
         return str(v)
 
     @field_validator(
+        "scrapedo_api_key",
+        "scrapedo_base_url",
+        "scrapedo_country_code",
         "scrapingbee_api_key",
         "scrapingbee_base_url",
         "scrapingbee_country_code",
@@ -205,9 +217,9 @@ class Settings(BaseSettings):
     def get_cors_origin_regex(self) -> str | None:
         return self.cors_origin_regex or None
 
-    def get_scrapingbee_keys(self) -> list[str]:
-        explicit_pool = self._parse_csv_or_json(self.scrapingbee_api_keys)
-        legacy_field = self._parse_csv_or_json(self.scrapingbee_api_key)
+    def _collect_provider_keys(self, explicit_pool_raw: str, legacy_raw: str) -> list[str]:
+        explicit_pool = self._parse_csv_or_json(explicit_pool_raw)
+        legacy_field = self._parse_csv_or_json(legacy_raw)
         configured = explicit_pool if explicit_pool else legacy_field
 
         seen: set[str] = set()
@@ -218,10 +230,17 @@ class Settings(BaseSettings):
                 keys.append(key)
         return keys
 
+    def get_scrapedo_keys(self) -> list[str]:
+        return self._collect_provider_keys(self.scrapedo_api_keys, self.scrapedo_api_key)
+
+    def get_scrapingbee_keys(self) -> list[str]:
+        return self._collect_provider_keys(self.scrapingbee_api_keys, self.scrapingbee_api_key)
+
     @field_validator(
         "debug",
         "scheduler_enabled",
         "expose_api_docs",
+        "scrapedo_super_proxy",
         "scrapingbee_premium_proxy",
         "scrapingbee_stealth_proxy",
         "scrapingbee_multi_city_debug",

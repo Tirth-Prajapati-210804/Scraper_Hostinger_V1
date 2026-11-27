@@ -52,7 +52,19 @@ export function ProviderStatus({
     <Card className="rounded-[12px] border-[#E8ECF4] bg-white px-5 py-[14px] shadow-none">
       {providers.map(([name, status], index) => {
         const active = status === "configured" || status === "active";
-        const isScrapingBee = name.toLowerCase().includes("scrapingbee");
+        const displayName =
+          name.toLowerCase() === "scrapedo"
+            ? "Scrape.do"
+            : name.toLowerCase() === "scrapingbee"
+              ? "ScrapingBee"
+              : name;
+        const showCredits =
+          active &&
+          Boolean(credits?.available) &&
+          credits?.used_credits != null &&
+          (credits.provider
+            ? name.toLowerCase().includes(credits.provider.toLowerCase())
+            : name.toLowerCase().includes("scrapingbee"));
 
         return (
           <div
@@ -68,7 +80,7 @@ export function ProviderStatus({
                 )}
               </div>
               <div>
-                <div className="text-[13px] font-semibold text-[#1a1d23] capitalize">{name}</div>
+                <div className="text-[13px] font-semibold text-[#1a1d23]">{displayName}</div>
                 <div className="text-[11px] text-[#9CA3AF]">
                   {active ? "Operational" : "Unavailable"}
                 </div>
@@ -76,10 +88,10 @@ export function ProviderStatus({
             </div>
 
             <div className="flex items-center gap-3">
-              {active && isScrapingBee && credits?.available && credits.used_credits != null ? (
+              {showCredits && credits?.used_credits != null ? (
                 <span
                   className="text-[12px] font-medium text-[#475569]"
-                  title="Used / total ScrapingBee credits"
+                  title={`Used / total ${displayName} credits`}
                 >
                   <span className="font-semibold text-[#1a1d23]">
                     {formatNumber(credits.used_credits)}

@@ -112,11 +112,11 @@ def _friendly_error(exc: BaseException, status: str) -> str:
     raw = str(exc)
     lowered = raw.lower()
     if status == "quota_exhausted":
-        return "ScrapingBee credits exhausted - top up to resume collection."
+        return "Provider credits exhausted - top up to resume collection."
     if status == "auth_error":
-        return "ScrapingBee API key rejected - check the configured key."
+        return "Provider API key rejected - check the configured key."
     if status == "rate_limited":
-        return "ScrapingBee rate limit hit - will retry shortly."
+        return "Provider rate limit hit - will retry shortly."
     if status == "parse_error":
         return "Could not read the rendered page - will retry."
     # provider_error: the common ScrapingBee 500 / timeout family.
@@ -230,15 +230,14 @@ class PriceCollector:
         max_layover_minutes: int | None = None,
     ) -> dict[str, object]:
         kwargs: dict[str, object] = {}
-        if getattr(provider, "name", "") == "scrapingbee":
+        if getattr(provider, "name", "") in {"scrapingbee", "scrapedo"}:
             if market:
                 kwargs["market"] = market
             # Per-group toggle: ON = only same-carrier itineraries qualify
-            # (airlines=-MULT,flylocal in the URL + the Python carrier filter);
+            # (airlines=-MULT,flylocal + the Python carrier filter);
             # OFF = cheapest itinerary regardless of carrier mix.
             kwargs["same_airline_only"] = bool(same_airline_only)
-            # Carried into the Kayak URL (legdur=/layoverdur=) so Kayak filters
-            # server-side before render -- fewer cards, faster extract.
+            # Carried into KAYAK legdur=/layoverdur= so KAYAK filters server-side.
             if max_leg_duration_minutes:
                 kwargs["max_leg_duration_minutes"] = max_leg_duration_minutes
             if max_layover_minutes:
@@ -498,6 +497,7 @@ class PriceCollector:
                     **self._provider_search_kwargs(
                         provider,
                         market=market,
+                        same_airline_only=same_airline_only,
                         max_leg_duration_minutes=max_leg_duration_minutes,
                         max_layover_minutes=max_layover_minutes,
                     ),
@@ -512,6 +512,9 @@ class PriceCollector:
                 **self._provider_search_kwargs(
                     provider,
                     market=market,
+                    same_airline_only=same_airline_only,
+                    max_leg_duration_minutes=max_leg_duration_minutes,
+                    max_layover_minutes=max_layover_minutes,
                 ),
             )
 

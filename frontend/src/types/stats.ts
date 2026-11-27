@@ -24,6 +24,7 @@ export interface HealthResponse {
 
 export interface ProviderCredits {
   available: boolean;
+  provider?: string | null;
   max_credits: number | null;
   used_credits: number | null;
   remaining_credits: number | null;
