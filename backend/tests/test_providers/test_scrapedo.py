@@ -576,3 +576,111 @@ async def test_mult_fallback_disabled_keeps_20_credit_cap() -> None:
 
     assert calls == 2
     assert outcome.results == []
+
+
+@pytest.mark.asyncio
+async def test_post_poll_retries_free_502_rotation_failed_without_restarting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.providers import scrapedo as scrapedo_module
+
+    async def fast_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(scrapedo_module.asyncio, "sleep", fast_sleep)
+
+    calls: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(body)
+        if len(calls) == 1:
+            return httpx.Response(
+                200,
+                json={"status": "first-phase", "searchId": "reuse-502", "results": []},
+                headers={"Scrape.do-Request-Cost": "10"},
+            )
+        if len(calls) == 2:
+            return httpx.Response(
+                502,
+                json={
+                    "URL": "https://www.kayak.co.uk/i/api/search/dynamic/flights/poll",
+                    "StatusCode": 502,
+                    "ErrorCode": 90,
+                    "ErrorType": "ROTATION_FAILED",
+                    "Message": ["All proxy rotation retries failed"],
+                },
+                headers={"Scrape.do-Request-Cost": "0"},
+            )
+        return httpx.Response(
+            200,
+            json=_uk_round_trip_poll_payload(status="complete", price=1188.0),
+            headers={"Scrape.do-Request-Cost": "10"},
+        )
+
+    provider = ScrapeDoProvider(
+        api_key="sd-key",
+        initial_poll_delay_seconds=0.0,
+        poll_delay_seconds=0.01,
+        max_polls=1,
+        max_retries=1,
+    )
+    await provider._client.aclose()
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outcome = await provider.search_round_trip_diagnostic(
+            origin="MAN",
+            destination="JRO",
+            depart_date=date(2026, 12, 1),
+            return_date=date(2026, 12, 11),
+            market="uk",
+            currency="GBP",
+            max_stops=1,
+            same_airline_only=True,
+        )
+    finally:
+        await provider.close()
+
+    assert len(calls) == 3
+    assert calls[1]["userSearchParams"]["searchId"] == "reuse-502"
+    assert calls[2]["userSearchParams"]["searchId"] == "reuse-502"
+    assert outcome.results[0].price == 1188.0
+    assert outcome.results[0].raw_data["poll_credits_cost"] == 20.0
+
+
+@pytest.mark.asyncio
+async def test_extract_body_message_handles_list_message_on_502_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.providers import scrapedo as scrapedo_module
+
+    async def fast_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(scrapedo_module.asyncio, "sleep", fast_sleep)
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            502,
+            json={
+                "URL": "https://www.kayak.co.uk/i/api/search/dynamic/flights/poll",
+                "StatusCode": 502,
+                "ErrorCode": 90,
+                "ErrorType": "ROTATION_FAILED",
+                "Message": ["Proxy exhausted"],
+            },
+        )
+
+    provider = ScrapeDoProvider(api_key="sd-key", max_retries=1)
+    await provider._client.aclose()
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(RuntimeError, match=r"ROTATION_FAILED \(HTTP 502\): Proxy exhausted"):
+            await provider.search_round_trip_diagnostic(
+                origin="MAN",
+                destination="JRO",
+                depart_date=date(2026, 12, 1),
+                return_date=date(2026, 12, 11),
+            )
+    finally:
+        await provider.close()

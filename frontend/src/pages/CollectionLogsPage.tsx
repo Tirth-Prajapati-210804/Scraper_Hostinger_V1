@@ -21,18 +21,8 @@ import { Select } from "../components/ui/Select";
 import { useToast } from "../context/ToastContext";
 
 import type { ScrapeLogEntry } from "../types/price";
+import { formatRunError } from "../utils/errors";
 import { usePageTitle } from "../utils/usePageTitle";
-
-function formatRunError(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error && typeof error === "object") {
-    const record = error as Record<string, unknown>;
-    const code = typeof record.code === "string" ? record.code : "collection_error";
-    const detail = typeof record.detail === "string" ? record.detail : JSON.stringify(record);
-    return `${code}: ${detail}`;
-  }
-  return String(error ?? "Unknown error");
-}
 
 export function CollectionLogsPage() {
   usePageTitle("Collection Logs");
@@ -179,15 +169,18 @@ export function CollectionLogsPage() {
               <div>
                 <p className={`text-sm font-semibold ${lastIsPartial ? "text-amber-800" : "text-red-800"}`}>
                   {lastIsPartial
-                    ? "Last collection has missing fare dates"
-                    : `Last collection had ${last.errors.length} failure(s)`}
+                    ? "Some dates still need flights"
+                    : `Collection ran into ${last.errors.length} issue(s)`}
                 </p>
                 <ul className={`mt-1 space-y-1 text-xs ${lastIsPartial ? "text-amber-700" : "text-red-700"}`}>
-                  {last.errors.slice(0, 5).map((error, index) => (
-                    <li key={index} className="font-mono">
-                      {formatRunError(error)}
-                    </li>
-                  ))}
+                  {last.errors.slice(0, 5).map((error, index) => {
+                    const { label, detail } = formatRunError(error);
+                    return (
+                      <li key={index} title={detail}>
+                        {label}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             </div>
@@ -288,11 +281,11 @@ export function CollectionLogsPage() {
                   <option value="extract_failed">Extract failed</option>
                   <option value="filtered_out">Filtered out</option>
                   <option value="market_mismatch">Market mismatch</option>
-                  <option value="rate_limited">Rate limited</option>
-                  <option value="quota_exhausted">Quota exhausted</option>
-                  <option value="auth_error">Auth error</option>
-                  <option value="parse_error">Parse error</option>
-                  <option value="provider_error">Provider error</option>
+                  <option value="rate_limited">Slowing down (rate limit)</option>
+                  <option value="quota_exhausted">Out of credits</option>
+                  <option value="auth_error">API key error</option>
+                  <option value="parse_error">Unreadable data</option>
+                  <option value="provider_error">Connection issue</option>
                   <option value="stopped">Stopped</option>
                 </Select>
               </div>

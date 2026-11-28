@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { fetchScrapeLogs } from "../api/collection";
 import type { ScrapeLogEntry } from "../types/price";
 import type { ScrapeHealth } from "../types/route-group";
+import { formatScrapeError } from "../utils/errors";
 import { formatFreshnessLabel } from "../utils/format";
 import { Skeleton } from "./ui/Skeleton";
 
@@ -22,28 +23,13 @@ const REASON_LABELS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  provider_error: "Provider error",
-  parse_error: "Parse error",
-  rate_limited: "Rate limited",
-  quota_exhausted: "Quota exhausted",
-  auth_error: "Auth error",
+  provider_error: "Connection issue",
+  parse_error: "Unreadable data",
+  rate_limited: "Slowing down",
+  quota_exhausted: "Out of credits",
+  auth_error: "API key error",
   stopped: "Stopped",
 };
-
-// New errors are already stored short (backend _friendly_error), but LEGACY rows may
-// still hold a long raw ScrapingBee 500 body. Collapse those to a clean line and cap
-// length so the panel never shows the verbose "try premium_proxy ... 75 credits" blob.
-function shortenError(message: string): string {
-  const lowered = message.toLowerCase();
-  if (lowered.includes("error with your request") || lowered.includes("you will not be charged")) {
-    return "Kayak page did not render in time - will retry.";
-  }
-  if (lowered.includes("timed out") || lowered.includes("timeout")) {
-    return "Kayak render timed out - will retry.";
-  }
-  const trimmed = message.trim();
-  return trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed;
-}
 
 function outcomeLabel(log: ScrapeLogEntry): string {
   if (log.status === "success") return REASON_LABELS.success;
@@ -181,9 +167,9 @@ export function ScrapeHealthPanel({ groupId, health }: ScrapeHealthPanelProps) {
       {health?.last_error_message ? (
         <p
           title={health.last_error_message}
-          className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600"
+          className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700"
         >
-          Last error: {shortenError(health.last_error_message)}
+          Latest issue: {formatScrapeError(health.last_error_message)}
         </p>
       ) : null}
     </div>

@@ -119,15 +119,36 @@ def _friendly_error(exc: BaseException, status: str) -> str:
         return "Provider rate limit hit - will retry shortly."
     if status == "parse_error":
         return "Could not read the rendered page - will retry."
-    # provider_error: the common ScrapingBee 500 / timeout family.
+    # provider_error: common Scrape.do / ScrapingBee / KAYAK transient errors.
+    if any(
+        token in lowered
+        for token in (
+            "rotation_failed",
+            '"statuscode":502',
+            '"errorcode":90',
+            "bad gateway",
+            "http 502",
+            "http 503",
+            "http 504",
+            "connecterror",
+            "network error",
+        )
+    ):
+        return "Temporary proxy connection issue - will retry automatically."
+    if "did not complete" in lowered or "first-phase" in lowered or "second-phase" in lowered:
+        return "KAYAK took too long to finish loading flights - will retry."
+    if "security-check" in lowered or "security check" in lowered or "real kayak user" in lowered:
+        return "KAYAK asked for a security check - will retry on the next run."
     if "timed out" in lowered or "timeout" in lowered:
-        return "Kayak render timed out - will retry."
+        return "KAYAK took too long to respond - will retry."
     if "error with your request" in lowered or "you will not be charged" in lowered:
-        return "Kayak page did not render in time - will retry."
+        return "KAYAK page did not render in time - will retry."
     if "did not expose extractable" in lowered or "no result" in lowered:
-        return "Kayak returned no readable fares for this date."
-    # Unknown: keep it short and scrubbed instead of dumping the raw body.
+        return "KAYAK returned no readable fares for this date."
+    # Unknown: keep short plain messages readable, and never leak raw JSON blobs.
     cleaned = redact_text(raw).strip()
+    if cleaned.startswith("{") or cleaned.startswith("["):
+        return "Temporary flight lookup issue - will retry automatically."
     return (cleaned[:140] + "...") if len(cleaned) > 140 else (cleaned or "Scrape failed - will retry.")
 
 

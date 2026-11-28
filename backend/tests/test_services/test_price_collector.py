@@ -335,6 +335,26 @@ async def test_collect_single_date_records_provider_error_status() -> None:
     assert any(getattr(log, "status", None) == "provider_error" for log in scrape_logs)
 
 
+def test_friendly_error_formats_scrapedo_rotation_failed_and_incomplete_poll() -> None:
+    from app.services.price_collector import _friendly_error
+
+    raw_json_exc = RuntimeError(
+        '{"URL":"https://www.kayak.co.uk/i/api/search/dynamic/flights/poll",'
+        '"StatusCode":502,"ErrorCode":90,"ErrorType":"ROTATION_FAILED","Message":["retry failed"]}'
+    )
+    assert (
+        _friendly_error(raw_json_exc, "provider_error")
+        == "Temporary proxy connection issue - will retry automatically."
+    )
+    assert (
+        _friendly_error(
+            RuntimeError("KAYAK poll did not complete after 1 polls (status=second-phase)."),
+            "provider_error",
+        )
+        == "KAYAK took too long to finish loading flights - will retry."
+    )
+
+
 @pytest.mark.asyncio
 async def test_collect_route_batch_stats() -> None:
     session = AsyncMock()

@@ -184,14 +184,34 @@ def _parse_float_header(value: str | None) -> float | None:
         return None
 
 
+_TRANSIENT_PROXY_STATUS_CODES = {502, 503, 504}
+_TRANSIENT_PROXY_MAX_ATTEMPTS = 3
+
+
 def _extract_body_message(response: httpx.Response) -> str:
     try:
         data = response.json()
         if isinstance(data, dict):
+            err_type = _clean_text(data.get("ErrorType") or data.get("errorType"))
+            status_code = data.get("StatusCode") or data.get("statusCode")
             for key in ("message", "error", "detail", "Message", "Error"):
                 val = data.get(key)
                 if isinstance(val, str) and val.strip():
-                    return val.strip()
+                    msg = val.strip()
+                    return f"{err_type}: {msg}" if err_type and err_type not in msg else msg
+                if isinstance(val, list):
+                    parts = [str(item).strip() for item in val if str(item).strip()]
+                    if parts:
+                        joined = "; ".join(parts)
+                        if err_type and status_code:
+                            prefix = f"{err_type} (HTTP {status_code}): "
+                        elif err_type:
+                            prefix = f"{err_type}: "
+                        else:
+                            prefix = ""
+                        return f"{prefix}{joined}"
+            if err_type:
+                return f"{err_type} (HTTP {status_code})" if status_code else err_type
     except ValueError:
         pass
     return _clean_text(response.text)[:300]
@@ -503,8 +523,46 @@ class ScrapeDoProvider:
         if geo_code:
             params["geoCode"] = geo_code
 
-        async with self._request_slot():
-            response = await self._client.post(f"{self._base_url}/", params=params, json=payload)
+        response: httpx.Response | None = None
+        last_exc: Exception | None = None
+        for proxy_attempt in range(1, _TRANSIENT_PROXY_MAX_ATTEMPTS + 1):
+            try:
+                async with self._request_slot():
+                    response = await self._client.post(
+                        f"{self._base_url}/", params=params, json=payload
+                    )
+            except httpx.RequestError as exc:
+                last_exc = exc
+                if proxy_attempt >= _TRANSIENT_PROXY_MAX_ATTEMPTS:
+                    raise RuntimeError(
+                        f"Scrape.do network error on {step_name}: {exc}"
+                    ) from exc
+                await asyncio.sleep(1.5 * proxy_attempt)
+                continue
+
+            if (
+                response.status_code in _TRANSIENT_PROXY_STATUS_CODES
+                and proxy_attempt < _TRANSIENT_PROXY_MAX_ATTEMPTS
+            ):
+                body_msg = _extract_body_message(response)
+                if not _is_quota_message(body_msg) and not _looks_like_security_check(
+                    response.text
+                ):
+                    log.debug(
+                        "scrapedo_transient_proxy_retry",
+                        step=step_name,
+                        status_code=response.status_code,
+                        attempt=proxy_attempt,
+                        message=body_msg[:160],
+                    )
+                    await asyncio.sleep(1.5 * proxy_attempt)
+                    continue
+            break
+
+        if response is None:
+            raise RuntimeError(
+                f"Scrape.do request failed on {step_name}: {last_exc or 'no response'}"
+            )
 
         rem_credits = _parse_float_header(response.headers.get("Scrape.do-Remaining-Credits"))
         if rem_credits is not None:

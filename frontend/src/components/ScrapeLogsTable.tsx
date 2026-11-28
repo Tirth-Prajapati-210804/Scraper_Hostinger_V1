@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import type { ScrapeLogEntry } from "../types/price";
+import { formatScrapeError } from "../utils/errors";
 import { formatDisplayDate, formatRelativeTime } from "../utils/format";
 import { Skeleton } from "./ui/Skeleton";
 
@@ -177,53 +178,23 @@ function StatusBadge({
   }
 
   if (status === "rate_limited") {
-    return (
-      <Badge
-        icon={<AlertCircle className="h-3.5 w-3.5" />}
-        text="Rate Limited"
-        cls="bg-orange-50 text-orange-700"
-      />
-    );
+    return <ErrorStatusBadge log={log} icon={<AlertCircle className="h-3.5 w-3.5" />} text="Slowing Down" cls="bg-orange-50 text-orange-700" />;
   }
 
   if (status === "quota_exhausted") {
-    return (
-      <Badge
-        icon={<Ban className="h-3.5 w-3.5" />}
-        text="Quota"
-        cls="bg-amber-50 text-amber-700"
-      />
-    );
+    return <ErrorStatusBadge log={log} icon={<Ban className="h-3.5 w-3.5" />} text="Out of Credits" cls="bg-amber-50 text-amber-700" />;
   }
 
   if (status === "auth_error") {
-    return (
-      <Badge
-        icon={<KeyRound className="h-3.5 w-3.5" />}
-        text="Auth Error"
-        cls="bg-rose-50 text-rose-700"
-      />
-    );
+    return <ErrorStatusBadge log={log} icon={<KeyRound className="h-3.5 w-3.5" />} text="API Key Error" cls="bg-rose-50 text-rose-700" />;
   }
 
   if (status === "parse_error") {
-    return (
-      <Badge
-        icon={<AlertCircle className="h-3.5 w-3.5" />}
-        text="Parse Error"
-        cls="bg-orange-50 text-orange-700"
-      />
-    );
+    return <ErrorStatusBadge log={log} icon={<AlertCircle className="h-3.5 w-3.5" />} text="Unreadable Data" cls="bg-orange-50 text-orange-700" />;
   }
 
   if (status === "provider_error") {
-    return (
-      <Badge
-        icon={<XCircle className="h-3.5 w-3.5" />}
-        text="Provider Error"
-        cls="bg-red-50 text-red-700"
-      />
-    );
+    return <ErrorStatusBadge log={log} icon={<XCircle className="h-3.5 w-3.5" />} text="Connection Issue" cls="bg-red-50 text-red-700" />;
   }
 
   if (status === "stopped") {
@@ -236,12 +207,26 @@ function StatusBadge({
     );
   }
 
+  return <ErrorStatusBadge log={log} icon={<XCircle className="h-3.5 w-3.5" />} text="Error" cls="bg-red-50 text-red-700" />;
+}
+
+function ErrorStatusBadge({
+  log,
+  icon,
+  text,
+  cls,
+}: {
+  log: ScrapeLogEntry;
+  icon: React.ReactNode;
+  text: string;
+  cls: string;
+}) {
+  const friendly = formatScrapeError(log.error_message);
   return (
-    <Badge
-      icon={<XCircle className="h-3.5 w-3.5" />}
-      text="Error"
-      cls="bg-red-50 text-red-700"
-    />
+    <div className="space-y-1">
+      <Badge icon={icon} text={text} cls={cls} />
+      {friendly ? <div className="max-w-[280px] text-[11px] leading-snug text-slate-500">{friendly}</div> : null}
+    </div>
   );
 }
 
