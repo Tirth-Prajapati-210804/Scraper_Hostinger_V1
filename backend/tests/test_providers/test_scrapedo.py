@@ -434,3 +434,145 @@ async def test_pool_provider_failover(monkeypatch: pytest.MonkeyPatch) -> None:
         await pool.close()
 
     assert [item.price for item in outcome.results] == [500.0]
+
+
+@pytest.mark.asyncio
+async def test_polls_past_three_attempts_until_complete() -> None:
+    calls = 0
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                200,
+                json={"status": "first-phase", "searchId": "slow-1", "results": []},
+                headers={"Scrape.do-Request-Cost": "10"},
+            )
+        if calls <= 4:
+            # Simulates incomplete phase snapshots with a higher intermediate fare
+            phase = "first-phase" if calls == 2 else "second-phase"
+            return httpx.Response(
+                200,
+                json=_uk_round_trip_poll_payload(status=phase, price=1500.0),
+                headers={"Scrape.do-Request-Cost": "10"},
+            )
+        return httpx.Response(
+            200,
+            json=_uk_round_trip_poll_payload(status="complete", price=1188.0),
+            headers={"Scrape.do-Request-Cost": "10"},
+        )
+
+    provider = ScrapeDoProvider(
+        api_key="sd-key",
+        initial_poll_delay_seconds=0.0,
+        poll_delay_seconds=0.01,
+        max_polls=5,
+    )
+    await provider._client.aclose()
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outcome = await provider.search_round_trip_diagnostic(
+            origin="BHX",
+            destination="JRO",
+            depart_date=date(2026, 12, 16),
+            return_date=date(2026, 12, 26),
+            market="uk",
+            currency="GBP",
+            max_stops=1,
+            same_airline_only=True,
+        )
+    finally:
+        await provider.close()
+
+    assert calls == 5
+    assert outcome.results[0].price == 1188.0
+    assert outcome.results[0].raw_data["poll_status"] == "complete"
+    assert outcome.results[0].raw_data["poll_credits_cost"] == 50.0
+
+
+@pytest.mark.asyncio
+async def test_incomplete_poll_after_max_polls_raises_runtime_error() -> None:
+    calls = 0
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        phase = "first-phase" if calls == 1 else "second-phase"
+        return httpx.Response(
+            200,
+            json=_uk_round_trip_poll_payload(status=phase, price=1500.0),
+            headers={"Scrape.do-Request-Cost": "10"},
+        )
+
+    provider = ScrapeDoProvider(
+        api_key="sd-key",
+        initial_poll_delay_seconds=0.0,
+        poll_delay_seconds=0.01,
+        max_polls=3,
+        max_retries=1,
+    )
+    await provider._client.aclose()
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(RuntimeError, match="did not complete after 3 polls"):
+            await provider.search_round_trip_diagnostic(
+                origin="BHX",
+                destination="JRO",
+                depart_date=date(2026, 12, 16),
+                return_date=date(2026, 12, 26),
+                market="uk",
+                currency="GBP",
+                max_stops=1,
+                same_airline_only=True,
+            )
+    finally:
+        await provider.close()
+
+    assert calls == 4
+
+
+@pytest.mark.asyncio
+async def test_mult_fallback_disabled_keeps_20_credit_cap() -> None:
+    calls = 0
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                200,
+                json={"status": "first-phase", "searchId": "cap-20", "results": []},
+                headers={"Scrape.do-Request-Cost": "10"},
+            )
+        return httpx.Response(
+            200,
+            json={"status": "complete", "searchId": "cap-20", "totalCount": 0, "results": []},
+            headers={"Scrape.do-Request-Cost": "10"},
+        )
+
+    provider = ScrapeDoProvider(
+        api_key="sd-key",
+        initial_poll_delay_seconds=0.0,
+        poll_delay_seconds=0.01,
+        max_polls=1,
+        allow_mult_fallback=False,
+    )
+    await provider._client.aclose()
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        outcome = await provider.search_round_trip_diagnostic(
+            origin="BHX",
+            destination="JRO",
+            depart_date=date(2027, 6, 1),
+            return_date=date(2027, 6, 11),
+            market="uk",
+            currency="GBP",
+            max_stops=1,
+            same_airline_only=True,
+        )
+    finally:
+        await provider.close()
+
+    assert calls == 2
+    assert outcome.results == []

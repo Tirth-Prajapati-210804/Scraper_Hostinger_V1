@@ -834,6 +834,17 @@ def test_route_parallelism_caps_groups_by_provider_budget() -> None:
     assert scheduler._route_parallelism(10) == 2
 
 
+def test_route_parallelism_allows_sleep_parallelism_for_scrapedo() -> None:
+    scheduler = make_scheduler()
+    scheduler.provider_registry.providers = {"scrapedo": MagicMock()}
+    scheduler.settings.scrape_route_parallelism = 4
+    scheduler.settings.provider_concurrency_limit = 8
+    scheduler.settings.scrape_batch_size = 6
+
+    assert scheduler._route_parallelism(10) == 4
+    assert scheduler._route_parallelism(2) == 2
+
+
 def _exhaustion_group() -> MagicMock:
     group = MagicMock()
     group.id = uuid4()

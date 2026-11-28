@@ -425,6 +425,12 @@ class FlightScheduler:
         except (TypeError, ValueError):
             batch_size = 1
 
+        providers_map = getattr(self.provider_registry, "providers", None)
+        if isinstance(providers_map, dict) and "scrapedo" in providers_map:
+            # Scrape.do polling sleeps locally for 45s+ without holding an HTTP slot,
+            # while ScrapeDoProvider._semaphore enforces provider_concurrency_limit.
+            return max(1, min(configured, max(route_count, 1)))
+
         provider_capped_groups = max(1, provider_limit // max(1, batch_size))
         return max(1, min(configured, max(route_count, 1), provider_capped_groups))
 

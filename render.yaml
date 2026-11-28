@@ -43,11 +43,13 @@ services:
       - key: SCRAPEDO_SUPER_PROXY
         value: "true"
       - key: SCRAPEDO_INITIAL_POLL_DELAY_SECONDS
-        value: "24.0"
+        value: "45.0"
       - key: SCRAPEDO_POLL_DELAY_SECONDS
-        value: "6.0"
+        value: "15.0"
       - key: SCRAPEDO_MAX_POLLS
-        value: "3"
+        value: "1"
+      - key: SCRAPEDO_ALLOW_MULT_FALLBACK
+        value: "false"
       - key: SCRAPINGBEE_API_KEY
         sync: false
       - key: SCRAPINGBEE_API_KEYS

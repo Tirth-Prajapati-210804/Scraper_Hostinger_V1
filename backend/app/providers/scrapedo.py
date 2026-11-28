@@ -285,9 +285,10 @@ class ScrapeDoProvider:
         quota_cooldown_seconds: int = 3600,
         country_code: str = "",
         super_proxy: bool = True,
-        initial_poll_delay_seconds: float = 24.0,
-        poll_delay_seconds: float = 6.0,
-        max_polls: int = 3,
+        initial_poll_delay_seconds: float = 45.0,
+        poll_delay_seconds: float = 15.0,
+        max_polls: int = 1,
+        allow_mult_fallback: bool = True,
         user_agent: str = "flight-harvester/1.0",
     ) -> None:
         self._api_key = api_key.strip()
@@ -299,6 +300,7 @@ class ScrapeDoProvider:
         self._initial_poll_delay_seconds = max(0.0, float(initial_poll_delay_seconds))
         self._poll_delay_seconds = max(0.5, float(poll_delay_seconds))
         self._max_polls = max(1, int(max_polls))
+        self._allow_mult_fallback = bool(allow_mult_fallback)
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(float(self._timeout), connect=25.0),
             headers={
@@ -570,8 +572,8 @@ class ScrapeDoProvider:
         for res in raw_results:
             if not isinstance(res, dict):
                 continue
-            rtype = str(res.get("type") or "").strip()
-            if rtype in {"inlineAd", "inlinePriceAlertItem", "ad"}:
+            rtype = str(res.get("type") or "").strip().lower()
+            if rtype in {"inlinead", "inlinedisplayad", "inlinepricealertitem", "ad"}:
                 continue
 
             booking_options = res.get("bookingOptions")
@@ -897,9 +899,9 @@ class ScrapeDoProvider:
         if not search_id:
             raise RuntimeError("KAYAK poll start did not return a searchId.")
 
-        start_status = str(final_data.get("status") or "").lower()
+        final_status = str(final_data.get("status") or "").lower()
 
-        if start_status != "complete":
+        if final_status != "complete":
             for poll_idx in range(1, self._max_polls + 1):
                 wait_sec = (
                     self._initial_poll_delay_seconds
@@ -921,8 +923,15 @@ class ScrapeDoProvider:
                     step_name=f"poll_{poll_idx}",
                 )
                 total_credits += poll_cost
-                if str(final_data.get("status") or "").lower() == "complete":
+                final_status = str(final_data.get("status") or "").lower()
+                if final_status == "complete":
                     break
+
+        if final_status != "complete":
+            raise RuntimeError(
+                f"KAYAK poll did not complete after {self._max_polls} polls "
+                f"(status={final_status or 'unknown'})."
+            )
 
         parsed, pruned_count = self._parse_poll_offers(
             final_data,
@@ -944,7 +953,8 @@ class ScrapeDoProvider:
         # Re-use the same KAYAK searchId without `airlines=-MULT,flylocal` (10 cr,
         # no second start call) when -MULT excluded all valid single-carrier fares.
         if (
-            not eligible
+            self._allow_mult_fallback
+            and not eligible
             and same_airline_only
             and "airlines=-MULT" in fs_str
             and str(final_data.get("status") or "").lower() == "complete"
@@ -969,6 +979,12 @@ class ScrapeDoProvider:
                 step_name="poll_mult_fallback",
             )
             total_credits += fallback_cost
+            fallback_status = str(fallback_data.get("status") or "").lower()
+            if fallback_status != "complete":
+                raise RuntimeError(
+                    "KAYAK -MULT fallback poll did not complete "
+                    f"(status={fallback_status or 'unknown'})."
+                )
             fb_parsed, fb_pruned = self._parse_poll_offers(
                 fallback_data,
                 requested_currency=requested_currency,

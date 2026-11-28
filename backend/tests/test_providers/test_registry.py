@@ -15,9 +15,10 @@ def make_settings(**overrides) -> MagicMock:
     settings.scrapedo_base_url = "https://api.scrape.do"
     settings.scrapedo_country_code = ""
     settings.scrapedo_super_proxy = True
-    settings.scrapedo_initial_poll_delay_seconds = 24.0
-    settings.scrapedo_poll_delay_seconds = 6.0
-    settings.scrapedo_max_polls = 3
+    settings.scrapedo_initial_poll_delay_seconds = 45.0
+    settings.scrapedo_poll_delay_seconds = 15.0
+    settings.scrapedo_max_polls = 1
+    settings.scrapedo_allow_mult_fallback = False
     settings.scrapingbee_api_key = ""
     settings.scrapingbee_api_keys = ""
     settings.scrapingbee_base_url = "https://app.scrapingbee.com/api/v1"
@@ -174,6 +175,24 @@ def test_scrapedo_failure_cools_down_provider() -> None:
     assert registry.status()["scrapedo"] == "blocked"
     registry.report_success("scrapedo")
     assert len(registry.get_enabled()) == 1
+
+
+def test_scrapedo_settings_forwarded_to_provider() -> None:
+    registry = ProviderRegistry(
+        make_settings(
+            scrapedo_api_key="sd-key-123",
+            scrapedo_initial_poll_delay_seconds=45.0,
+            scrapedo_poll_delay_seconds=15.0,
+            scrapedo_max_polls=1,
+            scrapedo_allow_mult_fallback=False,
+        )
+    )
+    pool = registry.get_enabled()[0]
+    inner = pool._providers[0]
+    assert inner._initial_poll_delay_seconds == 45.0
+    assert inner._poll_delay_seconds == 15.0
+    assert inner._max_polls == 1
+    assert inner._allow_mult_fallback is False
 
 
 @pytest.mark.asyncio

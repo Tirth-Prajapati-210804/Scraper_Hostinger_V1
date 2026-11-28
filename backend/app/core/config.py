@@ -57,9 +57,10 @@ class Settings(BaseSettings):
     scrapedo_base_url: str = "https://api.scrape.do"
     scrapedo_country_code: str = ""
     scrapedo_super_proxy: bool = True
-    scrapedo_initial_poll_delay_seconds: float = 24.0
-    scrapedo_poll_delay_seconds: float = 6.0
-    scrapedo_max_polls: int = 3
+    scrapedo_initial_poll_delay_seconds: float = 45.0
+    scrapedo_poll_delay_seconds: float = 15.0
+    scrapedo_max_polls: int = 1
+    scrapedo_allow_mult_fallback: bool = False
     scrapingbee_api_key: str = ""
     scrapingbee_api_keys: str = ""
     scrapingbee_base_url: str = "https://app.scrapingbee.com/api/v1"
@@ -241,6 +242,7 @@ class Settings(BaseSettings):
         "scheduler_enabled",
         "expose_api_docs",
         "scrapedo_super_proxy",
+        "scrapedo_allow_mult_fallback",
         "scrapingbee_premium_proxy",
         "scrapingbee_stealth_proxy",
         "scrapingbee_multi_city_debug",

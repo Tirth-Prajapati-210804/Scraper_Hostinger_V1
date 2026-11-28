@@ -58,10 +58,13 @@ class ProviderRegistry:
                 country_code=getattr(settings, "scrapedo_country_code", ""),
                 super_proxy=getattr(settings, "scrapedo_super_proxy", True),
                 initial_poll_delay_seconds=getattr(
-                    settings, "scrapedo_initial_poll_delay_seconds", 24.0
+                    settings, "scrapedo_initial_poll_delay_seconds", 45.0
                 ),
-                poll_delay_seconds=getattr(settings, "scrapedo_poll_delay_seconds", 6.0),
-                max_polls=getattr(settings, "scrapedo_max_polls", 3),
+                poll_delay_seconds=getattr(settings, "scrapedo_poll_delay_seconds", 15.0),
+                max_polls=getattr(settings, "scrapedo_max_polls", 1),
+                allow_mult_fallback=bool(
+                    getattr(settings, "scrapedo_allow_mult_fallback", False)
+                ),
                 user_agent=settings.scrapingbee_user_agent,
             )
 
